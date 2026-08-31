@@ -1,8 +1,17 @@
+# secrets
 ernie.env
 ernie-test.env
+
+# databases -- never commit; `*.db.*` also catches dated copies like
+# ernie.db.pre-migrate-20260828-1307, which slipped past *.db once
 *.db
 *.db-*
+*.db.*
+
 dump/
 logs/
 backups/
 __pycache__/
+
+# stray `git init`, not a real backup
+ernie-test-backup/
