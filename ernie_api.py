@@ -17,12 +17,15 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel
+
+import ernie_extract as ex
 
 DB = "ernie.db"
 UNDO_WINDOW_S = 60      # how long before Ernie posts to the thread
@@ -33,8 +36,9 @@ app = FastAPI(title="Ernie", version="0.1")
 
 
 def db() -> sqlite3.Connection:
-    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=15.0)
     con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout = 15000")
     return con
 
 
@@ -44,8 +48,9 @@ def rows(cur) -> list[dict]:
 
 def rw() -> sqlite3.Connection:
     """Read-write connection. Only the write endpoints use this."""
-    con = sqlite3.connect(DB)
+    con = sqlite3.connect(DB, timeout=15.0)
     con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout = 15000")
     con.execute("PRAGMA foreign_keys = ON")
     return con
 
@@ -114,6 +119,98 @@ class StatusBody(BaseModel):
 class ActorBody(BaseModel):
     actor: str
     key: Optional[str] = None
+    force: bool = False             # proceed past a soft conflict
+
+
+class EditBody(BaseModel):
+    """A batch of field edits saved together as one change."""
+    client_override: Optional[str] = None
+    action_item: Optional[str] = None
+    build_state: Optional[str] = None
+    return_state: Optional[str] = None
+    direction: Optional[str] = None
+    title: Optional[str] = None     # the Discord thread name; renames the thread
+    actor: str
+    key: Optional[str] = None
+    # What the editor was showing when it opened. Lets the server tell a field
+    # this person actually changed from one they merely had on screen, so two
+    # people editing different fields of the same card don't collide.
+    base: Optional[dict] = None
+    force: bool = False             # save anyway, overwriting the other person
+
+
+EDITABLE = ("client_override", "action_item", "build_state",
+            "return_state", "direction")
+
+FIELD_LABEL = {
+    "client_override": "client",
+    "action_item": "current work item",
+    "build_state": "build ticket",
+    "return_state": "return ticket",
+    "direction": "equipment",
+}
+
+VALUE_LABEL = {
+    "needs_created": "needs created", "created": "created",
+    "not_needed": "not needed", "leaving": "leaving",
+    "coming_back": "coming back",
+}
+
+
+# Columns this build depends on. The API opens the database directly rather
+# than through load.connect(), so schema.sql is never applied here and a
+# database that missed a migration fails at request time with an opaque
+# IndexError. Checked once at startup instead.
+REQUIRED_COLUMNS = {
+    "cards": ["client_override"],
+    "events": ["claimed_at"],
+}
+
+
+def check_schema() -> None:
+    con = db()
+    missing = []
+    for table, cols in REQUIRED_COLUMNS.items():
+        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        missing += [f"{table}.{c}" for c in cols if c not in have]
+    con.close()
+    if missing:
+        sys.exit(f"{DB} is behind this build -- missing {', '.join(missing)}.\n"
+                 f"Run the matching migrate_*.py against it first.")
+
+
+def conflict(code: str, message: str, **extra):
+    """409 with a body Bert can render, rather than a bare string."""
+    raise HTTPException(409, {"code": code, "message": message, **extra})
+
+
+def load_card(con, thread_id: str):
+    card = con.execute("SELECT * FROM cards WHERE thread_id=?",
+                       (thread_id,)).fetchone()
+    if not card:
+        raise HTTPException(404, "no such card")
+    return card
+
+
+def last_touch(con, thread_id: str) -> dict:
+    """Who last changed this card, so a conflict can name a person."""
+    e = con.execute(
+        """SELECT actor_name, occurred_at, verb, new_value FROM events
+           WHERE thread_id=? AND undone_at IS NULL
+           ORDER BY occurred_at DESC LIMIT 1""", (thread_id,)).fetchone()
+    if not e:
+        return {}
+    return {"by": e["actor_name"] or "Someone", "at": e["occurred_at"],
+            "verb": e["verb"], "detail": e["new_value"]}
+
+
+def guard_open(card, doing: str = "change"):
+    """Refuse to touch a card somebody has already closed."""
+    if card["completed_at"]:
+        who = card["completed_by"] or "Someone"
+        conflict("completed", f"{who} has already closed this ticket.",
+                 by=who, at=card["completed_at"], doing=doing,
+                 hint="Reopen it first if you still need to change it.")
 
 
 # --------------------------------------------------------------------------
@@ -157,7 +254,8 @@ def cards(
     con = db()
     sql = """
         SELECT c.thread_id, c.priority, c.rank, c.build_state, c.return_state,
-               c.direction, c.action_item, c.completed_at, c.completed_by,
+               c.direction, c.action_item, c.client_override, c.updated_at,
+               c.completed_at, c.completed_by,
                v.name, v.queue, v.client_raw, v.client_key, v.thread_date,
                v.summary, v.confidence, v.archived,
                (SELECT COUNT(*) FROM tickets t
@@ -180,8 +278,32 @@ def cards(
 
     out = rows(con.execute(sql, args))
 
+    # A title the board has changed but Discord hasn't confirmed yet. Showing
+    # the old one means the queue tag stays "--" and the card stays red for the
+    # couple of minutes it takes the rename to post and the sync to read it
+    # back. One query for the lot rather than one per card.
+    pending = {}
+    for r in con.execute(
+            """SELECT thread_id, new_value FROM events
+               WHERE verb='renamed' AND undone_at IS NULL AND posted_at IS NULL
+               ORDER BY occurred_at"""):
+        pending[r["thread_id"]] = r["new_value"]      # newest wins
+
     # equipment and open issues per card
     for c in out:
+        c["title_pending"] = False
+        proposed = pending.get(c["thread_id"])
+        if proposed:
+            t = ex.parse_title(proposed)
+            c["name"] = proposed
+            c["queue"] = t.queue
+            c["client_raw"] = t.client_raw
+            c["client_key"] = ex.normalise_client(t.client_raw or "") or None
+            c["thread_date"] = t.date.isoformat() if t.date else None
+            c["summary"] = t.summary
+            c["confidence"] = t.confidence
+            c["title_pending"] = True
+
         c["equipment"] = rows(con.execute(
             "SELECT eq_type, eq_number, state, raw FROM thread_equipment "
             "WHERE thread_id=?", (c["thread_id"],)))
@@ -199,7 +321,8 @@ def cards(
     out.sort(key=lambda c: (PRIORITY_ORDER.index(c["priority"])
                             if c["priority"] in PRIORITY_ORDER else 99,
                             c["rank"]))
-    return {"count": len(out), "cards": out}
+    return {"count": len(out), "cards": out,
+            "as_of": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/cards/{thread_id}")
@@ -318,10 +441,8 @@ def move_card(thread_id: str, body: MoveBody):
         if cached:
             return cached
 
-        card = con.execute("SELECT priority, rank FROM cards WHERE thread_id=?",
-                           (thread_id,)).fetchone()
-        if not card:
-            raise HTTPException(404, "no such card")
+        card = load_card(con, thread_id)
+        guard_open(card, "move")
 
         def rank_of(tid):
             r = con.execute("SELECT rank FROM cards WHERE thread_id=?", (tid,)).fetchone()
@@ -378,10 +499,8 @@ def set_status(thread_id: str, body: StatusBody):
         if cached:
             return cached
 
-        card = con.execute("SELECT * FROM cards WHERE thread_id=?",
-                           (thread_id,)).fetchone()
-        if not card:
-            raise HTTPException(404, "no such card")
+        card = load_card(con, thread_id)
+        guard_open(card, "update")
 
         valid = {"needs_created", "created", "not_needed"}
         changes = {}
@@ -417,12 +536,8 @@ def complete(thread_id: str, body: ActorBody):
         if cached:
             return cached
 
-        card = con.execute("SELECT completed_at FROM cards WHERE thread_id=?",
-                           (thread_id,)).fetchone()
-        if not card:
-            raise HTTPException(404, "no such card")
-        if card["completed_at"]:
-            raise HTTPException(409, "already completed")
+        card = load_card(con, thread_id)
+        guard_open(card, "close")
 
         ts = now_iso()
         con.execute(
@@ -450,6 +565,11 @@ def reopen(thread_id: str, body: ActorBody):
         if cached:
             return cached
 
+        card = load_card(con, thread_id)
+        if not card["completed_at"]:
+            conflict("not_completed", "This ticket isn't closed.",
+                     **last_touch(con, thread_id))
+
         con.execute("UPDATE cards SET completed_at=NULL, completed_by=NULL, "
                     "updated_at=? WHERE thread_id=?", (now_iso(), thread_id))
         eid = log_event(con, thread_id=thread_id, verb="reopened", actor=actor,
@@ -472,11 +592,33 @@ def undo(event_id: str, body: ActorBody):
     actor = require_actor(body.actor)
     con = rw()
     try:
+        cached = replay(con, body.key)
+        if cached:
+            return cached
+
         e = con.execute("SELECT * FROM events WHERE event_id=?", (event_id,)).fetchone()
         if not e:
             raise HTTPException(404, "no such event")
         if e["undone_at"]:
-            raise HTTPException(409, "already undone")
+            who = e["undone_by"] or "Someone"
+            conflict("already_undone", f"{who} has already undone this.",
+                     by=who, at=e["undone_at"])
+
+        # The outbox claims a row before it starts talking to Discord. If this
+        # one is claimed but not yet marked posted, the message is in flight and
+        # we cannot tell whether it needs a correction -- so don't guess.
+        if e["claimed_at"] and not e["posted_at"]:
+            conflict("posting",
+                     "Ernie is posting this to Discord right now. "
+                     "Try the undo again in a few seconds.",
+                     at=e["claimed_at"])
+
+        if (e["actor_name"] or "") != actor and not body.force:
+            conflict("other_actor",
+                     f"That change was made by {e['actor_name'] or 'someone else'}.",
+                     by=e["actor_name"], at=e["occurred_at"], verb=e["verb"],
+                     detail=e["new_value"],
+                     hint="Undo it anyway?")
 
         if e["verb"] == "completed":
             con.execute("UPDATE cards SET completed_at=NULL, completed_by=NULL, "
@@ -484,22 +626,170 @@ def undo(event_id: str, body: ActorBody):
         elif e["verb"] == "priority_changed":
             con.execute("UPDATE cards SET priority=?, updated_at=? WHERE thread_id=?",
                         (e["old_value"], now_iso(), e["thread_id"]))
+        elif e["verb"] == "renamed":
+            # Nothing in cards to put back. Inside the undo window the rename
+            # never went out, so cancelling the event is the whole job; once it
+            # has, the only way back is another rename.
+            if e["posted_at"] and e["old_value"]:
+                log_event(con, thread_id=e["thread_id"], verb="renamed",
+                          actor=actor, old=e["new_value"], new=e["old_value"],
+                          post=True)
+        elif e["verb"] == "edited":
+            # A batched edit stores the previous values as JSON. Without this
+            # branch the event was marked undone and the card never moved back,
+            # which is the one undo Bert offers most often.
+            try:
+                previous = json.loads(e["old_value"] or "{}")
+            except json.JSONDecodeError:
+                previous = {}
+            restore = {k: v for k, v in previous.items() if k in EDITABLE}
+            if restore:
+                sets = ", ".join(f"{k}=?" for k in restore)
+                con.execute(
+                    f"UPDATE cards SET {sets}, updated_at=? WHERE thread_id=?",
+                    (*restore.values(), now_iso(), e["thread_id"]))
         elif e["verb"].startswith("set_"):
             col = e["verb"][4:]
+            if col not in EDITABLE:
+                raise HTTPException(400, f"can't undo {e['verb']}")
             con.execute(f"UPDATE cards SET {col}=?, updated_at=? WHERE thread_id=?",
                         (e["old_value"], now_iso(), e["thread_id"]))
 
         con.execute("UPDATE events SET undone_at=?, undone_by=? WHERE event_id=?",
                     (now_iso(), actor, event_id))
 
-        already_posted = bool(e["posted_at"])
+        # Only an actual message needs retracting. A rename posts none of its
+        # own -- Discord announces it -- so a "disregard the last message"
+        # correction would be pointing at nothing.
+        already_posted = bool(e["posted_at"] and e["discord_message_id"])
         if already_posted:
             log_event(con, thread_id=e["thread_id"], verb="undo_correction",
                       actor=actor, old=e["verb"], post=True)
 
+        result = {"event_id": event_id, "undone": True,
+                  "correction_posted": already_posted}
+        remember(con, body.key, result)
         con.commit()
-        return {"event_id": event_id, "undone": True,
-                "correction_posted": already_posted}
+        return result
+    finally:
+        con.close()
+
+
+
+
+@app.post("/cards/{thread_id}/edit")
+def edit_card(thread_id: str, body: EditBody):
+    """
+    Save several field changes at once.
+
+    Deliberately one event and one thread message, however many fields moved.
+    Editing four things shouldn't post four times.
+    """
+    actor = require_actor(body.actor)
+    con = rw()
+    try:
+        cached = replay(con, body.key)
+        if cached:
+            return cached
+
+        card = load_card(con, thread_id)
+        guard_open(card, "edit")
+
+        valid_state = {"needs_created", "created", "not_needed"}
+        valid_dir = {"leaving", "coming_back", None, ""}
+
+        base = body.base or {}
+
+        # The title is not a cards column -- it belongs to Discord, and the
+        # mirror only ever observes it. So a title change is queued as a rename
+        # for the outbox to carry out; the next sync reads the result back.
+        row = con.execute("SELECT name FROM v_thread_current WHERE thread_id=?",
+                          (thread_id,)).fetchone()
+        current_title = (row["name"] if row else "") or ""
+        new_title = (body.title or "").strip()
+        title_base = (base.get("title") or "") if base else current_title
+        wants_rename = bool(new_title) and new_title != title_base
+        if wants_rename and len(new_title) > 100:
+            raise HTTPException(400, "Discord thread names are limited to "
+                                     "100 characters.")
+
+        # Which fields did this person actually change? With a base snapshot
+        # that's "differs from what the dialog opened with" -- a field left
+        # alone is not a change even though the dialog submits every field.
+        # Without one, fall back to "differs from the stored value".
+        intended = {}
+        for f in EDITABLE:
+            v = getattr(body, f)
+            if v is None:
+                continue
+            v = v.strip() if isinstance(v, str) else v
+            if f.endswith("_state") and v not in valid_state:
+                raise HTTPException(400, f"{f} must be one of {sorted(valid_state)}")
+            if f == "direction" and v not in valid_dir:
+                raise HTTPException(400, "direction must be leaving or coming_back")
+            reference = (base.get(f) or "") if base else (card[f] or "")
+            if v != reference:
+                intended[f] = v
+
+        # A clash is a field this person changed that somebody else also moved
+        # since the dialog opened. Fields only they touched merge cleanly.
+        clashes = [
+            {"field": f, "label": FIELD_LABEL[f],
+             "was": base.get(f) or "", "theirs": card[f] or "", "mine": v}
+            for f, v in intended.items()
+            if base and (card[f] or "") != (base.get(f) or "")
+        ]
+        if wants_rename and base and current_title != title_base:
+            clashes.append({"field": "title", "label": "thread title",
+                            "was": title_base, "theirs": current_title,
+                            "mine": new_title})
+        if clashes and not body.force:
+            conflict("stale",
+                     "Someone else changed this card while you had it open.",
+                     changes=clashes, **last_touch(con, thread_id))
+
+        changes = {f: v for f, v in intended.items() if v != (card[f] or "")}
+        renaming = wants_rename and new_title != current_title
+
+        if not changes and not renaming:
+            return {"thread_id": thread_id, "changed": {}, "event_id": None}
+
+        rename_event = None
+        if renaming:
+            rename_event = log_event(con, thread_id=thread_id, verb="renamed",
+                                     actor=actor, old=current_title,
+                                     new=new_title, post=True)
+
+        if not changes:
+            result = {"thread_id": thread_id, "changed": {},
+                      "event_id": rename_event, "renamed": new_title,
+                      "summary": f"title: {current_title} -> {new_title}"}
+            remember(con, body.key, result)
+            con.commit()
+            return result
+
+        sets = ", ".join(f"{f}=?" for f in changes)
+        con.execute(f"UPDATE cards SET {sets}, updated_at=? WHERE thread_id=?",
+                    (*changes.values(), now_iso(), thread_id))
+
+        parts = []
+        for f, v in changes.items():
+            old = card[f] or "(empty)"
+            parts.append(f"{FIELD_LABEL[f]}: "
+                         f"{VALUE_LABEL.get(old, old)} -> {VALUE_LABEL.get(v, v)}")
+        summary = "; ".join(parts)
+
+        eid = log_event(con, thread_id=thread_id, verb="edited", actor=actor,
+                        old=json.dumps({f: card[f] for f in changes}),
+                        new=summary, post=True)
+
+        result = {"thread_id": thread_id, "changed": changes,
+                  "event_id": eid, "summary": summary,
+                  "renamed": new_title if renaming else None,
+                  "rename_event": rename_event}
+        remember(con, body.key, result)
+        con.commit()
+        return result
     finally:
         con.close()
 
@@ -514,4 +804,5 @@ if __name__ == "__main__":
     a = ap.parse_args()
 
     DB = a.db
+    check_schema()
     uvicorn.run(app, host=a.host, port=a.port)

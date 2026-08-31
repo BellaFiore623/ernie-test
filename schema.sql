@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS cards (
     return_state TEXT NOT NULL DEFAULT 'needs_created',
     direction    TEXT,                            -- leaving | coming_back
     action_item  TEXT,
+    client_override TEXT,          -- set in Bert when the parsed client is wrong
     completed_at TEXT,
     completed_by TEXT,
     updated_at   TEXT NOT NULL
@@ -196,6 +197,9 @@ CREATE TABLE IF NOT EXISTS events (
     undone_by       TEXT,
     -- outbox columns; NULL dispatch_after means "never post to Discord"
     dispatch_after  TEXT,
+    claimed_at      TEXT,                      -- outbox holds the row while it
+                                               -- talks to Discord, so an undo
+                                               -- can't race a message in flight
     posted_at       TEXT,
     discord_message_id TEXT,
     attempts        INTEGER NOT NULL DEFAULT 0,
@@ -211,6 +215,7 @@ SELECT * FROM events
 WHERE dispatch_after IS NOT NULL
   AND posted_at IS NULL
   AND undone_at IS NULL
+  AND claimed_at IS NULL
   -- datetime() on both sides: Python writes ISO8601 with a 'T' and an
   -- offset, SQLite's datetime('now') uses a space and no offset, so a raw
   -- string compare is always false and nothing would ever post.

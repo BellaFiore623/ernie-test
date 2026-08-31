@@ -35,10 +35,18 @@ import ernie_extract as ex
 import ernie_load as load
 
 API = "https://discord.com/api/v10"
-PACING = 0.3
+PACING = 0.1         # sleep after each GET; Discord's global ceiling is 50/s
 RESCAN_TAIL = 100      # messages re-read per thread when checking for edits
 RESCAN_DAYS = 14       # only rescan threads active in this window
-CYCLE_SECONDS = 300
+RESCAN_PER_CYCLE = 12  # threads rescanned per cycle; the rest wait their turn.
+                       # Rescanning every thread every cycle was the bulk of the
+                       # cycle and found an edit almost never. Rotating means an
+                       # edit surfaces within ceil(threads/12) cycles instead of
+                       # the next one -- new cards, which is what people watch,
+                       # are not delayed at all.
+CYCLE_SECONDS = 60    # a quiet cycle is ~14 GETs now, not ~101, so a
+                      # shorter interval still costs Discord less per hour
+                      # than the old 5-minute one did
 
 
 def load_env(path: str = "ernie.env") -> None:
@@ -197,6 +205,7 @@ def sync_threads(con, d: Discord, guild_id: str, stats: dict) -> list[dict]:
 
     for t in threads:
         load.load_thread(con, {"thread": t}, stats)
+    con.commit()
     return threads
 
 
@@ -209,9 +218,20 @@ def sync_messages(con, d: Discord, threads: list[dict], stats: dict) -> None:
             (tid,)).fetchone()
         cursor = row["last_seen_message_id"] if row else None
 
+        # The thread listing already carries Discord's own last_message_id, so
+        # a thread with nothing past our cursor needs no request at all. On a
+        # quiet board that is one saved GET per thread per cycle, which is most
+        # of the cycle.
+        if cursor is not None and t.get("last_message_id") == cursor:
+            continue
+
         msgs = d.messages_after(tid, cursor)
         if msgs:
             load.load_messages(con, tid, msgs, stats)
+        con.commit()      # short transactions: Bert must be able to write too
+
+
+_rescan_at = 0          # rotation cursor for rescan_edits
 
 
 def rescan_edits(con, d: Discord, stats: dict) -> None:
@@ -226,7 +246,14 @@ def rescan_edits(con, d: Discord, stats: dict) -> None:
     rows = con.execute(
         """SELECT DISTINCT t.thread_id FROM threads t
            JOIN messages m ON m.thread_id = t.thread_id
-           WHERE t.deleted_at IS NULL AND m.created_at > ?""", (cutoff,)).fetchall()
+           WHERE t.deleted_at IS NULL AND m.created_at > ?
+           ORDER BY t.thread_id""", (cutoff,)).fetchall()
+
+    global _rescan_at
+    if RESCAN_PER_CYCLE and len(rows) > RESCAN_PER_CYCLE:
+        start = _rescan_at % len(rows)
+        rows = (rows + rows)[start:start + RESCAN_PER_CYCLE]
+        _rescan_at = start + RESCAN_PER_CYCLE
 
     for r in rows:
         tid = r["thread_id"]
@@ -251,6 +278,7 @@ def rescan_edits(con, d: Discord, stats: dict) -> None:
                     "UPDATE messages SET deleted_at=? WHERE message_id=?",
                     (now(), g["message_id"]))
                 stats["deletions_found"] += 1
+        con.commit()
 
 
 def rebuild_derived(con, threads: list[dict]) -> None:
@@ -283,6 +311,7 @@ def rebuild_derived(con, threads: list[dict]) -> None:
         rec = ex.extract_thread({"thread": t, "messages": shaped})
         load.load_derived(con, rec)
         load.ensure_card(con, rec)
+        con.commit()
 
 
 def backfill(con, d: Discord, stats: dict) -> None:
@@ -302,6 +331,7 @@ def backfill(con, d: Discord, stats: dict) -> None:
             load.load_thread(con, {"thread": t}, stats)
             msgs = d.messages_after(t["id"], None)
             load.load_messages(con, t["id"], msgs, stats)
+            con.commit()
         rebuild_derived(con, threads)
         con.execute("UPDATE watched_channels SET backfilled_at=? WHERE channel_id=?",
                     (now(), cid))

@@ -27,6 +27,7 @@ from ernie_sync import Discord, GuildMismatch, load_env
 
 POLL_SECONDS = 30
 MAX_ATTEMPTS = 5
+CLAIM_STALE_S = 300    # a claim older than this belonged to a process that died
 
 
 def now() -> str:
@@ -51,6 +52,10 @@ def render(event) -> str | None:
         if verb == "thread_reopened":
             return "This thread was reopened, so it's back on the Bert board."
         return f"**{who}** reopened this in Bert."
+    if verb == "edited":
+        # new_value already holds a rendered summary of every field that moved,
+        # so a four-field edit is still one message.
+        return f"**{who}** updated this in Bert \u2014 {event['new_value']}"
     if verb == "undo_correction":
         return (f"Correction: **{who}** undid the previous update. "
                 f"Disregard the last message.")
@@ -77,9 +82,26 @@ def post_one(con, d: Discord, event) -> str:
     """
     tid = event["thread_id"]
     verb = event["verb"]
-    text = render(event)
 
-    if not text:
+    # Claim the row before saying anything to Discord. Posting first and
+    # marking afterwards left a window where an undo saw posted_at still NULL,
+    # decided nothing had gone out, and skipped the correction -- while the
+    # message was already on its way. The claim also keeps two outbox processes
+    # from both posting the same event.
+    claimed = con.execute(
+        """UPDATE events SET claimed_at=? WHERE event_id=?
+           AND claimed_at IS NULL AND posted_at IS NULL AND undone_at IS NULL""",
+        (now(), event["event_id"]))
+    con.commit()
+    if claimed.rowcount != 1:
+        return "skipped"          # undone, or another worker got there first
+
+    text = render(event)
+    # A rename is an action, not an announcement: Discord posts its own system
+    # message when a thread name changes, so render() stays quiet for it.
+    rename_to = event["new_value"] if verb == "renamed" else None
+
+    if not text and not rename_to:
         con.execute("UPDATE events SET posted_at=? WHERE event_id=?",
                     (now(), event["event_id"]))
         return "skipped"
@@ -93,7 +115,12 @@ def post_one(con, d: Discord, event) -> str:
             d.write("PATCH", f"/channels/{tid}", archived=False)
             con.execute("UPDATE threads SET archived=0 WHERE thread_id=?", (tid,))
 
-        msg = d.write("POST", f"/channels/{tid}/messages", content=text)
+        if rename_to:
+            d.write("PATCH", f"/channels/{tid}", name=rename_to)
+
+        msg = {}
+        if text:
+            msg = d.write("POST", f"/channels/{tid}/messages", content=text)
 
         # Now put it where it belongs.
         if verb in ARCHIVES:
@@ -114,14 +141,28 @@ def post_one(con, d: Discord, event) -> str:
     except GuildMismatch:
         raise                                  # config problem, not a bad row
     except Exception as e:
+        # Release the claim so the row is eligible again on the next pass.
         con.execute(
-            "UPDATE events SET attempts=attempts+1, last_error=? WHERE event_id=?",
+            """UPDATE events SET claimed_at=NULL, attempts=attempts+1,
+                                  last_error=? WHERE event_id=?""",
             (str(e)[:300], event["event_id"]))
         return "failed"
 
 
+def release_stale_claims(con) -> int:
+    """Free rows held by a worker that died mid-post."""
+    cur = con.execute(
+        """UPDATE events SET claimed_at=NULL
+           WHERE claimed_at IS NOT NULL AND posted_at IS NULL
+             AND datetime(claimed_at) < datetime('now', ?)""",
+        (f"-{CLAIM_STALE_S} seconds",))
+    con.commit()
+    return cur.rowcount
+
+
 def drain(con, d: Discord) -> dict:
     """Post everything that's due. Rows past MAX_ATTEMPTS are left alone."""
+    release_stale_claims(con)
     due = con.execute("SELECT * FROM v_outbox_due").fetchall()
     counts = {"sent": 0, "skipped": 0, "failed": 0}
 

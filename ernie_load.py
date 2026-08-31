@@ -32,10 +32,19 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def connect(path: str) -> sqlite3.Connection:
-    con = sqlite3.connect(path)
+def connect(path: str, timeout: float = 15.0) -> sqlite3.Connection:
+    """
+    Open the database.
+
+    timeout makes a blocked writer wait rather than raising 'database is
+    locked' immediately. It only helps if the other writer commits promptly,
+    which is why the sync passes commit per thread instead of per cycle.
+    """
+    con = sqlite3.connect(path, timeout=timeout)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA.read_text())
+    con.execute("PRAGMA busy_timeout = 15000")
+    con.execute("PRAGMA synchronous = NORMAL")
     return con
 
 
