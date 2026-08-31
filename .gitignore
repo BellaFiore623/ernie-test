@@ -1,0 +1,8 @@
+ernie.env
+ernie-test.env
+*.db
+*.db-*
+dump/
+logs/
+backups/
+__pycache__/
