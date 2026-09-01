@@ -1002,7 +1002,12 @@ class Card(QFrame):
         self.edit_btn.clicked.connect(self.enter_edit)
         foot.addWidget(self.edit_btn)
 
-        self.done_btn = QPushButton("Complete")
+        # Qt puts a button's icon on the left, always. Flipping this one
+        # button's layout direction puts the tick after the word instead; the
+        # trailing space is the gap Qt then doesn't leave between them, and is
+        # non-breaking so nothing trims it back off.
+        self.done_btn = QPushButton("Complete ")
+        self.done_btn.setLayoutDirection(Qt.RightToLeft)
         self.done_btn.setStyleSheet(BTN_HIT)
         self.done_btn.setIcon(tick_icon(OK_FG))
         self.done_btn.setIconSize(QSize(12, 12))
