@@ -52,6 +52,14 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 - Priority bands: `unassigned`, `critical`, `high`, `medium`, `low`. New
   threads land in `unassigned`; a human drags them out. Ties within a band
   are broken by a shared fractional `rank`.
+- Work is a list, not a field: `work_items`, one row per bubble on the card.
+  Rows are never deleted — a tick in view mode sets `done_at`, an ✕ in the
+  editor sets `removed_at`, and undo needs both rows still there. The editor
+  sends `work_add` / `work_remove`, not the whole list, so two people adding
+  different items merge instead of colliding.
+- `cards.action_item`, `build_state`, `return_state` and `direction` are
+  retired — work items replaced all four. Nothing shows or edits them; they
+  stay only so undo can reach an old `edited` event.
 - Ticket embeds carry no priority signal — `Priority` is always "High" and
   `Labels` always "Operations" in real data. Priority is set by hand in Bert.
 - `-- not found --` in an embed and `####` in an equipment ID are *pending*

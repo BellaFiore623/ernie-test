@@ -56,6 +56,10 @@ def render(event) -> str | None:
         # new_value already holds a rendered summary of every field that moved,
         # so a four-field edit is still one message.
         return f"**{who}** updated this in Bert \u2014 {event['new_value']}"
+    if verb == "work_done":
+        # new_value is the item's text, so the thread reads as a statement
+        # about the work rather than about the board.
+        return f"**{who}** finished: {event['new_value']}"
     if verb == "undo_correction":
         return (f"Correction: **{who}** undid the previous update. "
                 f"Disregard the last message.")

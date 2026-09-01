@@ -149,6 +149,10 @@ CREATE TABLE IF NOT EXISTS cards (
                  -- unassigned|critical|high|medium|low
                  -- new threads land in 'unassigned' until a human drags them
     rank         REAL NOT NULL,                   -- fractional, within priority
+    -- Superseded by work_items. Bert no longer shows or edits these four;
+    -- migrate_work_items.py copied their values across as bubbles. Kept
+    -- because old 'edited' events name them and undo still has to restore
+    -- one if somebody reaches that far back in the feed.
     build_state  TEXT NOT NULL DEFAULT 'needs_created',
     return_state TEXT NOT NULL DEFAULT 'needs_created',
     direction    TEXT,                            -- leaving | coming_back
@@ -160,6 +164,28 @@ CREATE TABLE IF NOT EXISTS cards (
 );
 
 CREATE INDEX IF NOT EXISTS ix_cards_sort ON cards(priority, rank);
+
+-- The bubbles on a card. What used to be one action_item string is a list:
+-- one row per item, typed in Bert, with no Discord representation.
+--
+-- Rows are never deleted. Ticking an item off in view mode sets done_at, and
+-- x-ing one out in the editor sets removed_at -- two different statements
+-- ("this happened" vs "this shouldn't be here"), and both are undoable from
+-- the feed, which needs the row still there to put back.
+CREATE TABLE IF NOT EXISTS work_items (
+    item_id    TEXT PRIMARY KEY,             -- uuid, minted by the API
+    thread_id  TEXT NOT NULL REFERENCES threads(thread_id),
+    body       TEXT NOT NULL,                -- what the person typed
+    position   REAL NOT NULL,                -- order on the card
+    created_at TEXT NOT NULL,
+    created_by TEXT,
+    done_at    TEXT,
+    done_by    TEXT,
+    removed_at TEXT,
+    removed_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_work_thread ON work_items(thread_id, position);
 
 -- Learned client resolutions. Turns fuzzy matching into exact lookup.
 CREATE TABLE IF NOT EXISTS client_aliases (
@@ -259,6 +285,7 @@ CREATE TABLE IF NOT EXISTS watched_channels (
     backfilled_at  TEXT               -- set once archived history is pulled
 );
 
-INSERT OR IGNORE INTO watched_channels (channel_id, name, mirror, generate_cards)
-VALUES ('1486095486011310080', 'customer-threads', 1, 1),
-       ('1067820797994999881', 'customer-support',  1, 0);
+-- No seed rows here on purpose. Channel ids are per-environment config, and
+-- this file is applied on every connect(), so hardcoding them pointed every
+-- new database -- test ones included -- at production's channels. They are
+-- registered from CARD_CHANNEL_IDS / HISTORY_CHANNEL_IDS at sync startup.

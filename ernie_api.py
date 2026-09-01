@@ -31,6 +31,7 @@ DB = "ernie.db"
 UNDO_WINDOW_S = 60      # how long before Ernie posts to the thread
 RANK_STEP = 1000.0
 PRIORITY_ORDER = ("unassigned", "critical", "high", "medium", "low")
+WORK_ITEM_MAX = 200     # a bubble, not a paragraph -- it has to fit on a card
 
 app = FastAPI(title="Ernie", version="0.1")
 
@@ -130,6 +131,10 @@ class EditBody(BaseModel):
     return_state: Optional[str] = None
     direction: Optional[str] = None
     title: Optional[str] = None     # the Discord thread name; renames the thread
+    # Work items are a list, so the editor sends what it did rather than the
+    # whole list: texts typed in, and the ids of bubbles x-ed out.
+    work_add: list[str] = []
+    work_remove: list[str] = []
     actor: str
     key: Optional[str] = None
     # What the editor was showing when it opened. Lets the server tell a field
@@ -139,6 +144,10 @@ class EditBody(BaseModel):
     force: bool = False             # save anyway, overwriting the other person
 
 
+# Bert stopped sending the last four when work items replaced them, so an edit
+# now only ever carries client_override. They stay in the tuple because undo
+# reads it to decide what an old 'edited' event is allowed to put back, and the
+# feed still has those events in it.
 EDITABLE = ("client_override", "action_item", "build_state",
             "return_state", "direction")
 
@@ -164,6 +173,7 @@ VALUE_LABEL = {
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
     "events": ["claimed_at"],
+    "work_items": ["item_id", "done_at"],
 }
 
 
@@ -202,6 +212,14 @@ def last_touch(con, thread_id: str) -> dict:
         return {}
     return {"by": e["actor_name"] or "Someone", "at": e["occurred_at"],
             "verb": e["verb"], "detail": e["new_value"]}
+
+
+def open_items(con, thread_id: str) -> list[dict]:
+    """The bubbles a card is currently showing: not ticked off, not removed."""
+    return rows(con.execute(
+        """SELECT item_id, body, created_at, created_by FROM work_items
+           WHERE thread_id=? AND done_at IS NULL AND removed_at IS NULL
+           ORDER BY position""", (thread_id,)))
 
 
 def guard_open(card, doing: str = "change"):
@@ -289,8 +307,19 @@ def cards(
                ORDER BY occurred_at"""):
         pending[r["thread_id"]] = r["new_value"]      # newest wins
 
+    # One query for every card's bubbles rather than one per card; the board
+    # is redrawn on every poll and this sits in that path.
+    items: dict[str, list] = {}
+    for r in con.execute(
+            """SELECT thread_id, item_id, body FROM work_items
+               WHERE done_at IS NULL AND removed_at IS NULL
+               ORDER BY thread_id, position"""):
+        items.setdefault(r["thread_id"], []).append(
+            {"item_id": r["item_id"], "body": r["body"]})
+
     # equipment and open issues per card
     for c in out:
+        c["work_items"] = items.get(c["thread_id"], [])
         c["title_pending"] = False
         proposed = pending.get(c["thread_id"])
         if proposed:
@@ -338,6 +367,7 @@ def card_detail(thread_id: str):
         raise HTTPException(404, "no such card")
 
     d = dict(card)
+    d["work_items"] = open_items(con, thread_id)
     d["equipment"] = rows(con.execute(
         "SELECT eq_type, eq_number, state, raw FROM thread_equipment WHERE thread_id=?",
         (thread_id,)))
@@ -444,12 +474,30 @@ def move_card(thread_id: str, body: MoveBody):
         card = load_card(con, thread_id)
         guard_open(card, "move")
 
-        def rank_of(tid):
-            r = con.execute("SELECT rank FROM cards WHERE thread_id=?", (tid,)).fetchone()
-            return r["rank"] if r else None
+        # Bert can only send neighbours it can see. With a queue filter or a
+        # search on, the card on the far side of the gap may be hidden, and the
+        # midpoint between two visible cards can land straight on top of a
+        # hidden one -- equal ranks, and an arbitrary order the moment the
+        # filter comes off. So anchor to the neighbour the person actually
+        # dropped against and take the other side from the whole band. With no
+        # filter on, the visible neighbour is the real one and this is the
+        # midpoint it always was.
+        band = con.execute(
+            """SELECT thread_id, rank FROM cards
+               WHERE priority=? AND thread_id<>? AND completed_at IS NULL
+               ORDER BY rank""", (body.priority, thread_id)).fetchall()
+        ids = [r["thread_id"] for r in band]
+        ranks = [r["rank"] for r in band]
 
-        lo = rank_of(body.after_id) if body.after_id else None
-        hi = rank_of(body.before_id) if body.before_id else None
+        lo = hi = None
+        if body.after_id in ids:
+            i = ids.index(body.after_id)
+            lo = ranks[i]
+            hi = ranks[i + 1] if i + 1 < len(ranks) else None
+        elif body.before_id in ids:
+            j = ids.index(body.before_id)
+            hi = ranks[j]
+            lo = ranks[j - 1] if j > 0 else None
 
         if lo is not None and hi is not None:
             new_rank = (lo + hi) / 2
@@ -458,9 +506,7 @@ def move_card(thread_id: str, body: MoveBody):
         elif hi is not None:
             new_rank = hi - RANK_STEP
         else:
-            top = con.execute("SELECT MAX(rank) m FROM cards WHERE priority=?",
-                              (body.priority,)).fetchone()
-            new_rank = (top["m"] or 0) + RANK_STEP
+            new_rank = (ranks[-1] + RANK_STEP) if ranks else RANK_STEP
 
         con.execute(
             "UPDATE cards SET priority=?, rank=?, updated_at=? WHERE thread_id=?",
@@ -582,6 +628,53 @@ def reopen(thread_id: str, body: ActorBody):
         con.close()
 
 
+@app.post("/cards/{thread_id}/work/{item_id}/done")
+def finish_work_item(thread_id: str, item_id: str, body: ActorBody):
+    """
+    Tick a work item off from the card, without opening the editor.
+
+    Its own event, not a batched one: this is a single deliberate click, and
+    the thread should hear what got finished rather than "the card changed".
+    """
+    actor = require_actor(body.actor)
+    con = rw()
+    try:
+        cached = replay(con, body.key)
+        if cached:
+            return cached
+
+        card = load_card(con, thread_id)
+        guard_open(card, "tick off a work item")
+
+        item = con.execute(
+            "SELECT * FROM work_items WHERE item_id=? AND thread_id=?",
+            (item_id, thread_id)).fetchone()
+        if not item or item["removed_at"]:
+            raise HTTPException(404, "no such work item")
+        if item["done_at"]:
+            who = item["done_by"] or "Someone"
+            conflict("already_done", f"{who} already ticked that one off.",
+                     by=who, at=item["done_at"])
+
+        con.execute("UPDATE work_items SET done_at=?, done_by=? WHERE item_id=?",
+                    (now_iso(), actor, item_id))
+        con.execute("UPDATE cards SET updated_at=? WHERE thread_id=?",
+                    (now_iso(), thread_id))
+
+        # old_value is the id so undo can find the row again; new_value is the
+        # text, because that is what the thread message says.
+        eid = log_event(con, thread_id=thread_id, verb="work_done", actor=actor,
+                        old=item_id, new=item["body"], post=True)
+
+        result = {"thread_id": thread_id, "item_id": item_id,
+                  "done": True, "event_id": eid, "summary": item["body"]}
+        remember(con, body.key, result)
+        con.commit()
+        return result
+    finally:
+        con.close()
+
+
 @app.post("/events/{event_id}/undo")
 def undo(event_id: str, body: ActorBody):
     """
@@ -648,6 +741,18 @@ def undo(event_id: str, body: ActorBody):
                 con.execute(
                     f"UPDATE cards SET {sets}, updated_at=? WHERE thread_id=?",
                     (*restore.values(), now_iso(), e["thread_id"]))
+            # Bubbles the same save added come back off the card, and ones it
+            # removed go back on.
+            work = previous.get("__work__") or {}
+            for iid in work.get("added") or []:
+                con.execute("UPDATE work_items SET removed_at=?, removed_by=? "
+                            "WHERE item_id=?", (now_iso(), actor, iid))
+            for iid in work.get("removed") or []:
+                con.execute("UPDATE work_items SET removed_at=NULL, "
+                            "removed_by=NULL WHERE item_id=?", (iid,))
+        elif e["verb"] == "work_done":
+            con.execute("UPDATE work_items SET done_at=NULL, done_by=NULL "
+                        "WHERE item_id=?", (e["old_value"],))
         elif e["verb"].startswith("set_"):
             col = e["verb"][4:]
             if col not in EDITABLE:
@@ -751,8 +856,46 @@ def edit_card(thread_id: str, body: EditBody):
         changes = {f: v for f, v in intended.items() if v != (card[f] or "")}
         renaming = wants_rename and new_title != current_title
 
-        if not changes and not renaming:
-            return {"thread_id": thread_id, "changed": {}, "event_id": None}
+        # Bubbles take no part in the clash check above, and don't need to: two
+        # people adding different items both get what they typed, and removing
+        # one somebody else already removed is a no-op. A list merges where a
+        # single field has to pick a winner.
+        ts = now_iso()
+        added, removed = [], []
+        typed = [t.strip() for t in body.work_add if t and t.strip()]
+        if any(len(t) > WORK_ITEM_MAX for t in typed):
+            raise HTTPException(400, f"A work item is limited to "
+                                     f"{WORK_ITEM_MAX} characters.")
+        if typed:
+            pos = con.execute("SELECT COALESCE(MAX(position), 0) FROM work_items"
+                              " WHERE thread_id=?", (thread_id,)).fetchone()[0]
+            for text in typed:
+                pos += 1
+                iid = str(uuid.uuid4())
+                con.execute(
+                    """INSERT INTO work_items (item_id, thread_id, body,
+                                               position, created_at, created_by)
+                       VALUES (?,?,?,?,?,?)""",
+                    (iid, thread_id, text, pos, ts, actor))
+                added.append({"item_id": iid, "body": text})
+
+        for iid in body.work_remove:
+            r = con.execute(
+                """SELECT body FROM work_items WHERE item_id=? AND thread_id=?
+                   AND removed_at IS NULL AND done_at IS NULL""",
+                (iid, thread_id)).fetchone()
+            if not r:
+                continue                  # already gone; nothing to report
+            con.execute("UPDATE work_items SET removed_at=?, removed_by=? "
+                        "WHERE item_id=?", (ts, actor, iid))
+            removed.append({"item_id": iid, "body": r["body"]})
+
+        work = {"added": added, "removed": removed}
+        touched = bool(changes or added or removed)
+
+        if not touched and not renaming:
+            return {"thread_id": thread_id, "changed": {}, "event_id": None,
+                    "work": work}
 
         rename_event = None
         if renaming:
@@ -760,30 +903,44 @@ def edit_card(thread_id: str, body: EditBody):
                                      actor=actor, old=current_title,
                                      new=new_title, post=True)
 
-        if not changes:
-            result = {"thread_id": thread_id, "changed": {},
+        if not touched:
+            result = {"thread_id": thread_id, "changed": {}, "work": work,
                       "event_id": rename_event, "renamed": new_title,
                       "summary": f"title: {current_title} -> {new_title}"}
             remember(con, body.key, result)
             con.commit()
             return result
 
-        sets = ", ".join(f"{f}=?" for f in changes)
-        con.execute(f"UPDATE cards SET {sets}, updated_at=? WHERE thread_id=?",
-                    (*changes.values(), now_iso(), thread_id))
+        if changes:
+            sets = ", ".join(f"{f}=?" for f in changes)
+            con.execute(f"UPDATE cards SET {sets}, updated_at=? WHERE thread_id=?",
+                        (*changes.values(), ts, thread_id))
+        else:
+            con.execute("UPDATE cards SET updated_at=? WHERE thread_id=?",
+                        (ts, thread_id))
 
         parts = []
         for f, v in changes.items():
             old = card[f] or "(empty)"
             parts.append(f"{FIELD_LABEL[f]}: "
                          f"{VALUE_LABEL.get(old, old)} -> {VALUE_LABEL.get(v, v)}")
+        if added:
+            parts.append("added " + ", ".join(f'"{a["body"]}"' for a in added))
+        if removed:
+            parts.append("dropped " + ", ".join(f'"{r["body"]}"' for r in removed))
         summary = "; ".join(parts)
 
-        eid = log_event(con, thread_id=thread_id, verb="edited", actor=actor,
-                        old=json.dumps({f: card[f] for f in changes}),
-                        new=summary, post=True)
+        # __work__ is not a column name, so undo's "is this an editable field"
+        # filter passes over it and the work-item branch picks it up instead.
+        previous = {f: card[f] for f in changes}
+        if added or removed:
+            previous["__work__"] = {"added": [a["item_id"] for a in added],
+                                    "removed": [r["item_id"] for r in removed]}
 
-        result = {"thread_id": thread_id, "changed": changes,
+        eid = log_event(con, thread_id=thread_id, verb="edited", actor=actor,
+                        old=json.dumps(previous), new=summary, post=True)
+
+        result = {"thread_id": thread_id, "changed": changes, "work": work,
                   "event_id": eid, "summary": summary,
                   "renamed": new_title if renaming else None,
                   "rename_event": rename_event}
