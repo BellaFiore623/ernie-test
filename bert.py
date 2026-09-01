@@ -431,6 +431,47 @@ def warning_row(text, fg, size=11):
     return row
 
 
+def chrome_button(glyph, tip):
+    """A square button carrying one symbol: refresh, settings.
+
+    Same size and weight for each, so a row of them reads as a set rather
+    than as several unrelated controls.
+    """
+    b = QPushButton(glyph)
+    b.setFixedSize(30, 28)
+    b.setCursor(Qt.PointingHandCursor)
+    b.setToolTip(tip)
+    # 14px leaves the glyph box room inside a 28px button -- the lesson the
+    # caution sign taught, where the two were the same height and it clipped.
+    b.setStyleSheet("font-size:14px;")
+    return b
+
+
+def tick_icon(colour, side=12):
+    """A check mark drawn rather than typed.
+
+    A tick character comes from whichever font happens to have one, at
+    whatever weight and baseline it likes. Two strokes are the same shape and
+    the same colour everywhere, and can be green while the label stays black.
+    """
+    scale = 2                       # drawn at 2x so it stays sharp when scaled
+    pm = QPixmap(side * scale, side * scale)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(colour), 2.0 * scale)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    n = side * scale
+    p.drawPolyline([QPoint(int(n * 0.18), int(n * 0.52)),
+                    QPoint(int(n * 0.42), int(n * 0.76)),
+                    QPoint(int(n * 0.84), int(n * 0.24))])
+    p.end()
+    pm.setDevicePixelRatio(scale)
+    return QIcon(pm)
+
+
 def chip(text, bg, fg, dashed=False):
     lab = QLabel(text)
     lab.setStyleSheet(
@@ -963,6 +1004,8 @@ class Card(QFrame):
 
         self.done_btn = QPushButton("Complete")
         self.done_btn.setStyleSheet(BTN_HIT)
+        self.done_btn.setIcon(tick_icon(OK_FG))
+        self.done_btn.setIconSize(QSize(12, 12))
         self.done_btn.clicked.connect(lambda: self.board.complete(self.thread_id))
         foot.addWidget(self.done_btn)
         self.body.addLayout(foot)
@@ -2044,20 +2087,13 @@ class Bert(QMainWindow):
         self.fresh.setStyleSheet(f"color:{MUTED}; font-size:11px;")
         lay.addWidget(self.fresh)
 
-        self.refresh_btn = QPushButton("\u21bb  Refresh")
-        self.refresh_btn.setStyleSheet(BTN_HIT)
+        self.refresh_btn = chrome_button("\u21bb", "Refresh")
         self.refresh_btn.clicked.connect(self.refresh)
         lay.addWidget(self.refresh_btn)
 
         self.who = QLabel("")
         lay.addWidget(self.who)
-        gear = QPushButton("\u2699")
-        gear.setFixedSize(30, 28)
-        gear.setCursor(Qt.PointingHandCursor)
-        gear.setToolTip("Settings")
-        # 14px: the cog's glyph box is 19px tall against a 28px button, so it
-        # has the room the caution sign didn't.
-        gear.setStyleSheet("font-size:14px;")
+        gear = chrome_button("\u2699", "Settings")
         gear.clicked.connect(self.open_settings)
         lay.addWidget(gear)
         return bar
@@ -2193,7 +2229,7 @@ class Bert(QMainWindow):
         # underneath itself -- "QThread: Destroyed while thread is running".
         if self.poller is not None and self.poller.isRunning():
             return
-        self.refresh_btn.setText("\u21bb  ...")
+        self.refresh_btn.setToolTip("Refreshing\u2026")
         self.poller = Poller(self.api)
         self.poller.loaded.connect(self.on_loaded)
         self.poller.failed.connect(self.on_failed)
@@ -2204,7 +2240,7 @@ class Bert(QMainWindow):
         self.connected = True
         self.last_sync = time.time()
         self.banner.hide()
-        self.refresh_btn.setText("\u21bb  Refresh")
+        self.refresh_btn.setToolTip("Refresh")
         incoming = p["board"]["cards"]
         self.feed = p["events"]["events"]
 
@@ -2268,7 +2304,7 @@ class Bert(QMainWindow):
                            f"Saving will ask you before overwriting.")
 
     def on_failed(self, err):
-        self.refresh_btn.setText("\u21bb  Refresh")
+        self.refresh_btn.setToolTip("Refresh")
         t = time.time()
         if self.fail_since is None:
             self.fail_since = t
