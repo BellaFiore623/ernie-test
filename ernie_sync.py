@@ -190,6 +190,47 @@ class Discord:
 # Passes
 # --------------------------------------------------------------------------
 
+def register_channels(con, d: Discord, guild_id: str, cards: str,
+                      history: str) -> None:
+    """Bring watched_channels in line with the env file.
+
+    Channel ids are per-environment config, not schema. They used to be seeded
+    from schema.sql, which meant every new database -- including a fresh test
+    one -- came up watching production's channels.
+
+    Listing a channel here adds or updates it. Dropping one does NOT unwatch
+    it: delete the row by hand. A typo in an env file must not be able to
+    quietly stop production syncing.
+    """
+    wanted = [(cid, gen)
+              for ids, gen in ((cards, 1), (history, 0))
+              for cid in (ids or "").replace(",", " ").split()]
+    if not wanted:
+        return
+
+    for cid, gen in wanted:
+        ch = d.get(f"/channels/{cid}")
+        if ch is None:
+            print(f"  channel {cid}: can't see it, leaving it unregistered",
+                  file=sys.stderr)
+            continue
+        # Same guard as everywhere else: the env file names the guild, and a
+        # channel from any other one has no business in this database.
+        if ch.get("guild_id") != guild_id:
+            print(f"  channel {cid} is in guild {ch.get('guild_id')}, not "
+                  f"{guild_id}. Not registering it.", file=sys.stderr)
+            continue
+        con.execute(
+            "INSERT INTO watched_channels "
+            "       (channel_id, name, mirror, generate_cards) "
+            "VALUES (?, ?, 1, ?) "
+            "ON CONFLICT(channel_id) DO UPDATE SET "
+            "  name=excluded.name, mirror=1, "
+            "  generate_cards=excluded.generate_cards",
+            (cid, ch.get("name"), gen))
+    con.commit()
+
+
 def watched(con, cards_only=False):
     q = "SELECT channel_id, name, generate_cards FROM watched_channels WHERE mirror=1"
     if cards_only:
@@ -403,6 +444,14 @@ def main() -> None:
     if allow and not who["writes"]:
         print(f"  note: ALLOW_DISCORD_WRITES={allow} does not match this "
               f"guild, so writes stay blocked", file=sys.stderr)
+
+    register_channels(con, d, guild,
+                      os.environ.get("CARD_CHANNEL_IDS", ""),
+                      os.environ.get("HISTORY_CHANNEL_IDS", ""))
+    # Second half of saying it out loud: which channels, not just which guild.
+    for c in watched(con).values():
+        kind = "cards" if c["generate_cards"] else "history only"
+        print(f"  watching #{c['name']} ({c['channel_id']}) -- {kind}")
 
     first = True
     while True:
