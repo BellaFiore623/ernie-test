@@ -29,8 +29,8 @@ from PySide6.QtCore import (
     QMimeData, QPoint, QRect, QSize, Qt, QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QCursor, QDrag, QFont, QFontMetrics, QPainter, QPalette,
-    QPen, QPixmap,
+    QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon, QPainter,
+    QPalette, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
@@ -39,6 +39,9 @@ from PySide6.QtWidgets import (
 )
 
 SETTINGS = pathlib.Path.home() / ".bert.json"
+# Beside the script rather than in the settings directory: it ships with the
+# code, and a checkout without it should still start.
+LOGO = pathlib.Path(__file__).with_name("bert_logo.png")
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 TOAST_MS = 6_000      # a ceiling, not a duration: the toast normally clears the
@@ -1886,6 +1889,8 @@ class Bert(QMainWindow):
         self.completing = set()     # closed here, still drawn on the board
 
         self.setWindowTitle("Bert")
+        if LOGO.exists():
+            self.setWindowIcon(QIcon(str(LOGO)))
         self.resize(1000, 840)
         self.setStyleSheet(f"QMainWindow {{ background:{CANVAS}; }}")
 
@@ -1961,12 +1966,26 @@ class Bert(QMainWindow):
         lay.setContentsMargins(16, 10, 16, 10)
         lay.setSpacing(10)
 
-        title = QLabel("Needs done")
+        mark = QPixmap(str(LOGO))
+        if not mark.isNull():
+            logo = QLabel()
+            # Scaled for the display it lands on, so it isn't a blur on a
+            # HiDPI screen -- the file is 128px for exactly that reason.
+            dpr = self.devicePixelRatioF() or 1.0
+            side = int(26 * dpr)
+            shown = mark.scaled(side, side, Qt.KeepAspectRatio,
+                                Qt.SmoothTransformation)
+            shown.setDevicePixelRatio(dpr)
+            logo.setPixmap(shown)
+            logo.setStyleSheet("background:transparent;")
+            lay.addWidget(logo)
+
+        title = QLabel("Bert")
         f = QFont()
         f.setPointSize(14)
         f.setWeight(QFont.DemiBold)
         title.setFont(f)
-        title.setStyleSheet(f"color:{INK};")
+        title.setStyleSheet(f"color:{INK}; background:transparent;")
         lay.addWidget(title)
 
         self.count = QLabel("")
@@ -2565,10 +2584,12 @@ class Bert(QMainWindow):
             return True
 
         shown = [c for c in self.cards if keep(c)]
+        # Only the part worth acting on. The open count was a number nobody
+        # did anything with -- the board itself says how much there is.
         problems = sum(1 for c in shown if needs_triage(c))
-        attention = (f"  &middot;  <span style='color:{RED_FG}'>"
-                     f"{problems} need attention</span>") if problems else ""
-        self.count.setText(f"{len(shown)} open{attention}")
+        self.count.setText(
+            f"<span style='color:{RED_FG}'>{problems} need attention</span>"
+            if problems else "")
 
         # Collect the bands in the order they're drawn, because that is not the
         # order the server sent: unassigned floats its unreadable threads to the
