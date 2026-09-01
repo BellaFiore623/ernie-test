@@ -62,6 +62,7 @@ EDGE_SCROLL_ZONE = 64       # holding a card this close to the edge scrolls
 EDGE_SCROLL_MAX = 22        # px per tick right at the edge
 EDGE_SCROLL_MS = 16
 RAIL_WIDTH = 208            # the side rail: wide enough for a client name
+BOARD_PAD = 16              # gutter either side of the bands in the column
 BOARD_MAX = 800             # a ticket stops growing here, however wide the
                             # window gets. A card running the full width of a
                             # large monitor puts its client name and its
@@ -94,6 +95,11 @@ NEUTRAL = ("#9AA0A6", "#EEEFF1", "#3C4043")
 
 INK, MUTED, LINE = "#1F2124", "#6B7075", "#DFE1E4"
 SURFACE, CANVAS = "#FFFFFF", "#F5F6F7"
+# Behind and to the right of the board column. A shade under the canvas, so a
+# wide window reads as a column of work with room beside it rather than one
+# undifferentiated field -- and so there is somewhere obvious for a second
+# panel to go later.
+BESIDE = "#EAECEE"
 AMBER_BG, AMBER_FG = "#FCF3E2", "#8A5A08"
 RED_BG, RED_FG, RED_EDGE = "#FBEBEB", "#9B2C2C", "#D14343"
 OK_FG, ACCENT = "#2E6B34", "#2B6CB0"
@@ -1930,10 +1936,26 @@ class Bert(QMainWindow):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.setStyleSheet(f"background:{CANVAS};")
+        # The area around the column, set through the palette rather than a
+        # stylesheet: a bare `background:` on the scroll area cascades into
+        # every band and card inside it.
+        vp = self.scroll.viewport()
+        vp.setAutoFillBackground(True)
+        pal = vp.palette()
+        pal.setColor(QPalette.Window, QColor(BESIDE))
+        vp.setPalette(pal)
+        # Widget smaller than the viewport: pin it left, don't centre it.
+        self.scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
         board = QWidget()
+        board.setObjectName("boardColumn")
+        # The column keeps the canvas colour and stops where the bands stop,
+        # with an edge to say so. Scoped to the id: a bare selector would hand
+        # the same background to every band and card under it.
+        board.setStyleSheet(f"#boardColumn {{ background:{CANVAS};"
+                            f" border-right:1px solid {LINE}; }}")
         self.board_lay = QVBoxLayout(board)
-        self.board_lay.setContentsMargins(16, 10, 16, 24)
+        self.board_lay.setContentsMargins(BOARD_PAD, 10, BOARD_PAD, 24)
         self.board_lay.setSpacing(16)
 
         self.bands = {}
@@ -1941,6 +1963,8 @@ class Bert(QMainWindow):
             self.bands[b] = Band(b, self)
             self.board_lay.addWidget(self.bands[b])
         self.board_lay.addStretch()
+        # + the column's own margins, so the edge sits just clear of the cards.
+        board.setMaximumWidth(BOARD_MAX + BOARD_PAD * 2)
         self.scroll.setWidget(board)
 
         self.rail = Rail(self)
