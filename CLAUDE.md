@@ -20,6 +20,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie_backup.py` | Online SQLite backup with rotation. |
 | `q.py` | Ad-hoc SQL helper. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
+| `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 
 ## Hard rules
 
@@ -87,9 +88,25 @@ activity feed, undo, and the outbox.
 
 ```bash
 ./run.sh test bert          # sandbox: sync + outbox + api + bert
+./run.sh test bert lan      # same, API reachable from other machines
 ./run.sh prod               # production: sync + api only, no outbox
 python ernie_sync.py --once --env ernie-test.env --db ernie-test.db
 ```
+
+## Testing with somebody else
+
+One backend, two Berts. You run `./run.sh test bert lan`, which binds the API
+to every interface and prints the address to hand over; they run `bert.cmd`,
+which asks for that address once and remembers it. They need Python and a
+clone -- no token, no database, no migration. Both of you set your own name in
+Settings, and the events carry whoever made them.
+
+Do not have them run `run.sh`: a second sync and outbox against their own
+database is a second board, not a shared one.
+
+The API has no authentication, so on `lan` anyone who can reach the port can
+move cards and post to the thread. Trusted network, for as long as the test
+lasts, never port-forwarded. `lan` is refused outright for `prod`.
 
 Environment: Windows, Git Bash (MINGW64), Python 3.13, SQLite in WAL mode.
 
