@@ -21,6 +21,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `q.py` | Ad-hoc SQL helper. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
+| `TESTING.md` | Hand this to the tester. Setup on their own laptop, start to finish. |
 
 ## Hard rules
 
