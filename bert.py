@@ -62,6 +62,13 @@ EDGE_SCROLL_ZONE = 64       # holding a card this close to the edge scrolls
 EDGE_SCROLL_MAX = 22        # px per tick right at the edge
 EDGE_SCROLL_MS = 16
 RAIL_WIDTH = 208            # the side rail: wide enough for a client name
+BOARD_MAX = 800             # a ticket stops growing here, however wide the
+                            # window gets. A card running the full width of a
+                            # large monitor puts its client name and its
+                            # buttons a foot apart, and the tint has to stop
+                            # where the cards do or the band is a slab of
+                            # colour with nothing in most of it. Left aligned,
+                            # so the board stays a column next to the rail.
 FEED_HEIGHT = 160           # only until the first render measures the rows
 FEED_FOLDED = 30            # just the caption, when it's folded away
 FEED_ROWS = 4               # entries shown, and the height held open for them
@@ -1232,6 +1239,7 @@ class Band(QWidget):
         self._sig = None
         self.collapsed = False
         self.setAcceptDrops(True)
+        self.setMaximumWidth(BOARD_MAX)
 
         tint = BAND_TINT[priority]
         accent = BAND_TEXT[priority]
