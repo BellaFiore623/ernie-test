@@ -56,6 +56,17 @@ def render(event) -> str | None:
         # new_value already holds a rendered summary of every field that moved,
         # so a four-field edit is still one message.
         return f"**{who}** updated this in Bert \u2014 {event['new_value']}"
+    if verb == "priority_changed":
+        # Only queued for critical in either direction; see move_card. Say
+        # which way it went, because "priority changed" on its own tells the
+        # thread nothing it can act on.
+        old, new = event["old_value"], event["new_value"]
+        if new == "critical":
+            return f"**{who}** made this **critical** in Bert."
+        if old == "critical":
+            return (f"**{who}** took this out of critical in Bert "
+                    f"— it's {new or 'unassigned'} now.")
+        return None
     if verb == "work_done":
         # new_value is the item's text, so the thread reads as a statement
         # about the work rather than about the board.

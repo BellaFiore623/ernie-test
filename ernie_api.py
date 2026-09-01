@@ -513,8 +513,13 @@ def move_card(thread_id: str, body: MoveBody):
             (body.priority, new_rank, now_iso(), thread_id))
 
         if card["priority"] != body.priority:
+            # In or out of critical is the one band change the thread should
+            # hear about. The rest is board housekeeping -- posting every
+            # nudge between high and medium would be noise in a customer
+            # thread, and nobody reading it could act on it.
+            loud = "critical" in (card["priority"], body.priority)
             log_event(con, thread_id=thread_id, verb="priority_changed", actor=actor,
-                      old=card["priority"], new=body.priority)
+                      old=card["priority"], new=body.priority, post=loud)
         else:
             log_event(con, thread_id=thread_id, verb="reordered", actor=actor)
 

@@ -79,6 +79,9 @@ Every change writes one row to `events`. That single table backs the
 activity feed, undo, and the outbox.
 
 - `dispatch_after` = when Ernie may post. `NULL` means never post.
+- Priority moves are silent except in or out of `critical`, which posts. Every
+  other band change, and every reorder within a band, is board housekeeping:
+  posting each nudge between high and medium is noise in a customer thread.
 - Undo inside the window deletes nothing from Discord because nothing was
   ever sent. Undo after it posts a correction message instead.
 - Edits are **batched**: saving four fields writes one event and posts one
