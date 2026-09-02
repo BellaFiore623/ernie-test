@@ -15,3 +15,6 @@ __pycache__/
 
 # stray `git init`, not a real backup
 ernie-test-backup/
+
+# a clone of this repo made inside itself, following TESTING.md step 2
+/ernie-test/
