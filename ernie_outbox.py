@@ -39,7 +39,33 @@ def now() -> str:
 # Message text
 # --------------------------------------------------------------------------
 
-def render(event) -> str | None:
+def describe(e) -> str:
+    """
+    What an event did, phrased to follow "undid".
+
+    Named rather than pointed at, because "the last message" stops being true
+    the moment anything else is posted in the thread -- another person's
+    update, or Ernie's own next one.
+    """
+    verb, old, new = e["verb"], e["old_value"], e["new_value"]
+    if verb == "completed":
+        return "marking this complete"
+    if verb == "priority_changed":
+        if new == "critical":
+            return "making this critical"
+        if old == "critical":
+            return f"taking this out of critical (to {new or 'unassigned'})"
+        return f"the move to {new}"
+    if verb == "work_done":
+        return f"finishing “{new}”" if new else "finishing a work item"
+    if verb == "edited":
+        return f"the edit — {new}" if new else "the edit"
+    if verb == "renamed":
+        return "the rename"
+    return "the previous update"
+
+
+def render(event, original=None) -> str | None:
     """
     Turn an event row into thread text. Returning None means 'nothing to say'
     -- the event still gets marked posted so it doesn't retry forever.
@@ -73,8 +99,8 @@ def render(event) -> str | None:
         # about the work rather than about the board.
         return f"**{who}** finished: {event['new_value']}"
     if verb == "undo_correction":
-        return (f"Correction: **{who}** undid the previous update. "
-                f"Disregard the last message.")
+        what = describe(original) if original else "the previous update"
+        return f"Correction: **{who}** undid {what}."
     return None
 
 
@@ -112,7 +138,17 @@ def post_one(con, d: Discord, event) -> str:
     if claimed.rowcount != 1:
         return "skipped"          # undone, or another worker got there first
 
-    text = render(event)
+    # A correction names the event it retracts, so it can say what was undone
+    # and reply straight to the message that said it -- which stays right
+    # however many messages land in between.
+    original = reply_to = None
+    if verb == "undo_correction" and event["new_value"]:
+        original = con.execute("SELECT * FROM events WHERE event_id=?",
+                               (event["new_value"],)).fetchone()
+        if original:
+            reply_to = original["discord_message_id"]
+
+    text = render(event, original)
     # A rename is an action, not an announcement: Discord posts its own system
     # message when a thread name changes, so render() stays quiet for it.
     rename_to = event["new_value"] if verb == "renamed" else None
@@ -136,7 +172,14 @@ def post_one(con, d: Discord, event) -> str:
 
         msg = {}
         if text:
-            msg = d.write("POST", f"/channels/{tid}/messages", content=text)
+            body = {"content": text}
+            if reply_to:
+                # fail_if_not_exists lets it post as a plain message if the
+                # one it points at has been deleted, rather than 400ing and
+                # retrying until it gives up.
+                body["message_reference"] = {"message_id": reply_to,
+                                             "fail_if_not_exists": False}
+            msg = d.write("POST", f"/channels/{tid}/messages", **body)
 
         # Now put it where it belongs.
         if verb in ARCHIVES:

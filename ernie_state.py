@@ -43,6 +43,7 @@ FORMAT_VERSION = 1
 CONTENT_MAX = 2000          # Discord's cap on message content
 SKEW_WARN_S = 120           # clock difference worth saying out loud
 SUMMARY_MARK = "**Board**"  # first characters of the human summary message
+SUMMARY_HEARTBEAT_S = 600   # how stale "last checked" may get before a rewrite
 # The order Bert shows the bands in. The summary reads the same way round
 # as the board it describes, or comparing the two is needless work.
 BAND_ORDER = ("unassigned", "critical", "high", "medium", "low")
@@ -87,6 +88,18 @@ class Card:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def discord_time(iso: str, style: str = 'R') -> str:
+    """
+    An ISO timestamp as Discord's own markup, which the reader's client
+    renders in their timezone and keeps current by itself. A plain string
+    would have to be rewritten for the "ago" to stay true.
+    """
+    try:
+        return f'<t:{int(datetime.fromisoformat(iso).timestamp())}:{style}>'
+    except (ValueError, TypeError):
+        return 'at an unknown time'
 
 
 # -- the message ------------------------------------------------------------
@@ -281,11 +294,12 @@ def render_summary(cards: list[Card]) -> str:
     """
     live = [c for c in cards if not c.completed]
     pos = positions(cards)
-    # No timestamp in here on purpose. It would differ on every publish, so
-    # the summary would rewrite itself every cycle for nothing -- Discord
-    # stamps its own edit time, which is the same information for free.
+    # Discord's own timestamp markup: the reader's client renders these in
+    # their timezone and keeps the "ago" current by itself, so the message
+    # doesn't have to be rewritten for the clock to stay right.
     lines = [f"{SUMMARY_MARK} — {len(live)} open, {len(cards) - len(live)} closed",
              "_the running order both boards should agree on_"]
+    lines.append(f"last checked {discord_time(now_iso())}")
 
     for band in BAND_ORDER:
         in_band = sorted((c for c in live if c.priority == band),
@@ -311,15 +325,34 @@ def render_summary(cards: list[Card]) -> str:
     return out
 
 
+CHECKED = re.compile(r"last checked <t:(\d+):")
+
+
+def without_stamp(content: str) -> str:
+    """The summary minus its clock, which changes on every publish."""
+    return "\n".join(l for l in (content or "").splitlines()
+                     if not l.startswith("last checked "))
+
+
 def publish_summary(d: Discord, cid: str, cards: list[Card],
                     existing: dict | None) -> str:
-    """Post or edit the summary. Returns what happened, for the caller's count."""
+    """
+    Post or edit the summary. Returns what happened, for the caller's count.
+
+    "last checked" is what tells a reader whether to trust what they are
+    looking at, so it has to keep moving -- but rewriting the message every
+    cycle just to advance a clock is noise. So: rewrite whenever the board
+    itself changed, and otherwise only once the stamp has gone stale.
+    """
     content = render_summary(cards)
     if existing is None:
         d.write("POST", f"/channels/{cid}/messages", content=content)
         return "posted"
-    if existing.get("content") == content:
-        return "unchanged"
+    old = existing.get("content") or ""
+    if without_stamp(old) == without_stamp(content):
+        seen = CHECKED.search(old)
+        if seen and time.time() - int(seen.group(1)) < SUMMARY_HEARTBEAT_S:
+            return "unchanged"
     d.write("PATCH", f"/channels/{cid}/messages/{existing['id']}",
             content=content)
     return "edited"
