@@ -33,12 +33,14 @@ import httpx
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import ernie_load as load
 from ernie_sync import Discord, load_env
 
 PRODUCTION_GUILD = "1481003073894744226"    # the constant wipe_test.py guards on
 STATE_CHANNEL = "ernie-state"
 FORMAT_VERSION = 1
 CONTENT_MAX = 2000          # Discord's cap on message content
+SKEW_WARN_S = 120           # clock difference worth saying out loud
 FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
@@ -110,6 +112,11 @@ def parse(content: str) -> dict | None:
     return d if d.get("thread") else None
 
 
+def state_only(p: dict) -> dict:
+    """The payload without who touched it or when -- just the board state."""
+    return {k: v for k, v in p.items() if k not in ("by", "at")}
+
+
 def same_state(a: dict, b: dict) -> bool:
     """
     Ignoring who touched it and when.
@@ -117,8 +124,19 @@ def same_state(a: dict, b: dict) -> bool:
     Without this every publish rewrites every message, which burns the edit
     budget and fills the channel with edits that changed nothing.
     """
-    keep = lambda d: {k: v for k, v in d.items() if k not in ("by", "at")}
-    return keep(a) == keep(b)
+    return state_only(a) == state_only(b)
+
+
+def sane_time(at: str | None) -> str:
+    """
+    A remote timestamp to file an event under, clamped to now.
+
+    The other machine's clock is not this one's. A card stamped an hour into
+    the future would sit at the top of the activity feed until the clock
+    caught up, above things that genuinely happened since.
+    """
+    here = now_iso()
+    return here if not at or at > here else at
 
 
 # -- the local board --------------------------------------------------------
@@ -253,47 +271,112 @@ def fetch_state(d: Discord, cid: str) -> dict[str, dict]:
         before = page[-1]["id"]
 
 
-def publish(d: Discord, cid: str, cards: list[Card], actor: str = "ernie") -> dict:
+def skew_seconds(msg: dict) -> float | None:
+    """
+    This machine's clock against Discord's, from a message Discord just
+    stamped. Discord is the one clock both machines share, so it is the only
+    thing either can be checked against.
+    """
+    stamp = msg.get("edited_timestamp") or msg.get("timestamp")
+    if not stamp:
+        return None
+    try:
+        theirs = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    # Through now_iso() so this machine has one notion of the time, rather
+    # than the check reading a different clock from everything it checks.
+    return (datetime.fromisoformat(now_iso()) - theirs).total_seconds()
+
+
+def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
+            cards: list[Card] | None = None) -> dict:
     """
     Push the board into the channel: edit what moved, post what's new, leave
     the rest alone. Returns counts so a caller can see how little it did.
+
+    Records what it published as the agreed base, which is what lets the pull
+    tell "they moved it" from "we moved it" without comparing clocks.
     """
+    if cards is None:
+        cards = load_board(db)
     state = fetch_state(d, cid)
     pos = positions(cards)
-    posted = edited = unchanged = 0
-    for c in cards:
-        content = render(c, pos[c.thread_id], actor)
-        if len(content) > CONTENT_MAX:
-            print(f"  !! {c.thread_id} renders to {len(content)} chars, "
-                  f"over Discord's {CONTENT_MAX}")
-            continue
-        known = state.get(c.thread_id)
-        if known is None:
-            if c.completed:
-                # Closed before the channel ever heard of it. Publishing the
-                # whole back catalogue on first run would be pages of history
-                # nobody is going to act on.
-                unchanged += 1
+    con = rw(db)
+    counts = {"posted": 0, "edited": 0, "unchanged": 0}
+    skew = None
+    try:
+        for c in cards:
+            content = render(c, pos[c.thread_id], actor)
+            if len(content) > CONTENT_MAX:
+                print(f"  !! {c.thread_id} renders to {len(content)} chars, "
+                      f"over Discord's {CONTENT_MAX}")
                 continue
-            d.write("POST", f"/channels/{cid}/messages", content=content)
-            posted += 1
-        elif same_state(known["payload"], c.payload()):
-            unchanged += 1
-        else:
-            d.write("PATCH", f"/channels/{cid}/messages/{known['message_id']}",
-                    content=content)
-            edited += 1
-    return {"posted": posted, "edited": edited, "unchanged": unchanged}
+            known = state.get(c.thread_id)
+            sent = None
+            if known is None:
+                if c.completed:
+                    # Closed before the channel ever heard of it. Publishing
+                    # the whole back catalogue on first run would be pages of
+                    # history nobody is going to act on.
+                    counts["unchanged"] += 1
+                    continue
+                sent = d.write("POST", f"/channels/{cid}/messages",
+                               content=content)
+                counts["posted"] += 1
+            elif same_state(known["payload"], c.payload()):
+                counts["unchanged"] += 1
+            else:
+                sent = d.write("PATCH",
+                               f"/channels/{cid}/messages/{known['message_id']}",
+                               content=content)
+                counts["edited"] += 1
+
+            if sent:
+                s = skew_seconds(sent)
+                if s is not None and (skew is None or abs(s) > abs(skew)):
+                    skew = s
+            mid = (sent or {}).get("id") or (known or {}).get("message_id")
+            save_base(con, c.thread_id, mid, c.payload())
+            con.commit()
+    finally:
+        con.close()
+
+    if skew is not None and abs(skew) > SKEW_WARN_S:
+        counts["clock_skew_s"] = round(skew, 1)
+        print(f"  !! this machine's clock is {skew:+.0f}s off Discord's. "
+              f"Event times in the feed will be wrong by about that much on "
+              f"both boards. Fix the clock.", file=sys.stderr)
+    return counts
 
 
 # -- reading it back --------------------------------------------------------
 
 def rw(db: str) -> sqlite3.Connection:
-    con = sqlite3.connect(db, timeout=15.0)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA busy_timeout = 15000")
-    con.execute("PRAGMA foreign_keys = ON")
-    return con
+    # ernie_load.connect applies schema.sql, which is what creates state_sync.
+    return load.connect(db)
+
+
+def read_bases(con) -> dict[str, dict]:
+    """What this machine last agreed with the channel about, per card."""
+    out = {}
+    for r in con.execute("SELECT thread_id, base_json FROM state_sync"):
+        try:
+            out[r["thread_id"]] = json.loads(r["base_json"])
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def save_base(con, thread_id: str, message_id: str | None, payload: dict) -> None:
+    con.execute(
+        """INSERT INTO state_sync (thread_id, message_id, base_json, synced_at)
+           VALUES (?,?,?,?)
+           ON CONFLICT(thread_id) DO UPDATE SET
+               message_id=excluded.message_id,
+               base_json=excluded.base_json,
+               synced_at=excluded.synced_at""",
+        (thread_id, message_id, json.dumps(state_only(payload)), now_iso()))
 
 
 def log_event(con, *, thread_id, verb, actor, old=None, new=None, at=None) -> str:
@@ -325,7 +408,9 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
     next cycle doesn't read this machine's write as a change of its own and
     push it straight back up.
     """
-    tid, at, by = p["thread"], p["at"], p.get("by")
+    # Clamped, so a laptop running fast can't file its changes in the future
+    # and sit at the top of the feed above things that happened since.
+    tid, at, by = p["thread"], sane_time(p.get("at")), p.get("by")
     actor = by or "the other board"
     changed = []
 
@@ -342,7 +427,8 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
         log_event(con, thread_id=tid, verb="reordered", actor=actor, at=at)
     if row["priority"] != p["priority"] or row["rank"] != p["rank"]:
         con.execute("UPDATE cards SET priority=?, rank=?, updated_at=? "
-                    "WHERE thread_id=?", (p["priority"], p["rank"], at, tid))
+                    "WHERE thread_id=?",
+                    (p["priority"], p["rank"], now_iso(), tid))
 
     closed = bool(p.get("completed"))
     if closed and not row["completed_at"]:
@@ -410,11 +496,11 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
                   new="; ".join(c for c in changed
                                 if c.startswith(("+", "-"))))
 
-    # Carry the payload's timestamp onto the card even when only a bubble
-    # moved. Without it a work-item change leaves updated_at behind the
-    # payload, and every later cycle re-examines a card that is already
-    # settled.
-    con.execute("UPDATE cards SET updated_at=? WHERE thread_id=?", (at, tid))
+    # updated_at is this machine's own clock: it means "when this row last
+    # changed here", and nothing decides a conflict by it any more -- that is
+    # state_sync's job.
+    con.execute("UPDATE cards SET updated_at=? WHERE thread_id=?",
+                (now_iso(), tid))
     return changed
 
 
@@ -422,53 +508,69 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
     """
     Pull the channel into the local mirror.
 
-    The two boards meet in Discord, so the newer of the two wins per card: a
-    payload written after this machine last touched that card is somebody
-    else's move and gets applied; anything older is a local change that hasn't
-    been published yet, and publish() will push it up.
+    Three-way, against what this machine last agreed with the channel about
+    (state_sync), never by comparing the two machines' clocks. Timestamps come
+    off two real laptops: a clock a few minutes out would win or lose every
+    tie in the same direction, silently, and a badly wrong one would either
+    stamp on everything the other person does or ignore them entirely.
 
-    Both timestamps are ISO-8601 UTC written by Python, so they compare as
-    strings -- but they come off two different laptops, so a clock that is
-    minutes out will decide a tie the wrong way.
+    Against that base, per card:
+
+        channel moved, we didn't   -> apply theirs
+        we moved, channel didn't   -> ours stands, publish() sends it
+        both moved                 -> conflict; the channel wins, because it
+                                      is the shared copy, and the change that
+                                      loses is named in the feed rather than
+                                      vanishing
+        neither moved              -> settled
+
+    A card with no base is one this machine has never reconciled, so it adopts
+    the channel: a board joining an existing session takes the shared state.
     """
     remote = fetch_state(d, cid)
     con = rw(db)
-    report = {"applied": [], "ahead": [], "unknown": [], "same": 0, "settled": 0}
+    bases = read_bases(con)
+    local = {c.thread_id: c.payload() for c in load_board(db)}
+    report = {"applied": [], "ahead": [], "conflicts": [], "unknown": [],
+              "settled": 0}
     try:
         for tid, entry in remote.items():
             p = entry["payload"]
             if p.get("v") != FORMAT_VERSION:
                 report["unknown"].append(f"{tid} (format v{p.get('v')})")
                 continue
-            row = con.execute(
-                "SELECT updated_at FROM cards WHERE thread_id=?", (tid,)).fetchone()
-            if row is None:
+            if tid not in local:
                 # The channel knows a card this machine has never synced -- the
                 # thread itself hasn't arrived yet. Leave it for a later cycle
                 # rather than inventing a card with no thread behind it.
                 report["unknown"].append(f"{tid} (no local card)")
                 continue
-            local_at = row["updated_at"] or ""
-            if p["at"] == local_at:
-                report["settled"] += 1          # already agreed, nothing to do
+
+            theirs, ours = state_only(p), state_only(local[tid])
+            base = bases.get(tid)
+            they_moved = base is None or theirs != base
+            we_moved = base is not None and ours != base
+
+            if theirs == ours:
+                # Agreed however they got there; record it so neither side
+                # looks changed next time.
+                if base != theirs and not dry_run:
+                    save_base(con, tid, entry["message_id"], p)
+                    con.commit()
+                report["settled"] += 1
                 continue
-            if p["at"] < local_at:
-                # This machine has moved the card since the channel last heard
-                # about it. publish() is what puts that right, not this.
+            if we_moved and not they_moved:
                 report["ahead"].append(tid)
                 continue
 
             changed = apply_card(con, p)
-            if changed:
-                report["applied"].append({"thread": tid, "changed": changed,
-                                          "by": p.get("by")})
-            else:
-                # Same state under a newer timestamp -- somebody republished
-                # without moving anything. Take the timestamp so it settles.
-                report["same"] += 1
+            where = "conflicts" if (we_moved and they_moved) else "applied"
+            report[where].append({"thread": tid, "changed": changed,
+                                  "by": p.get("by")})
             if dry_run:
                 con.rollback()
             else:
+                save_base(con, tid, entry["message_id"], p)
                 con.commit()       # per card, so the write lock is never held long
     finally:
         con.close()
@@ -505,11 +607,11 @@ def demo(d: Discord, guild: str, db: str, want: str) -> None:
 
     t0 = time.monotonic()
     print("\n1. publishing the board")
-    print(f"   {publish(d, cid, cards)}  in {time.monotonic()-t0:.1f}s")
+    print(f"   {publish(d, cid, db, cards=cards)}  in {time.monotonic()-t0:.1f}s")
 
     print("\n2. publishing again, unchanged")
     t1 = time.monotonic()
-    print(f"   {publish(d, cid, cards)}  in {time.monotonic()-t1:.1f}s")
+    print(f"   {publish(d, cid, db, cards=cards)}  in {time.monotonic()-t1:.1f}s")
     print("   (nothing moved, so nothing was written)")
 
     band = sorted([c for c in cards if c.priority == cards[0].priority],
@@ -521,7 +623,7 @@ def demo(d: Discord, guild: str, db: str, want: str) -> None:
         print(f"\n3. dragging {mover.name[:48]!r} to the top of "
               f"{mover.priority}")
         t2 = time.monotonic()
-        print(f"   {publish(d, cid, cards, actor='Ana')}  "
+        print(f"   {publish(d, cid, db, actor='Ana', cards=cards)}  "
               f"in {time.monotonic()-t2:.1f}s")
         print(f"   rank {before} -> {mover.rank}, one message edited")
 
@@ -576,15 +678,19 @@ def main() -> None:
         for hit in r["applied"]:
             who = hit["by"] or "someone"
             print(f"  {hit['thread'][-6:]}  {who}: " + "; ".join(hit["changed"]))
+        for hit in r["conflicts"]:
+            print(f"  CONFLICT {hit['thread'][-6:]}  both moved it; "
+                  f"{hit['by'] or 'the channel'} wins: " + "; ".join(hit["changed"]))
         print(f"{'would apply' if a.dry_run else 'applied'} "
-              f"{len(r['applied'])}, {r['settled'] + r['same']} already agreed, "
+              f"{len(r['applied'])}, {len(r['conflicts'])} conflicts, "
+              f"{r['settled']} already agreed, "
               f"{len(r['ahead'])} to publish from here, "
               f"{len(r['unknown'])} skipped")
         for u in r["unknown"]:
             print(f"  skipped {u}")
     else:
         cid = ensure_channel(d, guild, channel)
-        print(publish(d, cid, load_board(a.db)))
+        print(publish(d, cid, a.db))
 
 
 if __name__ == "__main__":

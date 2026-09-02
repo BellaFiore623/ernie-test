@@ -112,10 +112,18 @@ other's API. Priority, rank, work items and completion live in
   `ernie_sync.py` is read-only against Discord and `ernie_outbox.py` is the
   only thing that writes there. Sync pulls the channel into SQLite; the
   outbox publishes SQLite into the channel.
-- Resolution is per card, on the payload's timestamp against
-  `cards.updated_at`: newer there is somebody else's move and gets applied,
-  newer here is a local change publish() will push up, equal is settled.
-  Both clocks are real laptops, so a badly-set one decides ties wrongly.
+- **Conflicts are resolved three-way against `state_sync`, never by
+  comparing the two machines' clocks.** `state_sync` holds what this machine
+  last agreed with the channel about, per card; against that base, the
+  channel moved, we moved, both moved, or neither. Both moved means the
+  channel wins -- it is the shared copy -- and the losing change is named in
+  the feed rather than vanishing. A card with no base adopts the channel, so
+  a board joining an existing session takes the shared state.
+- Timestamps decide nothing. `cards.updated_at` is this machine's own clock
+  and means "when this row changed here"; a remote `at` is only used to file
+  the replayed event, clamped to now so a fast laptop can't park its changes
+  at the top of the feed. `publish()` checks this machine against Discord's
+  clock -- the one clock both share -- and says so past `SKEW_WARN_S`.
 - Applying a remote change writes an event with **`dispatch_after` NULL**.
   The machine that made the change already queued its own message; giving
   the replay a dispatch would post the same update twice, once per board.

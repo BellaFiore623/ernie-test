@@ -236,6 +236,18 @@ CREATE INDEX IF NOT EXISTS ix_events_feed ON events(occurred_at DESC);
 CREATE INDEX IF NOT EXISTS ix_events_thread ON events(thread_id, occurred_at DESC);
 
 -- Rows Ernie should post now: past the undo window, not undone, not sent.
+-- What this machine last agreed with the state channel about, per card.
+-- Conflict resolution compares against this rather than comparing two
+-- machines' clocks: a laptop whose clock is wrong would otherwise win or
+-- lose every tie, silently, with nothing to show for it.
+CREATE TABLE IF NOT EXISTS state_sync (
+    thread_id   TEXT PRIMARY KEY REFERENCES threads(thread_id),
+    message_id  TEXT,                       -- the card's message in the channel
+    base_json   TEXT NOT NULL,              -- payload as of the last agreement
+    synced_at   TEXT NOT NULL
+);
+
+
 CREATE VIEW IF NOT EXISTS v_outbox_due AS
 SELECT * FROM events
 WHERE dispatch_after IS NOT NULL

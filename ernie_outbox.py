@@ -259,8 +259,7 @@ def main() -> None:
         state_channel = os.environ.get("STATE_CHANNEL_ID")
         if state_channel and d.writes_allowed:
             try:
-                s = ernie_state.publish(d, state_channel,
-                                        ernie_state.load_board(a.db))
+                s = ernie_state.publish(d, state_channel, a.db)
                 if s["posted"] or s["edited"]:
                     print(f"[{now()[:19]}] state: posted {s['posted']}, "
                           f"edited {s['edited']}")
