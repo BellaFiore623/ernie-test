@@ -328,6 +328,27 @@ def health():
            FROM sync_runs ORDER BY run_id DESC LIMIT 1""").fetchone()
     board = con.execute(
         "SELECT COUNT(*) FROM cards WHERE completed_at IS NULL").fetchone()[0]
+
+    # Only when this machine is actually sharing a board. A solo setup has no
+    # state_sync rows -- and an older database has no such table at all, so
+    # ask before selecting from it rather than 500ing on /health.
+    sharing = None
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                   "AND name='state_sync'").fetchone():
+        agreed = con.execute(
+            "SELECT COUNT(*) AS n, MAX(synced_at) AS last FROM state_sync").fetchone()
+        if agreed["n"]:
+            # datetime() on both sides, and both written by this machine, so
+            # the other person's clock has no say in it.
+            waiting = con.execute(
+                """SELECT COUNT(*) FROM cards c JOIN state_sync s USING (thread_id)
+                   WHERE datetime(c.updated_at) > datetime(s.synced_at)""").fetchone()[0]
+            since = None
+            if agreed["last"]:
+                since = int((datetime.now(timezone.utc)
+                             - datetime.fromisoformat(agreed["last"])).total_seconds())
+            sharing = {"cards": agreed["n"], "seconds_since_agreed": since,
+                       "waiting_to_send": waiting}
     con.close()
 
     stale = None
@@ -340,6 +361,7 @@ def health():
         "last_sync": dict(last) if last else None,
         "seconds_since_sync": stale,
         "board_size": board,
+        "sharing": sharing,
     }
 
 

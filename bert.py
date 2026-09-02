@@ -44,6 +44,7 @@ SETTINGS = pathlib.Path.home() / ".bert.json"
 LOGO = pathlib.Path(__file__).with_name("bert_logo.png")
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
+SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
 TOAST_MS = 6_000      # a ceiling, not a duration: the toast normally clears the
                       # moment the board comes back without the card
 DRAG_THRESHOLD = 5
@@ -207,6 +208,17 @@ def show_value(v):
     return VALUE_LABEL.get(v or "", v)
 
 
+def ago(secs):
+    """A duration in seconds, said briefly."""
+    if secs is None:
+        return "a while"
+    if secs < 60:
+        return f"{int(secs)}s"
+    if secs < 3600:
+        return f"{int(secs // 60)}m"
+    return f"{int(secs // 3600)}h"
+
+
 def moments_ago(ts):
     """Minute-grained, for conflicts -- Card._ago only resolves to days."""
     if not ts:
@@ -349,6 +361,9 @@ class Api:
     def events(self, limit=8):
         return self.client.get(f"{self.base}/events", params={"limit": limit}).json()
 
+    def health(self):
+        return self.client.get(f"{self.base}/health").json()
+
     def _post(self, path, payload):
         payload.setdefault("key", str(uuid.uuid4()))
         r = self.client.post(f"{self.base}{path}", json=payload)
@@ -396,7 +411,8 @@ class Poller(QThread):
     def run(self):
         try:
             self.loaded.emit({"board": self.api.board(),
-                              "events": self.api.events()})
+                              "events": self.api.events(),
+                              "health": self.api.health()})
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -1945,6 +1961,8 @@ class Bert(QMainWindow):
         self.poller = None
         self.connected = True
         self.last_sync = None
+        self.sharing = None         # /health's sharing block, or None if solo
+        self.sharing_at = 0.0
         self.filters = {q: True for q in QUEUE}
         self.cards = []
         self.feed = []
@@ -2091,6 +2109,15 @@ class Bert(QMainWindow):
         self.fresh = QLabel("")
         self.fresh.setStyleSheet(f"color:{MUTED}; font-size:11px;")
         lay.addWidget(self.fresh)
+
+        # Second freshness, and a different question. self.fresh says how long
+        # since Bert asked Ernie; this says how long since Ernie and the other
+        # person's board agreed. On a solo setup it stays hidden.
+        self.shared = QLabel("")
+        self.shared.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        self.shared.hide()
+        lay.addSpacing(10)
+        lay.addWidget(self.shared)
 
         self.refresh_btn = chrome_button("\u21bb", "Refresh")
         self.refresh_btn.clicked.connect(self.refresh)
@@ -2248,6 +2275,11 @@ class Bert(QMainWindow):
         self.refresh_btn.setToolTip("Refresh")
         incoming = p["board"]["cards"]
         self.feed = p["events"]["events"]
+        # Held with the moment it arrived, so the age can go on counting up
+        # between polls instead of freezing at whatever the last poll said.
+        self.sharing = (p.get("health") or {}).get("sharing")
+        self.sharing_at = time.time()
+        self._tick_sharing()
 
         # The card outlives the click by a poll or two; drop the toast the
         # moment it is genuinely off the board rather than on a timer.
@@ -2343,7 +2375,45 @@ class Bert(QMainWindow):
         self.completing.clear()
         self.toast.hide()
 
+    def _tick_sharing(self):
+        """
+        How the shared board is doing, which is a different question from how
+        this Bert is doing. Hidden entirely unless a board is actually shared,
+        so nothing changes for one person on one machine.
+        """
+        s = self.sharing
+        if not s:
+            self.shared.hide()
+            return
+
+        waiting = s.get("waiting_to_send") or 0
+        agreed = s.get("seconds_since_agreed")
+        if agreed is not None:
+            agreed += int(time.time() - self.sharing_at)
+
+        if agreed is not None and agreed > SHARED_STALE_S:
+            # Long enough that the sync loop is probably not running -- the
+            # board on screen may be missing whatever they have done since.
+            text, colour = f"shared · no contact for {ago(agreed)}", AMBER_FG
+            tip = ("Ernie hasn't agreed with the other board recently. Their "
+                   "changes won't be showing. Check their stack is running.")
+        elif waiting:
+            text = f"shared · {waiting} not sent yet"
+            colour = AMBER_FG
+            tip = ("Changes made here that the other board hasn't been told "
+                   "about yet. They go out on the next cycle.")
+        else:
+            text, colour = "shared · in step", MUTED
+            tip = (f"Agreed with the other board {ago(agreed)} ago."
+                   if agreed is not None else "Sharing a board.")
+
+        self.shared.setText(text)
+        self.shared.setStyleSheet(f"color:{colour}; font-size:11px;")
+        self.shared.setToolTip(tip)
+        self.shared.show()
+
     def _tick_freshness(self):
+        self._tick_sharing()
         if self.last_sync is None:
             self.fresh.setText("never updated")
             return
