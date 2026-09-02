@@ -252,6 +252,17 @@ CREATE TABLE IF NOT EXISTS state_sync (
 -- Per event rather than a high-water mark: a change replayed from the other
 -- board carries the timestamp it originally happened at, so events do not
 -- arrive in occurred_at order and a cursor would step over them.
+-- Whether the change log has ever run against this database. A row count in
+-- changelog_sent can't answer that: on a fresh database it is empty because
+-- there was no history to skip, not because the log has never started, and
+-- treating those the same means the first real change gets marked as already
+-- logged and never posted.
+CREATE TABLE IF NOT EXISTS changelog_state (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    started_at TEXT NOT NULL
+);
+
+
 CREATE TABLE IF NOT EXISTS changelog_sent (
     event_id   TEXT PRIMARY KEY REFERENCES events(event_id),
     message_id TEXT,

@@ -131,6 +131,17 @@ def catch_up(con, note: str = "") -> int:
     return len(rows)
 
 
+def initialised(con) -> bool:
+    """Has the log ever run against this database?"""
+    return con.execute("SELECT 1 FROM changelog_state WHERE id=1").fetchone() is not None
+
+
+def mark_initialised(con) -> None:
+    con.execute("INSERT OR IGNORE INTO changelog_state (id, started_at) "
+                "VALUES (1, ?)", (now_iso(),))
+    con.commit()
+
+
 def drain(d: Discord, cid: str, con) -> dict:
     """Post what's due. One message per change, so each is quotable on its own."""
     sent = failed = 0
@@ -156,8 +167,9 @@ def tick(d: Discord, cid: str, con) -> dict:
     doesn't replay the whole database into a channel nobody has read yet.
     Use --backfill on the standalone script if that is what you want.
     """
-    if con.execute("SELECT 1 FROM changelog_sent LIMIT 1").fetchone() is None:
+    if not initialised(con):
         catch_up(con)
+        mark_initialised(con)
         return {"sent": 0, "failed": 0}
     return drain(d, cid, con)
 
@@ -187,9 +199,10 @@ def main() -> None:
     # Only ever on the very first run, when the table is empty. Doing it on
     # every start would silently swallow everything that happened while the
     # logger was down, which is the one thing a record must not do.
-    first_run = con.execute("SELECT 1 FROM changelog_sent LIMIT 1").fetchone() is None
-    if first_run and not a.backfill:
-        catch_up(con, "first run")
+    if not initialised(con):
+        if not a.backfill:
+            catch_up(con, "first run")
+        mark_initialised(con)
 
     while True:
         try:
