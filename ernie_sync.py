@@ -479,6 +479,26 @@ def main() -> None:
         except Exception as e:
             print(f"[{now()[:19]}] cycle failed: {e}", file=sys.stderr)
 
+        # Pulling the state channel is Discord -> SQLite like everything else
+        # here, so it belongs in this loop. Pushing the other way does not:
+        # the outbox is the only thing that writes to Discord, and it
+        # publishes from its own loop.
+        state_channel = os.environ.get("STATE_CHANNEL_ID")
+        if state_channel:
+            try:
+                # Imported here because ernie_state imports this module, and a
+                # top-level import either way round would be circular.
+                import ernie_state
+                r = ernie_state.reconcile(d, state_channel, a.db)
+                if r["applied"] or r["unknown"]:
+                    print(f"[{now()[:19]}] state: applied {len(r['applied'])}, "
+                          f"skipped {len(r['unknown'])}")
+                    for hit in r["applied"]:
+                        print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
+                              + "; ".join(hit["changed"]))
+            except Exception as e:
+                print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
+
         first = False
         if a.once:
             return

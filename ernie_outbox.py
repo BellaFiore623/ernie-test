@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 
 import ernie_load as load
+import ernie_state
 from ernie_sync import Discord, GuildMismatch, load_env
 
 POLL_SECONDS = 30
@@ -252,6 +253,20 @@ def main() -> None:
             sys.exit(str(e))
         except Exception as e:
             print(f"[{now()[:19]}] drain failed: {e}", file=sys.stderr)
+
+        # SQLite -> Discord, so it goes through the one process allowed to
+        # write there. The pull in the other direction rides with the sync.
+        state_channel = os.environ.get("STATE_CHANNEL_ID")
+        if state_channel and d.writes_allowed:
+            try:
+                s = ernie_state.publish(d, state_channel,
+                                        ernie_state.load_board(a.db))
+                if s["posted"] or s["edited"]:
+                    print(f"[{now()[:19]}] state: posted {s['posted']}, "
+                          f"edited {s['edited']}")
+            except Exception as e:
+                print(f"[{now()[:19]}] state publish failed: {e}",
+                      file=sys.stderr)
 
         if a.once:
             return

@@ -17,6 +17,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `schema.sql` | Applied on every `connect()`. All `CREATE ... IF NOT EXISTS`. |
 | `seed_test_server.py` | Builds realistic test threads. Test guild only. |
 | `wipe_test.py` | Deletes all threads in the test channel. Test guild only. |
+| `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
 | `ernie_backup.py` | Online SQLite backup with rotation. |
 | `q.py` | Ad-hoc SQL helper. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
@@ -87,6 +88,42 @@ activity feed, undo, and the outbox.
 - Edits are **batched**: saving four fields writes one event and posts one
   message. Do not split this into per-field events.
 - Writes take an idempotency `key`; retries return the original result.
+
+## The state channel
+
+So two people on two machines share one board without either hosting the
+other's API. Priority, rank, work items and completion live in
+`#ernie-state` (`STATE_CHANNEL_ID`), one message per card, edited in place.
+
+- **Not the thread title.** Measured in the sandbox: a message edit recovers
+  from its rate limit in 0.67s and announces nothing; a thread rename allows
+  two per ten minutes, comes back `scope: shared` so a second Ernie gets no
+  budget of its own, and posts a system message into the customer thread
+  every time. The standard rate-limit headers do not warn about the rename
+  limit -- they read healthy right up to the 429.
+- **One message per card, not one document.** Two people moving different
+  cards edit different messages and never collide, and no card can outgrow
+  the 2000-character content cap.
+- Each message names its own `thread_id`, so the channel is self-describing
+  and an interrupted publish resumes without duplicating.
+- The human line is derived and never parsed back. Editing the prose in
+  Discord cannot corrupt the board.
+- **The two directions live in different processes**, because
+  `ernie_sync.py` is read-only against Discord and `ernie_outbox.py` is the
+  only thing that writes there. Sync pulls the channel into SQLite; the
+  outbox publishes SQLite into the channel.
+- Resolution is per card, on the payload's timestamp against
+  `cards.updated_at`: newer there is somebody else's move and gets applied,
+  newer here is a local change publish() will push up, equal is settled.
+  Both clocks are real laptops, so a badly-set one decides ties wrongly.
+- Applying a remote change writes an event with **`dispatch_after` NULL**.
+  The machine that made the change already queued its own message; giving
+  the replay a dispatch would post the same update twice, once per board.
+- A card the channel knows and this machine has no row for is skipped, not
+  invented -- its thread simply hasn't synced here yet.
+- Completed cards stay in the channel carrying `completed: true`, so closing
+  one propagates. Cards closed before the channel ever saw them are not
+  backfilled.
 
 ## Running
 

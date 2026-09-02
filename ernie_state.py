@@ -27,6 +27,7 @@ import re
 import sqlite3
 import sys
 import time
+import uuid
 
 import httpx
 from dataclasses import dataclass, field
@@ -55,6 +56,8 @@ class Card:
     priority: str
     rank: float
     items: list[Item] = field(default_factory=list)
+    completed: bool = False
+    completed_by: str | None = None
 
     def payload(self) -> dict:
         """The half of the message that is state rather than decoration."""
@@ -63,6 +66,7 @@ class Card:
             "thread": self.thread_id,
             "priority": self.priority,
             "rank": self.rank,
+            "completed": self.completed,
             "work": [{"id": i.item_id, "body": i.body, "done": i.done}
                      for i in self.items],
         }
@@ -81,7 +85,8 @@ def render(card: Card, position: int, actor: str = "ernie") -> str:
     The human line is derived, never parsed back: everything that matters is
     in the JSON, so a person editing the prose can't corrupt the board.
     """
-    head = f"**{card.priority} #{position}** — {card.name}"
+    head = (f"**completed** — {card.name}" if card.completed
+            else f"**{card.priority} #{position}** — {card.name}")
     body = json.dumps(dict(card.payload(), by=actor, at=now_iso()),
                       ensure_ascii=False)
     return f"{head}\n```json\n{body}\n```"
@@ -117,11 +122,13 @@ def load_board(db: str) -> list[Card]:
     con.row_factory = sqlite3.Row
     try:
         cards = []
+        # Completed cards come too, or closing one would leave its message in
+        # the channel still claiming a priority for a card nobody can see.
         for r in con.execute(
-                """SELECT c.thread_id, c.priority, c.rank, v.name
+                """SELECT c.thread_id, c.priority, c.rank, c.completed_at,
+                          c.completed_by, v.name
                    FROM cards c
                    LEFT JOIN v_thread_current v ON v.thread_id = c.thread_id
-                   WHERE c.completed_at IS NULL
                    ORDER BY c.priority, c.rank"""):
             items = [
                 Item(i["item_id"], i["body"], bool(i["done_at"]))
@@ -131,16 +138,26 @@ def load_board(db: str) -> list[Card]:
                        ORDER BY position""", (r["thread_id"],))
             ]
             cards.append(Card(r["thread_id"], r["name"] or "(untitled)",
-                              r["priority"], r["rank"], items))
+                              r["priority"], r["rank"], items,
+                              completed=bool(r["completed_at"]),
+                              completed_by=r["completed_by"]))
         return cards
     finally:
         con.close()
 
 
 def positions(cards: list[Card]) -> dict[str, int]:
-    """Ordinal within its band, which is what the human line shows."""
+    """
+    Ordinal within its band, which is what the human line shows.
+
+    Closed cards are not in the running order, so they don't take a number
+    and don't push the cards below them down one.
+    """
     out, seen = {}, {}
     for c in sorted(cards, key=lambda c: (c.priority, c.rank)):
+        if c.completed:
+            out[c.thread_id] = 0
+            continue
         seen[c.priority] = seen.get(c.priority, 0) + 1
         out[c.thread_id] = seen[c.priority]
     return out
@@ -197,13 +214,30 @@ def clear(d: Discord, cid: str) -> int:
 
 
 def fetch_state(d: Discord, cid: str) -> dict[str, dict]:
-    """What Discord currently believes, keyed by thread_id."""
-    out = {}
-    for m in d.get(f"/channels/{cid}/messages", limit=100) or []:
-        p = parse(m.get("content", ""))
-        if p:
-            out[p["thread"]] = {"message_id": m["id"], "payload": p}
-    return out
+    """
+    What Discord currently believes, keyed by thread_id.
+
+    Paged, because a board of any age passes 100 messages once closed cards
+    stay in the channel, and a single page would silently drop the oldest
+    cards out of the board rather than reporting anything wrong.
+    """
+    out, before = {}, None
+    while True:
+        params = {"limit": 100}
+        if before:
+            params["before"] = before
+        page = d.get(f"/channels/{cid}/messages", **params)
+        if not page:
+            return out
+        for m in page:
+            p = parse(m.get("content", ""))
+            # Newest first, so the first message seen for a thread wins and a
+            # stray older duplicate can't overwrite it.
+            if p and p["thread"] not in out:
+                out[p["thread"]] = {"message_id": m["id"], "payload": p}
+        if len(page) < 100:
+            return out
+        before = page[-1]["id"]
 
 
 def publish(d: Discord, cid: str, cards: list[Card], actor: str = "ernie") -> dict:
@@ -222,6 +256,12 @@ def publish(d: Discord, cid: str, cards: list[Card], actor: str = "ernie") -> di
             continue
         known = state.get(c.thread_id)
         if known is None:
+            if c.completed:
+                # Closed before the channel ever heard of it. Publishing the
+                # whole back catalogue on first run would be pages of history
+                # nobody is going to act on.
+                unchanged += 1
+                continue
             d.write("POST", f"/channels/{cid}/messages", content=content)
             posted += 1
         elif same_state(known["payload"], c.payload()):
@@ -243,6 +283,27 @@ def rw(db: str) -> sqlite3.Connection:
     return con
 
 
+def log_event(con, *, thread_id, verb, actor, old=None, new=None, at=None) -> str:
+    """
+    Put a replayed change into the local feed.
+
+    dispatch_after stays NULL. The machine that made the change has already
+    queued its own message for the thread, so giving this copy a dispatch
+    would post the same update twice -- once from each board.
+
+    occurred_at is the payload's timestamp, not now, so a change made while
+    this machine was offline lands in the feed where it happened rather than
+    at the top.
+    """
+    eid = str(uuid.uuid4())
+    con.execute(
+        """INSERT INTO events (event_id, occurred_at, actor_name, thread_id,
+                               verb, old_value, new_value, dispatch_after)
+           VALUES (?,?,?,?,?,?,?,NULL)""",
+        (eid, at or now_iso(), actor, thread_id, verb, old, new))
+    return eid
+
+
 def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
     """
     Write one remote payload into the local mirror, and say what moved.
@@ -252,16 +313,38 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
     push it straight back up.
     """
     tid, at, by = p["thread"], p["at"], p.get("by")
+    actor = by or "the other board"
     changed = []
 
-    row = con.execute("SELECT priority, rank FROM cards WHERE thread_id=?",
-                      (tid,)).fetchone()
+    row = con.execute(
+        "SELECT priority, rank, completed_at FROM cards WHERE thread_id=?",
+        (tid,)).fetchone()
+
+    if row["priority"] != p["priority"]:
+        changed.append(f"{row['priority']} -> {p['priority']}")
+        log_event(con, thread_id=tid, verb="priority_changed", actor=actor,
+                  old=row["priority"], new=p["priority"], at=at)
+    elif row["rank"] != p["rank"]:
+        changed.append(f"reordered in {p['priority']}")
+        log_event(con, thread_id=tid, verb="reordered", actor=actor, at=at)
     if row["priority"] != p["priority"] or row["rank"] != p["rank"]:
-        changed.append(f"{row['priority']} {row['rank']:.0f} -> "
-                       f"{p['priority']} {p['rank']:.0f}")
         con.execute("UPDATE cards SET priority=?, rank=?, updated_at=? "
                     "WHERE thread_id=?", (p["priority"], p["rank"], at, tid))
 
+    closed = bool(p.get("completed"))
+    if closed and not row["completed_at"]:
+        con.execute("UPDATE cards SET completed_at=?, completed_by=? "
+                    "WHERE thread_id=?", (at, by, tid))
+        log_event(con, thread_id=tid, verb="completed", actor=actor, at=at)
+        changed.append("closed")
+    elif not closed and row["completed_at"]:
+        # Reopened on the other machine, which only happens by undoing the
+        # close there. Nothing to log: the event being undone is theirs.
+        con.execute("UPDATE cards SET completed_at=NULL, completed_by=NULL "
+                    "WHERE thread_id=?", (tid,))
+        changed.append("reopened")
+
+    added, dropped = [], []
     remote = {i["id"]: i for i in p.get("work") or []}
     local = {r["item_id"]: r for r in con.execute(
         """SELECT item_id, body, position, done_at, removed_at FROM work_items
@@ -277,6 +360,7 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
                 (iid, tid, ri["body"], float(pos), at, by,
                  at if ri["done"] else None, by if ri["done"] else None))
             changed.append(f"+{ri['body']!r}")
+            added.append(iid)
             continue
         if li["position"] != float(pos):
             con.execute("UPDATE work_items SET position=? WHERE item_id=?",
@@ -291,6 +375,8 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
             con.execute("UPDATE work_items SET done_at=?, done_by=? WHERE item_id=?",
                         (at, by, iid))
             changed.append(f"ticked {ri['body']!r}")
+            log_event(con, thread_id=tid, verb="work_done", actor=actor,
+                      old=iid, new=ri["body"], at=at)
         elif not ri["done"] and li["done_at"]:
             con.execute("UPDATE work_items SET done_at=NULL, done_by=NULL "
                         "WHERE item_id=?", (iid,))
@@ -301,6 +387,14 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
             con.execute("UPDATE work_items SET removed_at=?, removed_by=? "
                         "WHERE item_id=?", (at, by, iid))
             changed.append(f"-{li['body']!r}")
+            dropped.append(iid)
+
+    if added or dropped:
+        log_event(con, thread_id=tid, verb="edited", actor=actor, at=at,
+                  old=json.dumps({"__work__": {"added": added,
+                                               "removed": dropped}}),
+                  new="; ".join(c for c in changed
+                                if c.startswith(("+", "-"))))
 
     # Carry the payload's timestamp onto the card even when only a bubble
     # moved. Without it a work-item change leaves updated_at behind the
