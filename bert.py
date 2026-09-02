@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 SETTINGS = pathlib.Path.home() / ".bert.json"
 # Beside the script rather than in the settings directory: it ships with the
 # code, and a checkout without it should still start.
-LOGO = pathlib.Path(__file__).with_name("bert_logo.png")
+LOGO = pathlib.Path(__file__).parent / "assets" / "bert_logo.png"
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving

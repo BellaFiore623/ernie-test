@@ -19,13 +19,14 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `wipe_test.py` | Deletes all threads in the test channel. Test guild only. |
 | `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
 | `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
-| `ernie_backup.py` | Online SQLite backup with rotation. |
-| `q.py` | Ad-hoc SQL helper. |
-| `dump_threads.py` | Raw API JSON to disk. Read-only, for looking at what Discord actually sent. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
-| `bashrc-snippet.sh` | Optional shell shortcuts. Nothing depends on it. |
+| `tools/q.py` | Ad-hoc SQL helper. `python tools/q.py "SELECT ..." ernie-test.db` |
+| `tools/ernie_backup.py` | Online SQLite backup with rotation. |
+| `tools/dump_threads.py` | Raw API JSON to disk. Read-only, for seeing what Discord actually sent. |
+| `tools/bashrc-snippet.sh` | Optional shell shortcuts. Nothing depends on it. |
+| `assets/bert_logo.png` | Bert's mark. `bert.py` resolves it relative to itself. |
 | `requirements.txt` | httpx, fastapi, uvicorn, pydantic; PySide6 for Bert only. |
 | `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
 | `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |

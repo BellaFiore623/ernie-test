@@ -109,13 +109,17 @@ wrong place.
 | `ernie_outbox.py` | The only thing that posts to Discord. |
 | `ernie_state.py` | Board state shared between machines, in `#ernie-state`. |
 | `ernie_changelog.py` | Every change appended to `#change-log`. Off unless configured. |
-| `ernie_backup.py` | Online SQLite backup with rotation. |
 | `bert.py` | The PySide6 client. |
 | `schema.sql` | Applied on every connect. |
 | `run.sh` · `stack.cmd` · `bert.cmd` | Launchers. |
 | `seed_test_server.py` · `wipe_test.py` | Build and tear down the sandbox. Test guild only. |
-| `dump_threads.py` · `q.py` | Read-only debugging: raw API JSON, and ad-hoc SQL. |
+| `tools/` | Things you reach for occasionally: `q.py` for ad-hoc SQL, `ernie_backup.py`, `dump_threads.py` for raw API JSON, shell shortcuts. |
 | `migrations/` | One-off scripts already applied. Kept as a record. |
+| `assets/` | Bert's logo. |
+
+The seven `ernie_*.py` modules and `bert.py` stay at the root on purpose:
+every launcher and every documented command runs them by name, and a
+package would buy tidiness at the cost of breaking all of it.
 
 `CLAUDE.md` carries the working notes — the hard rules, the data model, and the
 reasons behind the parts that have bitten before. Read it before changing
