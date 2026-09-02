@@ -107,24 +107,33 @@ you if yours is more than two minutes off.
 
 ## 5. First run
 
+**Double-click `stack.cmd`.**
+
+It installs what's missing, checks the things that are silent when they're
+wrong, then starts the sync, the outbox, the API and Bert. The three
+background parts each get their own minimised window, so if one falls over
+its error is still there to read.
+
+If the check fails it tells you what's wrong and stops rather than starting a
+board that can't share. To run just the check on its own at any time:
+
 ```
-./run.sh test bert
+python ernie_state.py --check --env ernie-test.env
 ```
 
-Windows without Git Bash? Open three Command Prompts and run one each:
-
-```
-python ernie_sync.py --env ernie-test.env --db ernie-test.db
-python ernie_outbox.py --env ernie-test.env --db ernie-test.db
-python ernie_api.py --db ernie-test.db --port 8788
-```
-
-then `python bert.py --api http://127.0.0.1:8788`.
+On Mac or Linux, or if you'd rather use Git Bash: `./run.sh test bert`.
 
 The first run takes a couple of minutes: it builds your database from
 scratch, reads the threads out of Discord, then picks up the shared board
 from `#ernie-state`. **Your board will start out matching theirs** — a new
 machine adopts the shared order rather than imposing its own.
+
+When you're done, close Bert, then give it a minute before closing the three
+background windows. A change you made in the last minute hasn't been posted
+to its thread yet, and the outbox has to still be running to post it.
+
+Don't use `bert.cmd` in this setup — that's the launcher for the other one,
+and it will say so if you try.
 
 ## 6. Put your name in
 
@@ -189,9 +198,16 @@ own.
 **`shared · no contact` that doesn't clear.** Their stack is down, or your
 sync has died. Check with them, then check your own terminal.
 
-**Nothing you do reaches them.** In order: is `STATE_CHANNEL_ID` set? Is
-`ALLOW_DISCORD_WRITES` exactly equal to `DISCORD_GUILD_ID`? Is your outbox
-running?
+**Nothing you do reaches them.** Run the check, which looks for exactly
+this:
+
+```
+python ernie_state.py --check --env ernie-test.env
+```
+
+It covers `STATE_CHANNEL_ID` being missing, the bot not being able to reach
+the channel, and your clock being out. If it says everything's fine, check
+the minimised "Ernie outbox" window is still running.
 
 **`'python' is not recognized`.** Step 1, the PATH tick box.
 

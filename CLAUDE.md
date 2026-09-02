@@ -22,6 +22,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `q.py` | Ad-hoc SQL helper. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
+| `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
 | `TESTING.md` | Hand this to the tester. Setup on their own laptop, start to finish. |
 
 ## Hard rules
@@ -171,6 +172,13 @@ behind. `STATE_CHANNEL_ID` is what makes it one board; `ALLOW_DISCORD_WRITES`
 must equal `DISCORD_GUILD_ID` or their changes never leave their machine. A
 machine joining with no `state_sync` rows adopts the channel, so a fresh
 clone comes up already matching the shared board.
+
+`ernie_state.py --check` is the preflight for the second setup and what
+`stack.cmd` runs before starting anything: it catches a missing
+`STATE_CHANNEL_ID`, a channel the bot can't reach, and a clock out by more
+than `SKEW_WARN_S`. Clock skew is read from the `Date` header of a live
+response -- an existing message's timestamp says when it was written, not
+what time it is, so measuring against one reports its age as skew.
 
 Bert shows which it is: the `shared · …` indicator by the refresh button
 appears only when `state_sync` has rows, and reports in step, waiting to

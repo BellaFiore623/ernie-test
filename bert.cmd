@@ -14,6 +14,28 @@ rem  %~dp0 ends in a backslash, which would escape the closing quote.
 cd /d "%~dp0."
 set "HOSTFILE=%USERPROFILE%\.bert-host"
 
+rem -- there are two setups now, and this is the launcher for one of them ---
+rem  An ernie-test.env here means this machine has a token and can run its
+rem  own stack, which is the other setup entirely. Starting Bert alone
+rem  against somebody else's machine would work, but it is almost certainly
+rem  not what someone who has an env file meant to do.
+rem  Flat rather than a parenthesised block: %ANYWAY% inside one expands when
+rem  the block is parsed, which is before set /p has run, so the answer would
+rem  be read as empty however they replied.
+if not exist "ernie-test.env" goto :right_launcher
+echo.
+echo   There's an ernie-test.env here, so this machine is set up to run its
+echo   own stack -- double-click stack.cmd instead.
+echo.
+echo   This launcher starts Bert on its own, pointed at somebody else's
+echo   machine. That's the other setup, and mixing them gets confusing.
+echo.
+set /p "ANYWAY=  Start Bert on its own anyway? [y/N] "
+if /i "%ANYWAY%"=="y" goto :right_launcher
+exit /b 0
+
+:right_launcher
+
 rem -- an address on the command line wins, and is remembered ---------------
 if not "%~1"=="" (
     set "TARGET=%~1"

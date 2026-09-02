@@ -32,6 +32,7 @@ import uuid
 import httpx
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import ernie_load as load
 from ernie_sync import Discord, load_env
@@ -352,6 +353,31 @@ def fetch_channel(d: Discord, cid: str) -> tuple[dict[str, dict], dict | None]:
 def fetch_state(d: Discord, cid: str) -> dict[str, dict]:
     """The cards Discord is holding, keyed by thread_id."""
     return fetch_channel(d, cid)[0]
+
+
+def clock_against_discord(d: Discord) -> float | None:
+    """
+    Seconds this machine's clock is ahead of Discord's, or None.
+
+    Read from the Date header of a response Discord is sending right now. An
+    existing message's timestamp says when it was written, not what the time
+    is, so measuring against one reports its age as clock skew.
+    """
+    seen = {}
+    hooks = d.http.event_hooks.get("response", [])
+    d.http.event_hooks["response"] = list(hooks) + [
+        lambda r: seen.setdefault("date", r.headers.get("date"))]
+    try:
+        d.get("/users/@me")
+    finally:
+        d.http.event_hooks["response"] = hooks
+    if not seen.get("date"):
+        return None
+    try:
+        theirs = parsedate_to_datetime(seen["date"])
+    except (TypeError, ValueError):
+        return None
+    return (datetime.fromisoformat(now_iso()) - theirs).total_seconds()
 
 
 def skew_seconds(msg: dict) -> float | None:
@@ -686,6 +712,46 @@ def connect(env: str) -> tuple[Discord, str]:
     return d, guild
 
 
+def check(d: Discord, guild: str, want: str) -> int:
+    """
+    Is this machine set up to share a board? Returns a shell exit code.
+
+    Every one of these is silent when it's wrong: the board looks healthy from
+    here while nothing you do ever reaches the other person.
+    """
+    problems = []
+
+    if not os.environ.get("STATE_CHANNEL_ID"):
+        problems.append(
+            "STATE_CHANNEL_ID is not set in the env file. Without it this\n"
+            "     machine keeps a private board and shares nothing.")
+
+    try:
+        ensure_channel(d, guild, want)
+        print(f"  state channel   {want} -- reachable")
+    except SystemExit as e:
+        problems.append(str(e))
+
+    skew = clock_against_discord(d)
+    if skew is None:
+        print("  clock           couldn't be checked")
+    elif abs(skew) > SKEW_WARN_S:
+        problems.append(
+            f"this machine's clock is {skew:+.0f}s off Discord's. Times in the\n"
+            f"     activity feed will be wrong by about that much. Turn on\n"
+            f"     'Set time automatically' and hit Sync now.")
+    else:
+        print(f"  clock           within {abs(skew):.0f}s of Discord")
+
+    if not problems:
+        print("\nReady to share a board.")
+        return 0
+    print("\nNot ready:")
+    for p in problems:
+        print(f"  -- {p}")
+    return 1
+
+
 def demo(d: Discord, guild: str, db: str, want: str) -> None:
     """
     The round trip, end to end: publish the board, move a card, publish again,
@@ -749,6 +815,8 @@ def main() -> None:
                     help="publish, move a card, read it back")
     ap.add_argument("--clear", action="store_true",
                     help="delete the state messages again")
+    ap.add_argument("--check", action="store_true",
+                    help="is this machine set up to share a board?")
     ap.add_argument("--pull", action="store_true",
                     help="read the channel back into the local mirror")
     ap.add_argument("--dry-run", action="store_true",
@@ -759,6 +827,8 @@ def main() -> None:
     # connect() has loaded the env file by now, so the default can come
     # from there rather than being repeated on every command line.
     channel = a.channel or os.environ.get("STATE_CHANNEL_ID") or STATE_CHANNEL
+    if a.check:
+        sys.exit(check(d, guild, channel))
     if a.demo:
         demo(d, guild, a.db, channel)
     elif a.clear:
