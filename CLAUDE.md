@@ -18,6 +18,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `seed_test_server.py` | Builds realistic test threads. Test guild only. |
 | `wipe_test.py` | Deletes all threads in the test channel. Test guild only. |
 | `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
+| `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
 | `ernie_backup.py` | Online SQLite backup with rotation. |
 | `q.py` | Ad-hoc SQL helper. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
@@ -143,6 +144,31 @@ other's API. Priority, rank, work items and completion live in
 - Completed cards stay in the channel carrying `completed: true`, so closing
   one propagates. Cards closed before the channel ever saw them are not
   backfilled.
+
+## The change log
+
+A durable record of every change, in its own channel, for looking back at
+rather than reading as it goes. Customer threads only hear the handful of
+changes worth interrupting somebody for; this gets all of them.
+
+- **Inert unless `CHANGELOG_CHANNEL_ID` is set, and only one machine should
+  set it.** Both boards hold the whole history -- their own changes and
+  replays of the other's -- so two loggers write every line twice.
+- SQLite -> Discord, so it rides with the outbox like the state publish does.
+- Nothing is logged until it has **settled**: an event inside its undo window
+  may still be cancelled, and a record that says things that never happened
+  is worse than no record. An undone change is logged struck through, because
+  that it was made and taken back is itself part of the record.
+- `changelog_sent` tracks it per event rather than by a high-water mark: a
+  change replayed from the other board carries the timestamp it originally
+  happened at, so events do not arrive in `occurred_at` order and a cursor
+  would step straight over them.
+- The history already in the database is marked as logged **only on the very
+  first run**, so switching the log on doesn't replay months into a channel
+  nobody has read. Doing that on every start would silently swallow whatever
+  happened while the logger was down. `--backfill` asks for the history.
+- Nothing reads it back. Deleting the channel and unsetting the variable
+  leaves nothing behind but a table nothing looks at.
 
 ## Running
 

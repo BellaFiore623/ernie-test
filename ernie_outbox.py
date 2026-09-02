@@ -22,6 +22,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
+import ernie_changelog
 import ernie_load as load
 import ernie_state
 from ernie_sync import Discord, GuildMismatch, load_env
@@ -309,6 +310,18 @@ def main() -> None:
             except Exception as e:
                 print(f"[{now()[:19]}] state publish failed: {e}",
                       file=sys.stderr)
+
+        # The durable record, if there is somewhere to keep it. Both boards
+        # hold the whole history, so only one machine should set this -- two
+        # would write every line twice.
+        log_channel = os.environ.get("CHANGELOG_CHANNEL_ID")
+        if log_channel and d.writes_allowed:
+            try:
+                c = ernie_changelog.tick(d, log_channel, con)
+                if c["sent"]:
+                    print(f"[{now()[:19]}] changelog: {c['sent']} logged")
+            except Exception as e:
+                print(f"[{now()[:19]}] changelog failed: {e}", file=sys.stderr)
 
         if a.once:
             return

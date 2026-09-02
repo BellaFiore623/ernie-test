@@ -248,6 +248,17 @@ CREATE TABLE IF NOT EXISTS state_sync (
 );
 
 
+-- Which events have already been written to the change-log channel.
+-- Per event rather than a high-water mark: a change replayed from the other
+-- board carries the timestamp it originally happened at, so events do not
+-- arrive in occurred_at order and a cursor would step over them.
+CREATE TABLE IF NOT EXISTS changelog_sent (
+    event_id   TEXT PRIMARY KEY REFERENCES events(event_id),
+    message_id TEXT,
+    sent_at    TEXT NOT NULL
+);
+
+
 CREATE VIEW IF NOT EXISTS v_outbox_due AS
 SELECT * FROM events
 WHERE dispatch_after IS NOT NULL
