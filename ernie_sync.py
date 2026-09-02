@@ -44,6 +44,7 @@ RESCAN_PER_CYCLE = 12  # threads rescanned per cycle; the rest wait their turn.
                        # edit surfaces within ceil(threads/12) cycles instead of
                        # the next one -- new cards, which is what people watch,
                        # are not delayed at all.
+RETRY_MAX_S = 30      # ride out a short 429 in write(); park anything longer
 CYCLE_SECONDS = 60    # a quiet cycle is ~14 GETs now, not ~101, so a
                       # shorter interval still costs Discord less per hour
                       # than the old 5-minute one did
@@ -102,10 +103,23 @@ class Discord:
                 f"Write blocked. ALLOW_DISCORD_WRITES must equal "
                 f"DISCORD_GUILD_ID ({self.guild_id}) for Ernie to post. "
                 f"Attempted: {method} {path}")
-        r = self.http.request(method, path, json=body or None)
+        for attempt in range(3):
+            r = self.http.request(method, path, json=body or None)
+            if r.status_code == 429:
+                wait = float(r.json().get("retry_after", 1.0))
+                # Posting and editing come back in under a second, so riding
+                # those out here saves every caller from handling them. A
+                # thread rename that has spent its two-per-ten-minutes comes
+                # back with ~600s instead: sleeping on that would stall the
+                # outbox behind one card, so it goes to the caller to park.
+                if wait <= RETRY_MAX_S and attempt < 2:
+                    time.sleep(wait + 0.1)
+                    continue
+            r.raise_for_status()
+            time.sleep(PACING)
+            return r.json() if r.content else {}
         r.raise_for_status()
-        time.sleep(PACING)
-        return r.json() if r.content else {}
+        return {}
 
     def whoami(self) -> dict:
         me = self.get("/users/@me") or {}
