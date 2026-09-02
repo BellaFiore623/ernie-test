@@ -73,7 +73,11 @@ BOARD_MAX = 800             # a ticket stops growing here, however wide the
                             # so the board stays a column next to the rail.
 FEED_HEIGHT = 160           # only until the first render measures the rows
 FEED_FOLDED = 30            # just the caption, when it's folded away
-FEED_ROWS = 4               # entries shown, and the height held open for them
+FEED_ROWS = 4               # height held open even when fewer have come in
+FEED_MAX_ROWS = 8          # rows visible before the feed starts scrolling
+FEED_STATUS_W = 118        # fixed columns, so chips and buttons line up
+FEED_UNDO_W = 88           # down the feed instead of tracking each row's text
+FEED_LIMIT = 200            # how much history to ask Ernie for
 
 BANDS = ["unassigned", "critical", "high", "medium", "low"]
 BAND_LABEL = {b: b.capitalize() for b in BANDS}
@@ -103,7 +107,7 @@ SURFACE, CANVAS = "#FFFFFF", "#F5F6F7"
 BESIDE = "#EAECEE"
 AMBER_BG, AMBER_FG = "#FCF3E2", "#8A5A08"
 RED_BG, RED_FG, RED_EDGE = "#FBEBEB", "#9B2C2C", "#D14343"
-OK_FG, ACCENT = "#2E6B34", "#2B6CB0"
+OK_FG, OK_BG, ACCENT = "#2E6B34", "#EAF2EA", "#2B6CB0"
 INFO_BG, INFO_FG = "#E6EDF7", "#1B3A5C"
 UNASSIGNED_TINT = "#EEF2F8"
 
@@ -358,7 +362,7 @@ class Api:
     def board(self):
         return self.client.get(f"{self.base}/cards").json()
 
-    def events(self, limit=8):
+    def events(self, limit=FEED_LIMIT):
         return self.client.get(f"{self.base}/events", params={"limit": limit}).json()
 
     def health(self):
@@ -2170,10 +2174,23 @@ class Bert(QMainWindow):
         body = QVBoxLayout(self.feed_body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        self.feed_lay = QVBoxLayout()
+
+        # The feed carries the whole history now rather than the last four, so
+        # it has to scroll. Without this the panel grows to fit every row and
+        # eats the board it sits under.
+        self.feed_scroll = QScrollArea()
+        self.feed_scroll.setWidgetResizable(True)
+        self.feed_scroll.setFrameShape(QFrame.NoFrame)
+        self.feed_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.feed_scroll.setStyleSheet("background:transparent;")
+        self.feed_scroll.viewport().setStyleSheet("background:transparent;")
+        inner = QWidget()
+        inner.setStyleSheet("background:transparent;")
+        self.feed_lay = QVBoxLayout(inner)
+        self.feed_lay.setContentsMargins(0, 0, 0, 0)
         self.feed_lay.setSpacing(3)
-        body.addLayout(self.feed_lay)
-        body.addStretch()
+        self.feed_scroll.setWidget(inner)
+        body.addWidget(self.feed_scroll)
         lay.addWidget(self.feed_body)
 
         self.feed_panel = w
@@ -2203,31 +2220,35 @@ class Bert(QMainWindow):
             return
         # The rows went in a moment ago and the layout has not recomputed yet,
         # so ask it to before believing anything it says about its size.
-        body = self.feed_body.layout()
-        body.invalidate()
-        body.activate()
+        self.feed_lay.invalidate()
+        self.feed_lay.activate()
 
-        # Hold the full four rows open even when fewer have come in, at the
-        # height of the tallest row actually on screen -- a row with an Undo
-        # button is taller than one without. Sizing to just what is there sees
-        # the panel, and the whole board above it, jump every time the mix of
-        # rows changes.
         rows = [self.feed_lay.itemAt(i).widget()
                 for i in range(self.feed_lay.count())]
-        tallest = max((r.sizeHint().height() for r in rows if r is not None),
-                      default=0)
+        rows = [r for r in rows if r is not None]
+        tallest = max((r.sizeHint().height() for r in rows), default=0)
         # Remembered, so a moment with an empty feed -- a fresh database, or
         # every row undone -- doesn't collapse the panel and bounce the board.
         self._feed_row_h = max(getattr(self, "_feed_row_h", 0), tallest)
-        reserve = (FEED_ROWS * self._feed_row_h
-                   + (FEED_ROWS - 1) * self.feed_lay.spacing()
-                   if self._feed_row_h else 0)
+
+        gap = self.feed_lay.spacing()
+
+        def stack(n):
+            return n * self._feed_row_h + max(0, n - 1) * gap
+
+        # Hold FEED_ROWS open even when fewer have come in, so the panel and
+        # the board above it don't jump as rows arrive, and stop growing at
+        # FEED_MAX_ROWS -- past that the scroll area takes over. Measured from
+        # the tallest row on screen, because a row with an Undo button is
+        # taller than one without.
+        shown = min(max(len(rows), FEED_ROWS), FEED_MAX_ROWS)
+        view = stack(shown) if self._feed_row_h else 0
+        self.feed_scroll.setFixedHeight(view)
 
         m = self.feed_panel.layout().contentsMargins()
         self.feed_panel.setFixedHeight(
             m.top() + m.bottom() + self.feed_panel.layout().spacing()
-            + self.feed_head.sizeHint().height()
-            + max(body.sizeHint().height(), reserve))
+            + self.feed_head.sizeHint().height() + view)
 
     # -- identity ----------------------------------------------------------
 
@@ -2774,7 +2795,13 @@ class Bert(QMainWindow):
                 w.setParent(None)
                 w.deleteLater()
 
-        for e in self.feed[:FEED_ROWS]:
+        # An undo of something already posted queues a correction naming the
+        # event it retracts, so a row can say it is mid-revoke rather than
+        # just going quiet between the click and the message going out.
+        revoking = {e.get("new_value") for e in self.feed
+                    if e["verb"] == "undo_correction" and not e.get("posted_at")}
+
+        for e in self.feed:
             row = QWidget()
             h = QHBoxLayout(row)
             h.setContentsMargins(0, 0, 0, 0)
@@ -2790,10 +2817,36 @@ class Bert(QMainWindow):
             h.addWidget(txt)
             h.addStretch()
 
+            # Its own column, right-aligned and always the same width: a
+            # chip that follows the text sits in a different place on every
+            # row, and a column of eight of them read as a mess.
+            status = self._feed_status(e, e["event_id"] in revoking)
+            status_col = QWidget()
+            sc = QHBoxLayout(status_col)
+            sc.setContentsMargins(0, 0, 0, 0)
+            sc.addStretch()
+            if status:
+                sc.addWidget(chip(*status))
+            status_col.setFixedWidth(FEED_STATUS_W)
+            h.addWidget(status_col)
+
+            undo_col = QWidget()
+            uc = QHBoxLayout(undo_col)
+            uc.setContentsMargins(0, 0, 0, 0)
+            uc.addStretch()
+            undo_col.setFixedWidth(FEED_UNDO_W)
+            h.addWidget(undo_col)
+
             undoable = e["verb"] in ("completed", "priority_changed", "edited",
                                      "work_done")
             if undoable and not e["undone_at"]:
                 b = QPushButton("\u21b6  Undo")
+                # The same button does two different things either side of the
+                # undo window, and looked identical doing them.
+                b.setToolTip(
+                    "Already in the thread \u2014 undoing posts a correction."
+                    if e.get("posted_at") else
+                    "Nothing has been posted yet \u2014 undoing is silent.")
                 b.setCursor(Qt.PointingHandCursor)
                 b.setStyleSheet(
                     f"QPushButton {{ {BTN_HIT}"
@@ -2803,17 +2856,48 @@ class Bert(QMainWindow):
                     f"QPushButton:disabled {{ color:{MUTED}; border-color:{LINE}; }}")
                 b.setEnabled(self.writable())
                 b.clicked.connect(lambda _, i=e["event_id"]: self.undo(i))
-                h.addWidget(b)
-            elif e["undone_at"]:
-                h.addWidget(chip("undone", "#EEEFF1", MUTED))
-
+                uc.addWidget(b)
             self.feed_lay.addWidget(row)
             # Qt reports a widget that has not been shown yet as zero-sized,
             # and _fit_feed() measures these a moment from now -- without this
             # it sizes the panel for an empty feed and squashes every row.
             row.show()
 
+        # Otherwise a short feed's rows share the viewport's spare height
+        # between them instead of sitting at the top.
+        self.feed_lay.addStretch()
         self._fit_feed()
+
+    @staticmethod
+    def _feed_status(e, revoking):
+        """
+        Where a change has got to, as (text, background, foreground).
+
+        The feed used to say a change had happened the instant it was made and
+        then say nothing more, so there was no way to tell a change still
+        inside its undo window from one already in the customer thread. Every
+        column this reads is on the event row already.
+        """
+        if revoking:
+            return ("attempting to revoke…", AMBER_BG, AMBER_FG)
+        if e.get("undone_at"):
+            return ("undone", "#EEEFF1", MUTED)
+        if e.get("posted_at"):
+            return ("in the thread", OK_BG, OK_FG)
+        if e.get("claimed_at"):
+            return ("posting…", AMBER_BG, AMBER_FG)
+        if e.get("dispatch_after"):
+            try:
+                due = datetime.fromisoformat(e["dispatch_after"])
+                left = int((due - datetime.now(timezone.utc)).total_seconds())
+            except (ValueError, TypeError):
+                return None
+            return ((f"sending in {left}s" if left > 0 else "sending…"),
+                    INFO_BG, INFO_FG)
+        # No dispatch means nothing was ever queued: a reorder, or a change
+        # replayed from the other board, whose own machine posts it. Saying
+        # anything here would be saying it twice or saying it wrong.
+        return None
 
     @staticmethod
     def _feed_text(e):

@@ -891,8 +891,12 @@ def undo(event_id: str, body: ActorBody):
         # correction would be pointing at nothing.
         already_posted = bool(e["posted_at"] and e["discord_message_id"])
         if already_posted:
+            # new_value names the event being retracted, so the feed can tell
+            # exactly which row is mid-revoke rather than inferring it from
+            # timing. The outbox renders a fixed sentence for this verb and
+            # reads neither value.
             log_event(con, thread_id=e["thread_id"], verb="undo_correction",
-                      actor=actor, old=e["verb"], post=True)
+                      actor=actor, old=e["verb"], new=event_id, post=True)
 
         result = {"event_id": event_id, "undone": True,
                   "correction_posted": already_posted}
