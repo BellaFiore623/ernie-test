@@ -9,9 +9,7 @@ months to appear naturally: '####' placeholders, '-- not found --' sentinels,
 a PROD->OPS rename, an edited message, a deleted message, and an archived
 thread you have to unarchive before posting.
 
-    export DISCORD_TOKEN=<test bot token>
-    export TEST_CHANNEL_ID=<customer-threads in your test server>
-    python seed_test_server.py
+    python seed_test_server.py            # reads ernie-test.env
     python seed_test_server.py --wipe     # archive everything first
 """
 
@@ -23,6 +21,8 @@ import sys
 import time
 
 import httpx
+
+from ernie_sync import load_env
 
 API = "https://discord.com/api/v10"
 PACING = 0.4
@@ -215,6 +215,91 @@ CASES = [
     ("PROD: IPI El Paso - 12Aug26 - SSD0210 damaged front camera", [
         ("Closing this out", None),
     ], "archive"),
+
+    # ----------------------------------------------------------------------
+    # Volume. The cases above are one of each edge; a board of fourteen is
+    # too small to test two people working it -- nobody collides, no band
+    # fills up, and the running order never gets long enough to scroll.
+    # ----------------------------------------------------------------------
+
+    ("PROD: Allegheny County - 28Aug26 - ODE-3114 gearbox rebuild", [
+        ("Third rebuild on this unit", None),
+        (None, build_embed("Allegheny County - ODE-3114 - 28Aug26",
+                           "PIP-7712 (ODE-3114)",
+                           "PIP-4902 (Allegheny County DPW)")),
+        (created("PIP-9501", "Build Request", "PIP-7712", "PIP-4902"), None),
+    ], None),
+
+    ("OPS: Beaver Falls - 29Aug26 - EReel-1188 spool jam", [
+        ("Reel jams at about 40ft every time", None),
+        (None, return_embed("Beaver Falls - 29Aug26 : EReel-1188",
+                            "PIP-7719 (EReel-1188)",
+                            "PIP-4915 (Beaver Falls Municipal Authority)",
+                            "Spool jams under load", "ereel",
+                            "Return: EReel", referenced=["PIP-9470", "PIP-9481"])),
+    ], None),
+
+    ("PROD: Steel City Water - 30Aug26 - SSD0311 firmware rollback", [
+        ("Customer wants the previous build back", None),
+    ], None),
+
+    ("CS: Latrobe - 30Aug26 - Camera head fogging after rain", [
+        ("Same symptom as Kenosha", None),
+    ], None),
+
+    ("OPS: Greensburg - 31Aug26 - ODE-#### awaiting purchase order", [
+        ("PO still not through", None),
+        (None, build_embed("Greensburg - ODE-#### - 31Aug26",
+                           "-- not found --",
+                           "PIP-7740 (City of Greensburg **PURCHASE**)")),
+    ], None),
+
+    ("ENG: Reporting - 01Sep26 - Export drops trailing rows", [
+        ("Repros on anything over 1k rows", None),
+    ], None),
+
+    ("PROD: Monroeville - 01Sep26 - Dual laser calibration", [
+        ("Calibration jig is booked Thursday", None),
+        (None, build_embed("Monroeville - 01Sep26",
+                           "PIP-7755 (SSD0402)",
+                           "PIP-4931 (Monroeville Borough)")),
+    ], None),
+
+    ("OPS: Wilkinsburg - 01Sep26 - EReel-1204 no power", [
+        ("Dead on arrival out of the crate", None),
+        (None, return_embed("Wilkinsburg - 01Sep26 : EReel-1204",
+                            "PIP-7761 (EReel-1204)",
+                            "PIP-4940 (Wilkinsburg Sanitary Authority)",
+                            "No power at all", "ereel", "Return: EReel")),
+        (created("PIP-9512", "Return", "PIP-7761", "PIP-4940"), None),
+    ], None),
+
+    ("DATA: Fleet - 02Sep26 - Backfill equipment master ids", [
+        ("Roughly 400 rows missing an EM", None),
+    ], None),
+
+    ("PROD: Ross Township - 02Sep26 - SSD0288 replacement chassis", [
+        ("Chassis arrives Monday", None),
+    ], None),
+
+    ("CS: Bethel Park - 02Sep26 - Operator training refresher", [
+        ("They've had three new starters", None),
+    ], None),
+
+    ("OPS: McKeesport - 02Sep26 - ODE-2977 wheel motor", [
+        ("Left wheel motor stalls under load", None),
+        (None, build_embed("McKeesport - ODE-2977 - 02Sep26",
+                           "PIP-7770 (ODE-2977)",
+                           "PIP-4955 (McKeesport City : Laser (ST Client))")),
+    ], None),
+
+    ("PROD: Penn Hills - 02Sep26 - EReel-1220 fiber respool", [
+        ("Fiber respool plus a full bench check", None),
+    ], None),
+
+    ("OPS: Baldwin - 02Sep26 - Gooseneck 10in out of stock", [
+        ("Substituting the 8in unless they object", None),
+    ], None),
 ]
 
 
@@ -222,12 +307,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--wipe", action="store_true",
                     help="archive existing threads before seeding")
+    ap.add_argument("--env", default="ernie-test.env",
+                    help="env file to read the token and channel from")
     a = ap.parse_args()
 
+    # Every other script reads the env file; this one wanted the values
+    # exported by hand, which is a papercut every time somebody reseeds.
+    load_env(a.env)
     token = os.environ.get("DISCORD_TOKEN")
     cid = os.environ.get("TEST_CHANNEL_ID")
     if not token or not cid:
-        sys.exit("DISCORD_TOKEN and TEST_CHANNEL_ID must be set")
+        sys.exit(f"DISCORD_TOKEN and TEST_CHANNEL_ID must be set, "
+                 f"in {a.env} or the environment")
 
     d = Discord(token)
     ch = d.channel(cid)
