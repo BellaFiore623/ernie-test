@@ -214,6 +214,87 @@ def last_touch(con, thread_id: str) -> dict:
             "verb": e["verb"], "detail": e["new_value"]}
 
 
+REVISION_LABEL = {
+    "priority_changed": "moved it to another priority band",
+    "completed":        "closed the ticket",
+    "renamed":          "renamed the thread",
+    "work_done":        "ticked a work item off",
+    "edited":           "edited the card",
+}
+
+
+def describe_revision(e) -> str:
+    """The later change, in the words a person would use for it."""
+    if e["verb"].startswith("set_"):
+        field = e["verb"][4:]
+        return f"changed the {FIELD_LABEL.get(field, field)}"
+    return REVISION_LABEL.get(e["verb"], "changed it")
+
+
+def event_scope(e) -> set[str]:
+    """
+    What an event actually touched, as opaque keys. Two events collide when
+    these sets intersect.
+
+    Per value rather than per card, because most pairs don't collide at all:
+    closing a ticket is no reason to refuse an undo of a rename.
+    """
+    verb = e["verb"]
+    if verb == "priority_changed":
+        return {"priority"}
+    if verb == "reordered":
+        # Undo never restores rank, so a later reorder is not in its way.
+        return {"rank"}
+    if verb == "completed":
+        return {"completed"}
+    if verb == "renamed":
+        return {"title"}
+    if verb == "work_done":
+        return {f"work:{e['old_value']}"}       # old_value is the item id
+    if verb.startswith("set_"):
+        return {f"field:{verb[4:]}"}
+    if verb == "edited":
+        # old_value is the JSON of what the batch overwrote, so its keys are
+        # exactly the fields that moved, and __work__ the bubbles that did.
+        try:
+            previous = json.loads(e["old_value"] or "{}")
+        except json.JSONDecodeError:
+            return set()
+        work = previous.pop("__work__", None) or {}
+        scope = {f"field:{f}" for f in previous}
+        for iid in (work.get("added") or []) + (work.get("removed") or []):
+            scope.add(f"work:{iid}")
+        return scope
+    return set()            # undo_correction, and any verb added since
+
+
+def revised_since(con, e):
+    """
+    The first later event that touched what this one touched, or None.
+
+    Undo is a restore, not a merge: it writes the old value straight back over
+    whatever is there now. If somebody has moved that same value on since,
+    restoring it throws their change away without either of them seeing it go.
+    """
+    scope = event_scope(e)
+    if not scope:
+        return None
+    later = con.execute(
+        """SELECT * FROM events
+           WHERE thread_id=? AND undone_at IS NULL AND event_id<>?
+             AND datetime(occurred_at) >= datetime(?)
+           ORDER BY occurred_at""",
+        (e["thread_id"], e["event_id"], e["occurred_at"])).fetchall()
+    for row in later:
+        # datetime() truncates to the second, so that filter is deliberately
+        # loose; the exact order is settled here on the full ISO timestamp.
+        if row["occurred_at"] <= e["occurred_at"]:
+            continue
+        if event_scope(row) & scope:
+            return row
+    return None
+
+
 def open_items(con, thread_id: str) -> list[dict]:
     """The bubbles a card is currently showing: not ticked off, not removed."""
     return rows(con.execute(
@@ -710,6 +791,21 @@ def undo(event_id: str, body: ActorBody):
                      "Ernie is posting this to Discord right now. "
                      "Try the undo again in a few seconds.",
                      at=e["claimed_at"])
+
+        # A hard stop, unlike other_actor below: force is for taking over
+        # somebody else's change, not for silently discarding one that was
+        # made after it. The way out is to make the change again by hand.
+        newer = revised_since(con, e)
+        if newer:
+            who = newer["actor_name"] or "Someone"
+            # Usually somebody else, but you can outrun your own undo too:
+            # two drags and then undo of the first is the same collision.
+            subject = "You have" if who == actor else f"{who} has"
+            conflict("revised",
+                     f"{subject} {describe_revision(newer)} since. "
+                     f"Undoing now would discard that.",
+                     by=who, at=newer["occurred_at"], verb=newer["verb"],
+                     detail=newer["new_value"])
 
         if (e["actor_name"] or "") != actor and not body.force:
             conflict("other_actor",
