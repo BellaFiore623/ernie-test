@@ -144,14 +144,27 @@ python ernie_sync.py --once --env ernie-test.env --db ernie-test.db
 
 ## Testing with somebody else
 
-One backend, two Berts. You run `./run.sh test bert lan`, which binds the API
-to every interface and prints the address to hand over; they run `bert.cmd`,
-which asks for that address once and remembers it. They need Python and a
-clone -- no token, no database, no migration. Both of you set your own name in
-Settings, and the events carry whoever made them.
+Two ways, and they are not the same setup. `TESTING.md` is the version to
+hand over.
 
-Do not have them run `run.sh`: a second sync and outbox against their own
-database is a second board, not a shared one.
+**One backend, two Berts.** You run `./run.sh test bert lan`, which binds the
+API to every interface and prints the address; they run `bert.cmd`, which
+asks for it once and remembers it. They need Python and a clone -- no token,
+no database, no migration -- and the board updates at Bert's 5s poll. Same
+network only. In *this* setup they must not run `run.sh`: a second sync and
+outbox with no `STATE_CHANNEL_ID` is a second board, not a shared one.
+
+**Two full stacks.** Both run everything, sharing only `#ernie-state`.
+Works across networks and neither laptop has to stay up for the other, at the
+cost of a token on both machines and a board that is up to a sync cycle
+behind. `STATE_CHANNEL_ID` is what makes it one board; `ALLOW_DISCORD_WRITES`
+must equal `DISCORD_GUILD_ID` or their changes never leave their machine. A
+machine joining with no `state_sync` rows adopts the channel, so a fresh
+clone comes up already matching the shared board.
+
+Bert shows which it is: the `shared · …` indicator by the refresh button
+appears only when `state_sync` has rows, and reports in step, waiting to
+send, or out of contact.
 
 The API has no authentication, so on `lan` anyone who can reach the port can
 move cards and post to the thread. Trusted network, for as long as the test

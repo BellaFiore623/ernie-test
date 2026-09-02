@@ -1,134 +1,249 @@
-# Testing Bert on your laptop
+# Testing with two people
 
-Bert is the board you'll be clicking on. Everything behind it — the database,
-the Discord sync, the bit that posts back to threads — runs on the other
-person's machine. You run Bert only and point it at theirs, so there is one
-database and one board between you: they'll see your changes and you'll see
-theirs.
+There are two ways to share a board. Pick one before you start — they are
+different setups and mixing them will confuse you.
 
-Nothing gets installed on your laptop except Python. No Discord token, no
-database, no setup beyond the four steps below. Ten minutes, most of it
-waiting for downloads.
+| | **Two stacks** | **One stack, two Berts** |
+|---|---|---|
+| You each run | everything | one of you runs everything |
+| They need a Discord token | **yes** | no |
+| Same network required | no | **yes** |
+| Their changes appear in | up to a minute | about 5 seconds |
+| Set up in | ~20 minutes | ~10 minutes |
+
+**Same office, same afternoon — use one stack** (jump to the bottom). It is
+simpler, faster to set up, and the board updates as fast as you can click.
+
+**Different places, or nobody wants to leave a laptop running — use two
+stacks.** That is the rest of this page.
+
+---
+
+# Two stacks
+
+You each run your own copy of everything: your own database, your own sync,
+your own Bert. Neither machine talks to the other. You meet in Discord: the
+board's priorities, running order, work items and closures live in a channel
+called `#ernie-state`, one message per card, and each side reads the other's
+changes from there.
+
+This means either of you can shut your laptop without breaking the other's
+board.
 
 ## Before you start
 
-Ask whoever is running it for **the address**. It looks like
-`192.168.1.20:8788` — a number and a port. They get it from their own terminal
-when they start the stack.
+You need three things from whoever set this up:
 
-You both need to be on the **same network**. Office wifi is fine. A VPN, a
-phone hotspot, or "guest" wifi will not reach their machine.
+1. **The bot token** and the sandbox guild's ids. They will send you an
+   `ernie-test.env` file, or its contents.
+2. **The `#ernie-state` channel id.**
+3. **An invite to the sandbox Discord server**, if you're not in it.
+
+The token is a password for the bot. Don't put it in a chat that isn't the
+two of you, and don't commit it — `.gitignore` already covers `*.env`, so it
+stays out of git as long as you leave it named `ernie-test.env`.
 
 ## 1. Install Python
 
-Download it from [python.org/downloads](https://www.python.org/downloads/) —
-any version from 3.11 up.
+[python.org/downloads](https://www.python.org/downloads/), any version from
+3.11 up.
 
-On the very first screen of the installer, tick **"Add python.exe to PATH"**
-before clicking Install. It's easy to miss and everything else depends on it.
-
-To check it worked, open Command Prompt (Start → type `cmd`) and run:
+On the first screen of the installer tick **"Add python.exe to PATH"**. It's
+easy to miss and everything depends on it. Check it worked — open Command
+Prompt (Start → type `cmd`) and run:
 
 ```
 python --version
 ```
 
-If that prints a version number, you're set. If it says `'python' is not
-recognized`, the PATH box wasn't ticked — run the installer again and choose
-Modify.
+If that prints a version you're set. If it says `'python' is not recognized`,
+run the installer again and choose Modify.
 
 ## 2. Get the code
 
-If you have Git:
-
 ```
 git clone https://github.com/BellaFiore623/ernie-test.git
+cd ernie-test
 ```
 
-If you don't: open
-[the repository](https://github.com/BellaFiore623/ernie-test) in a browser,
-click the green **Code** button, **Download ZIP**, and extract it somewhere
-you'll find again — Documents is fine. Extract it properly; opening the ZIP
-and running from inside it won't work.
+No Git? Open [the repository](https://github.com/BellaFiore623/ernie-test),
+green **Code** button, **Download ZIP**, and extract it somewhere you'll find
+again. Extract it properly — running from inside the ZIP won't work.
 
-If GitHub asks you to sign in or says the page doesn't exist, the repository
-is private — ask them to add you.
+If GitHub says the page doesn't exist, the repository is private. Ask to be
+added.
 
-## 3. Start Bert
+## 3. Put the env file in place
 
-Open the folder and **double-click `bert.cmd`**.
+Save what they sent you as `ernie-test.env`, in the folder with `bert.py` in
+it. It looks like this:
 
-The first time, it will:
+```
+DISCORD_TOKEN=...
+DISCORD_GUILD_ID=...
+ALLOW_DISCORD_WRITES=...
+TEST_CHANNEL_ID=...
+CARD_CHANNEL_IDS=...
+STATE_CHANNEL_ID=...
+```
 
-- ask for the address from the top of this page — paste it in, press Enter;
-- install the two things Bert needs (PySide6 and httpx), which takes a minute
-  or two the first time and never again;
-- open the board.
+Two lines matter more than the rest:
 
-It remembers the address, so from then on double-clicking is all it takes.
+- **`ALLOW_DISCORD_WRITES` must be exactly the same number as
+  `DISCORD_GUILD_ID`.** If it isn't, nothing you do will ever reach the other
+  person — your board will look fine and they'll never see a thing.
+- **`STATE_CHANNEL_ID`** is what makes the two boards one board. Without it
+  you get a private board of your own.
 
-To point it somewhere else later, run it from Command Prompt with the new
-address after it — `bert.cmd 192.168.1.20:8788` — or delete the file
-`%USERPROFILE%\.bert-host` and it will ask you again next time.
+## 4. Check your clock
 
-Closing the Bert window is all you need to do to stop it.
+Seriously. Right-click the Windows clock → **Adjust date and time** → make
+sure **Set time automatically** is on, and hit **Sync now**.
 
-## 4. Put your name in
+Ernie no longer lets a wrong clock decide who wins a disagreement, but the
+times in the activity feed come from whichever machine made the change, so a
+clock that's an hour out makes the feed read like nonsense. Ernie will tell
+you if yours is more than two minutes off.
 
-Click the **gear** in the top right, type your name, Save.
+## 5. First run
 
-Do this before anything else. Every change is recorded against a person, and
-that name goes into the Discord thread — so until it's set, Bert won't let you
-change anything.
+```
+./run.sh test bert
+```
+
+Windows without Git Bash? Open three Command Prompts and run one each:
+
+```
+python ernie_sync.py --env ernie-test.env --db ernie-test.db
+python ernie_outbox.py --env ernie-test.env --db ernie-test.db
+python ernie_api.py --db ernie-test.db --port 8788
+```
+
+then `python bert.py --api http://127.0.0.1:8788`.
+
+The first run takes a couple of minutes: it builds your database from
+scratch, reads the threads out of Discord, then picks up the shared board
+from `#ernie-state`. **Your board will start out matching theirs** — a new
+machine adopts the shared order rather than imposing its own.
+
+## 6. Put your name in
+
+Click the **gear** top right, type your name, Save.
+
+Do this before anything else. Every change is recorded against a person, that
+name goes into the Discord thread, and it's what the other person sees in
+their activity feed. Until it's set, Bert won't let you change anything.
+
+## What you'll see
+
+Top right, next to the refresh button, is the shared-board indicator:
+
+- **`shared · in step`** — your board and theirs agree.
+- **`shared · 2 not sent yet`** — you've changed something they haven't been
+  told about. It goes out on the next cycle. Normal for up to a minute.
+- **`shared · no contact for 5m`** — nothing has been exchanged in a while.
+  Usually their stack isn't running, or yours has stopped. Check the terminal
+  you started it in.
+
+If the indicator isn't there at all, `STATE_CHANNEL_ID` isn't set — you have
+a private board and nothing you do will reach them.
 
 ## What you can do
 
-- **Drag a ticket** between priority bands, or drag a row in the running order
-  on the left. Empty bands show a dashed "drop here" while you're dragging.
+- **Drag a ticket** between priority bands, or drag a row in the running
+  order on the left.
 - **Edit** a ticket for its title, tag, client and work items. Work items are
-  the bubbles: type one and press Enter to add it, click the ✕ to remove it.
+  the bubbles: type one and press Enter to add, click ✕ to remove.
 - **✓ on a bubble** ticks that item off as done.
 - **Complete** closes the whole ticket.
 
-Everything you do is posted into the Discord thread about a minute later,
-under your name. Inside that minute there's an **Undo** button in Recent
-activity at the bottom — undo within the minute and nothing is ever posted at
-all.
+All of that reaches the other board. Their changes reach you the same way.
 
-This is the sandbox Discord server, not real customer threads. It's still
-worth pretending it's real, since that's what we're testing.
+## The things that will surprise you
+
+**It takes up to a minute.** The sync runs on a cycle. Drag a card and the
+other person will not see it move for anywhere up to a minute — this is
+normal and the indicator tells you where you are. Don't drag it twice.
+
+**If you both move the same card, the later one wins.** The one who loses
+isn't told at the moment it happens, but the change shows up in their
+activity feed with the other person's name on it, so it doesn't happen
+silently — check the feed if a card isn't where you left it.
+
+**The thread only hears once.** Whoever makes a change is the one whose Ernie
+posts it to the Discord thread. Both boards show it; only one posts. If you
+see the same update twice in a customer thread, something is wrong — say so.
+
+**Undo is for your own recent changes.** Inside a minute of making a change
+there's an **Undo** in Recent activity, and nothing was ever posted. After
+that, undo posts a correction instead. If somebody else has moved the same
+thing since, Ernie refuses the undo and says who — redo it by hand rather
+than fighting it.
 
 ## If something goes wrong
 
-**A red bar saying "Can't reach Ernie".** Their stack isn't running, the
-address is wrong, or you're on different networks. Changes are paused while
-it's up, and the board shows the last thing it saw. Check with them — Bert
-keeps retrying and picks up on its own once Ernie is back, no restart needed.
-An amber "Reconnecting to Ernie" bar is the same thing, briefly, and usually
-clears itself.
+**"Can't reach Ernie" (red bar).** Your own stack has stopped. Look at the
+terminal you started it in. Nothing you do is lost — Bert reconnects on its
+own.
 
-**Windows asks about the firewall.** That prompt appears on *their* machine,
-not yours. If they clicked "Cancel" on it, nothing will connect until they
-allow Python on private networks.
+**`shared · no contact` that doesn't clear.** Their stack is down, or your
+sync has died. Check with them, then check your own terminal.
+
+**Nothing you do reaches them.** In order: is `STATE_CHANNEL_ID` set? Is
+`ALLOW_DISCORD_WRITES` exactly equal to `DISCORD_GUILD_ID`? Is your outbox
+running?
 
 **`'python' is not recognized`.** Step 1, the PATH tick box.
 
-**It's pointed at the wrong address.** Run it once with the right one:
-`bert.cmd 192.168.1.20:8788`.
+**A card jumped back to where it was.** They moved it too, and theirs landed
+second. Check Recent activity for their name.
 
 ## What not to do
 
-Don't run `run.sh`. That starts a second copy of the whole system against a
-database on your laptop — you'd be looking at your own separate board rather
-than the shared one, and it needs a Discord token you don't have.
+**Don't point any of this at the production server.** Always
+`--env ernie-test.env --db ernie-test.db`. `run.sh test` does this for you;
+typing the commands by hand is where it goes wrong.
 
-## Not on Windows?
+**Don't share the token further.** It can post as the bot in that server.
 
-`bert.cmd` is the Windows launcher. Anywhere else, after installing Python:
+---
+
+# One stack, two Berts
+
+The simpler setup, for when you're on the same network. One of you runs
+everything; the other runs only Bert and points it at the first machine.
+No token, no database, no env file on the second machine — and the board
+updates in about five seconds rather than a minute.
+
+**The host** runs:
+
+```
+./run.sh test bert lan
+```
+
+which binds the API to every interface and prints an address like
+`192.168.1.20:8788`. Windows asks once to allow Python through the firewall
+— say yes, for **private** networks. Hand over that address.
+
+**The other person** installs Python (step 1 above), gets the code (step 2),
+then double-clicks **`bert.cmd`**. It asks for the address the first time,
+installs PySide6 and httpx, and remembers the address for next time. To point
+it somewhere else later, run `bert.cmd 192.168.1.20:8788`, or delete
+`%USERPROFILE%\.bert-host`.
+
+Both of you set your name in Settings.
+
+Not on Windows:
 
 ```
 pip install PySide6 httpx
 python bert.py --api http://192.168.1.20:8788
 ```
 
-with their address in place of that one.
+**Don't run `run.sh` on the second machine** in this setup. That starts a
+second sync and outbox against a database on their laptop — a board of their
+own, not a shared one, and it needs a token they don't have.
+
+The API has no password on it. Anyone who can reach that port can move cards
+and post to threads. A trusted network, for as long as the test lasts, never
+port-forwarded. `lan` is refused outright for production.
