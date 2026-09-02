@@ -47,6 +47,7 @@ class Item:
     item_id: str
     body: str
     done: bool
+    by: str | None = None       # who ticked it, or who added it if untouched
 
 
 @dataclass
@@ -58,6 +59,10 @@ class Card:
     items: list[Item] = field(default_factory=list)
     completed: bool = False
     completed_by: str | None = None
+    # Who last changed this card here. Attribution belongs to the card, not to
+    # whichever process happens to be publishing -- otherwise every change
+    # arrives on the other board credited to Ernie.
+    actor: str | None = None
 
     def payload(self) -> dict:
         """The half of the message that is state rather than decoration."""
@@ -67,7 +72,8 @@ class Card:
             "priority": self.priority,
             "rank": self.rank,
             "completed": self.completed,
-            "work": [{"id": i.item_id, "body": i.body, "done": i.done}
+            "work": [{"id": i.item_id, "body": i.body, "done": i.done,
+                      "by": i.by}
                      for i in self.items],
         }
 
@@ -87,8 +93,8 @@ def render(card: Card, position: int, actor: str = "ernie") -> str:
     """
     head = (f"**completed** — {card.name}" if card.completed
             else f"**{card.priority} #{position}** — {card.name}")
-    body = json.dumps(dict(card.payload(), by=actor, at=now_iso()),
-                      ensure_ascii=False)
+    body = json.dumps(dict(card.payload(), by=card.actor or actor,
+                           at=now_iso()), ensure_ascii=False)
     return f"{head}\n```json\n{body}\n```"
 
 
@@ -126,21 +132,28 @@ def load_board(db: str) -> list[Card]:
         # the channel still claiming a priority for a card nobody can see.
         for r in con.execute(
                 """SELECT c.thread_id, c.priority, c.rank, c.completed_at,
-                          c.completed_by, v.name
+                          c.completed_by, v.name,
+                          (SELECT e.actor_name FROM events e
+                            WHERE e.thread_id = c.thread_id
+                              AND e.undone_at IS NULL AND e.actor_name IS NOT NULL
+                            ORDER BY e.occurred_at DESC LIMIT 1) AS last_actor
                    FROM cards c
                    LEFT JOIN v_thread_current v ON v.thread_id = c.thread_id
                    ORDER BY c.priority, c.rank"""):
             items = [
-                Item(i["item_id"], i["body"], bool(i["done_at"]))
+                Item(i["item_id"], i["body"], bool(i["done_at"]),
+                     i["done_by"] if i["done_at"] else i["created_by"])
                 for i in con.execute(
-                    """SELECT item_id, body, done_at FROM work_items
+                    """SELECT item_id, body, done_at, done_by, created_by
+                       FROM work_items
                        WHERE thread_id=? AND removed_at IS NULL
                        ORDER BY position""", (r["thread_id"],))
             ]
             cards.append(Card(r["thread_id"], r["name"] or "(untitled)",
                               r["priority"], r["rank"], items,
                               completed=bool(r["completed_at"]),
-                              completed_by=r["completed_by"]))
+                              completed_by=r["completed_by"],
+                              actor=r["last_actor"]))
         return cards
     finally:
         con.close()
@@ -357,8 +370,9 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
                 """INSERT INTO work_items (item_id, thread_id, body, position,
                                            created_at, created_by, done_at, done_by)
                    VALUES (?,?,?,?,?,?,?,?)""",
-                (iid, tid, ri["body"], float(pos), at, by,
-                 at if ri["done"] else None, by if ri["done"] else None))
+                (iid, tid, ri["body"], float(pos), at, ri.get("by") or by,
+                 at if ri["done"] else None,
+                 (ri.get("by") or by) if ri["done"] else None))
             changed.append(f"+{ri['body']!r}")
             added.append(iid)
             continue
@@ -373,7 +387,7 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
             changed.append(f"restored {ri['body']!r}")
         if ri["done"] and not li["done_at"]:
             con.execute("UPDATE work_items SET done_at=?, done_by=? WHERE item_id=?",
-                        (at, by, iid))
+                        (at, ri.get("by") or by, iid))
             changed.append(f"ticked {ri['body']!r}")
             log_event(con, thread_id=tid, verb="work_done", actor=actor,
                       old=iid, new=ri["body"], at=at)
