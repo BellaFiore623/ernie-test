@@ -233,6 +233,140 @@ def publish(d: Discord, cid: str, cards: list[Card], actor: str = "ernie") -> di
     return {"posted": posted, "edited": edited, "unchanged": unchanged}
 
 
+# -- reading it back --------------------------------------------------------
+
+def rw(db: str) -> sqlite3.Connection:
+    con = sqlite3.connect(db, timeout=15.0)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout = 15000")
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
+    """
+    Write one remote payload into the local mirror, and say what moved.
+
+    updated_at is set to the payload's own timestamp rather than now, so the
+    next cycle doesn't read this machine's write as a change of its own and
+    push it straight back up.
+    """
+    tid, at, by = p["thread"], p["at"], p.get("by")
+    changed = []
+
+    row = con.execute("SELECT priority, rank FROM cards WHERE thread_id=?",
+                      (tid,)).fetchone()
+    if row["priority"] != p["priority"] or row["rank"] != p["rank"]:
+        changed.append(f"{row['priority']} {row['rank']:.0f} -> "
+                       f"{p['priority']} {p['rank']:.0f}")
+        con.execute("UPDATE cards SET priority=?, rank=?, updated_at=? "
+                    "WHERE thread_id=?", (p["priority"], p["rank"], at, tid))
+
+    remote = {i["id"]: i for i in p.get("work") or []}
+    local = {r["item_id"]: r for r in con.execute(
+        """SELECT item_id, body, position, done_at, removed_at FROM work_items
+           WHERE thread_id=?""", (tid,))}
+
+    for pos, (iid, ri) in enumerate(remote.items()):
+        li = local.get(iid)
+        if li is None:
+            con.execute(
+                """INSERT INTO work_items (item_id, thread_id, body, position,
+                                           created_at, created_by, done_at, done_by)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (iid, tid, ri["body"], float(pos), at, by,
+                 at if ri["done"] else None, by if ri["done"] else None))
+            changed.append(f"+{ri['body']!r}")
+            continue
+        if li["position"] != float(pos):
+            con.execute("UPDATE work_items SET position=? WHERE item_id=?",
+                        (float(pos), iid))
+        if li["removed_at"]:
+            # Never hard-deleted, so a bubble the other board still shows is
+            # put back by clearing the tombstone rather than inserting again.
+            con.execute("UPDATE work_items SET removed_at=NULL, removed_by=NULL "
+                        "WHERE item_id=?", (iid,))
+            changed.append(f"restored {ri['body']!r}")
+        if ri["done"] and not li["done_at"]:
+            con.execute("UPDATE work_items SET done_at=?, done_by=? WHERE item_id=?",
+                        (at, by, iid))
+            changed.append(f"ticked {ri['body']!r}")
+        elif not ri["done"] and li["done_at"]:
+            con.execute("UPDATE work_items SET done_at=NULL, done_by=NULL "
+                        "WHERE item_id=?", (iid,))
+            changed.append(f"unticked {ri['body']!r}")
+
+    for iid, li in local.items():
+        if iid not in remote and not li["removed_at"]:
+            con.execute("UPDATE work_items SET removed_at=?, removed_by=? "
+                        "WHERE item_id=?", (at, by, iid))
+            changed.append(f"-{li['body']!r}")
+
+    # Carry the payload's timestamp onto the card even when only a bubble
+    # moved. Without it a work-item change leaves updated_at behind the
+    # payload, and every later cycle re-examines a card that is already
+    # settled.
+    con.execute("UPDATE cards SET updated_at=? WHERE thread_id=?", (at, tid))
+    return changed
+
+
+def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
+    """
+    Pull the channel into the local mirror.
+
+    The two boards meet in Discord, so the newer of the two wins per card: a
+    payload written after this machine last touched that card is somebody
+    else's move and gets applied; anything older is a local change that hasn't
+    been published yet, and publish() will push it up.
+
+    Both timestamps are ISO-8601 UTC written by Python, so they compare as
+    strings -- but they come off two different laptops, so a clock that is
+    minutes out will decide a tie the wrong way.
+    """
+    remote = fetch_state(d, cid)
+    con = rw(db)
+    report = {"applied": [], "ahead": [], "unknown": [], "same": 0, "settled": 0}
+    try:
+        for tid, entry in remote.items():
+            p = entry["payload"]
+            if p.get("v") != FORMAT_VERSION:
+                report["unknown"].append(f"{tid} (format v{p.get('v')})")
+                continue
+            row = con.execute(
+                "SELECT updated_at FROM cards WHERE thread_id=?", (tid,)).fetchone()
+            if row is None:
+                # The channel knows a card this machine has never synced -- the
+                # thread itself hasn't arrived yet. Leave it for a later cycle
+                # rather than inventing a card with no thread behind it.
+                report["unknown"].append(f"{tid} (no local card)")
+                continue
+            local_at = row["updated_at"] or ""
+            if p["at"] == local_at:
+                report["settled"] += 1          # already agreed, nothing to do
+                continue
+            if p["at"] < local_at:
+                # This machine has moved the card since the channel last heard
+                # about it. publish() is what puts that right, not this.
+                report["ahead"].append(tid)
+                continue
+
+            changed = apply_card(con, p)
+            if changed:
+                report["applied"].append({"thread": tid, "changed": changed,
+                                          "by": p.get("by")})
+            else:
+                # Same state under a newer timestamp -- somebody republished
+                # without moving anything. Take the timestamp so it settles.
+                report["same"] += 1
+            if dry_run:
+                con.rollback()
+            else:
+                con.commit()       # per card, so the write lock is never held long
+    finally:
+        con.close()
+    return report
+
+
 def connect(env: str) -> tuple[Discord, str]:
     load_env(env)
     token = os.environ.get("DISCORD_TOKEN")
@@ -313,6 +447,10 @@ def main() -> None:
                     help="publish, move a card, read it back")
     ap.add_argument("--clear", action="store_true",
                     help="delete the state messages again")
+    ap.add_argument("--pull", action="store_true",
+                    help="read the channel back into the local mirror")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --pull, say what would change and change nothing")
     a = ap.parse_args()
 
     d, guild = connect(a.env)
@@ -324,6 +462,18 @@ def main() -> None:
     elif a.clear:
         cid = ensure_channel(d, guild, channel)
         print(f"deleted {clear(d, cid)} state messages from {channel}")
+    elif a.pull:
+        cid = ensure_channel(d, guild, channel)
+        r = reconcile(d, cid, a.db, dry_run=a.dry_run)
+        for hit in r["applied"]:
+            who = hit["by"] or "someone"
+            print(f"  {hit['thread'][-6:]}  {who}: " + "; ".join(hit["changed"]))
+        print(f"{'would apply' if a.dry_run else 'applied'} "
+              f"{len(r['applied'])}, {r['settled'] + r['same']} already agreed, "
+              f"{len(r['ahead'])} to publish from here, "
+              f"{len(r['unknown'])} skipped")
+        for u in r["unknown"]:
+            print(f"  skipped {u}")
     else:
         cid = ensure_channel(d, guild, channel)
         print(publish(d, cid, load_board(a.db)))
