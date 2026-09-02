@@ -349,6 +349,13 @@ def health():
                              - datetime.fromisoformat(agreed["last"])).total_seconds())
             sharing = {"cards": agreed["n"], "seconds_since_agreed": since,
                        "waiting_to_send": waiting}
+    # Still owed to Discord: queued behind the undo window, or being retried.
+    # Bert asks so it can say so before somebody shuts the stack down on top
+    # of a change that hasn't gone out.
+    owed = con.execute(
+        """SELECT COUNT(*) AS n, MIN(dispatch_after) AS soonest FROM events
+           WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+             AND undone_at IS NULL""").fetchone()
     con.close()
 
     stale = None
@@ -362,6 +369,7 @@ def health():
         "seconds_since_sync": stale,
         "board_size": board,
         "sharing": sharing,
+        "queued": {"count": owed["n"], "due_at": owed["soonest"]},
     }
 
 

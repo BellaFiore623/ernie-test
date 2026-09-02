@@ -1965,7 +1965,8 @@ class Bert(QMainWindow):
         self.poller = None
         self.connected = True
         self.last_sync = None
-        self.sharing = None         # /health's sharing block, or None if solo
+        self.health = {}            # the last /health payload
+        self.sharing = None         # its sharing block, or None if solo
         self.sharing_at = 0.0
         self.filters = {q: True for q in QUEUE}
         self.cards = []
@@ -2231,6 +2232,13 @@ class Bert(QMainWindow):
         # every row undone -- doesn't collapse the panel and bounce the board.
         self._feed_row_h = max(getattr(self, "_feed_row_h", 0), tallest)
 
+        # All one height. A row that loses its Undo button is shorter than one
+        # that has it, so without this every undo shifts everything below it
+        # up by a few pixels while you are still looking at it.
+        if self._feed_row_h:
+            for r in rows:
+                r.setFixedHeight(self._feed_row_h)
+
         gap = self.feed_lay.spacing()
 
         def stack(n):
@@ -2298,7 +2306,8 @@ class Bert(QMainWindow):
         self.feed = p["events"]["events"]
         # Held with the moment it arrived, so the age can go on counting up
         # between polls instead of freezing at whatever the last poll said.
-        self.sharing = (p.get("health") or {}).get("sharing")
+        self.health = p.get("health") or {}
+        self.sharing = self.health.get("sharing")
         self.sharing_at = time.time()
         self._tick_sharing()
 
@@ -2395,6 +2404,41 @@ class Bert(QMainWindow):
         self.toast_timer.stop()
         self.completing.clear()
         self.toast.hide()
+
+    def closeEvent(self, ev):
+        """
+        Closing Bert doesn't lose a change -- the outbox is a separate process
+        and posts it whether Bert is open or not. The mistake this is here to
+        catch is closing Bert and then shutting the whole stack down on top of
+        something that hasn't gone out yet.
+        """
+        q = self.health.get("queued") or {}
+        n = q.get("count") or 0
+        if not n or not self.connected:
+            return super().closeEvent(ev)
+
+        due = ""
+        if q.get("due_at"):
+            try:
+                secs = (datetime.fromisoformat(q["due_at"])
+                        - datetime.now(timezone.utc)).total_seconds()
+                if secs > 0:
+                    due = f" The first goes out in about {int(secs)}s."
+            except (ValueError, TypeError):
+                pass
+
+        thing = "change hasn't" if n == 1 else f"{n} changes haven't"
+        ask = QMessageBox.question(
+            self, "Not everything has reached Discord",
+            f"{thing.capitalize()} been posted to the thread yet.{due}\n\n"
+            f"Closing Bert is fine on its own — Ernie posts them whether Bert "
+            f"is open or not. But if you're shutting everything down, leave "
+            f"the rest running another minute or they won't go out at all.\n\n"
+            f"Close Bert?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ask == QMessageBox.Yes:
+            return super().closeEvent(ev)
+        ev.ignore()
 
     def _tick_sharing(self):
         """
@@ -2789,6 +2833,12 @@ class Bert(QMainWindow):
         self._render_feed()
 
     def _render_feed(self):
+        # Every row is rebuilt on every poll and after every undo. Without
+        # holding the offset, anyone reading back through the feed is thrown
+        # to the top every five seconds, and pressing Undo yanks the row out
+        # from under the pointer.
+        keep = self.feed_scroll.verticalScrollBar().value()
+
         while self.feed_lay.count():
             w = self.feed_lay.takeAt(0).widget()
             if w is not None:
@@ -2868,6 +2918,11 @@ class Bert(QMainWindow):
         self.feed_lay.addStretch()
         self._fit_feed()
 
+        # After a rebuild the layout hasn't settled, so the scrollbar's range
+        # is still the old one and clamping against it now would land short.
+        bar = self.feed_scroll.verticalScrollBar()
+        QTimer.singleShot(0, lambda: bar.setValue(min(keep, bar.maximum())))
+
     @staticmethod
     def _feed_status(e, revoking):
         """
@@ -2935,6 +2990,12 @@ class Bert(QMainWindow):
             return (f"<b>{who}</b> finished {thread}"
                     f"<span style='color:{LINE}'> &middot; </span>"
                     f"<b>{item}</b>")
+
+        if e["verb"] == "undo_correction":
+            # The catch-all rendered this as "undo correction", which read as
+            # a noun somebody had done to the thread. It only surfaced once
+            # the feed started showing more than the last four rows.
+            return f"<b>{who}</b> retracted an update to {thread}"
 
         return f"<b>{who}</b> {e['verb'].replace('_', ' ')} {thread}"
 
