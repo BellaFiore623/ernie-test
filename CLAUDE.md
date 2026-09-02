@@ -21,10 +21,15 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
 | `ernie_backup.py` | Online SQLite backup with rotation. |
 | `q.py` | Ad-hoc SQL helper. |
+| `dump_threads.py` | Raw API JSON to disk. Read-only, for looking at what Discord actually sent. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
-| `TESTING.md` | Hand this to the tester. Setup on their own laptop, start to finish. |
+| `bashrc-snippet.sh` | Optional shell shortcuts. Nothing depends on it. |
+| `requirements.txt` | httpx, fastapi, uvicorn, pydantic; PySide6 for Bert only. |
+| `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
+| `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |
+| `TESTING.md` | Hand this to the tester. Both setups, start to finish. |
 
 ## Hard rules
 
