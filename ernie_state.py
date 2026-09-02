@@ -41,6 +41,10 @@ STATE_CHANNEL = "ernie-state"
 FORMAT_VERSION = 1
 CONTENT_MAX = 2000          # Discord's cap on message content
 SKEW_WARN_S = 120           # clock difference worth saying out loud
+SUMMARY_MARK = "**Board**"  # first characters of the human summary message
+# The order Bert shows the bands in. The summary reads the same way round
+# as the board it describes, or comparing the two is needless work.
+BAND_ORDER = ("unassigned", "critical", "high", "medium", "low")
 FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
@@ -86,18 +90,34 @@ def now_iso() -> str:
 
 # -- the message ------------------------------------------------------------
 
+def work_summary(items: list[Item]) -> str:
+    """The bubbles, ticked ones marked, for reading rather than parsing."""
+    if not items:
+        return ""
+    return " · ".join(("~~" + i.body + "~~") if i.done else i.body
+                      for i in items)
+
+
 def render(card: Card, position: int, actor: str = "ernie") -> str:
     """
-    A line for people, then the payload for Ernie.
+    Some lines for people, then the payload for Ernie.
 
-    The human line is derived, never parsed back: everything that matters is
-    in the JSON, so a person editing the prose can't corrupt the board.
+    Everything above the fence is derived and never parsed back, so a person
+    editing the prose in Discord cannot corrupt the board -- which is what
+    lets it be as chatty as it needs to be to read well.
     """
-    head = (f"**completed** — {card.name}" if card.completed
-            else f"**{card.priority} #{position}** — {card.name}")
-    body = json.dumps(dict(card.payload(), by=card.actor or actor,
-                           at=now_iso()), ensure_ascii=False)
-    return f"{head}\n```json\n{body}\n```"
+    who = card.actor or actor
+    head = (f"**✓ completed** — {card.name}" if card.completed
+            else f"**{card.priority.upper()} #{position}** — {card.name}")
+    lines = [head]
+    work = work_summary(card.items)
+    if work:
+        done = sum(1 for i in card.items if i.done)
+        lines.append(f"_{done}/{len(card.items)} done_ — {work}")
+    lines.append(f"_last touched by {who}_")
+    body = json.dumps(dict(card.payload(), by=who, at=now_iso()),
+                      ensure_ascii=False)
+    return "\n".join(lines) + f"\n```json\n{body}\n```"
 
 
 def parse(content: str) -> dict | None:
@@ -110,6 +130,11 @@ def parse(content: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return d if d.get("thread") else None
+
+
+def prose_of(content: str) -> str:
+    """The human half of a card message, without the fenced payload."""
+    return FENCE.sub("", content or "").strip()
 
 
 def state_only(p: dict) -> dict:
@@ -238,37 +263,95 @@ def clear(d: Discord, cid: str) -> int:
     """Delete the state messages in a channel, leaving anything else alone."""
     gone = 0
     for m in d.get(f"/channels/{cid}/messages", limit=100) or []:
-        if parse(m.get("content", "")):
+        content = m.get("content", "")
+        if parse(content) or content.startswith(SUMMARY_MARK):
             d.write("DELETE", f"/channels/{cid}/messages/{m['id']}")
             gone += 1
     return gone
 
 
-def fetch_state(d: Discord, cid: str) -> dict[str, dict]:
+def render_summary(cards: list[Card]) -> str:
     """
-    What Discord currently believes, keyed by thread_id.
+    The whole running order in one message, for people rather than for Ernie.
 
-    Paged, because a board of any age passes 100 messages once closed cards
-    stay in the channel, and a single page would silently drop the oldest
-    cards out of the board rather than reporting anything wrong.
+    Card messages are the state and are scattered up the channel in whatever
+    order they were first posted; this is the only place the board can be read
+    top to bottom, which is what you want when checking two boards agree.
     """
-    out, before = {}, None
+    live = [c for c in cards if not c.completed]
+    pos = positions(cards)
+    # No timestamp in here on purpose. It would differ on every publish, so
+    # the summary would rewrite itself every cycle for nothing -- Discord
+    # stamps its own edit time, which is the same information for free.
+    lines = [f"{SUMMARY_MARK} — {len(live)} open, {len(cards) - len(live)} closed",
+             "_the running order both boards should agree on_"]
+
+    for band in BAND_ORDER:
+        in_band = sorted((c for c in live if c.priority == band),
+                         key=lambda c: c.rank)
+        if not in_band:
+            continue
+        lines.append("")
+        lines.append(f"**{band.title()}**")
+        for c in in_band:
+            name = c.name if len(c.name) <= 52 else c.name[:51] + "…"
+            row = f"`{pos[c.thread_id]}.` {name}"
+            if c.items:
+                row += f"  ·  {sum(1 for i in c.items if i.done)}/{len(c.items)}"
+            if c.actor:
+                row += f"  ·  {c.actor}"
+            lines.append(row)
+
+    # A long board has to lose its tail rather than the message being refused.
+    out = "\n".join(lines)
+    while len(out) > CONTENT_MAX - 40 and len(lines) > 3:
+        lines.pop()
+        out = "\n".join(lines) + "\n_…truncated_"
+    return out
+
+
+def publish_summary(d: Discord, cid: str, cards: list[Card],
+                    existing: dict | None) -> str:
+    """Post or edit the summary. Returns what happened, for the caller's count."""
+    content = render_summary(cards)
+    if existing is None:
+        d.write("POST", f"/channels/{cid}/messages", content=content)
+        return "posted"
+    if existing.get("content") == content:
+        return "unchanged"
+    d.write("PATCH", f"/channels/{cid}/messages/{existing['id']}",
+            content=content)
+    return "edited"
+
+
+def fetch_channel(d: Discord, cid: str) -> tuple[dict[str, dict], dict | None]:
+    """Everything of ours in the channel: the cards, and the summary message."""
+    cards, summary, before = {}, None, None
     while True:
         params = {"limit": 100}
         if before:
             params["before"] = before
         page = d.get(f"/channels/{cid}/messages", **params)
         if not page:
-            return out
+            return cards, summary
         for m in page:
-            p = parse(m.get("content", ""))
+            content = m.get("content", "")
+            p = parse(content)
             # Newest first, so the first message seen for a thread wins and a
             # stray older duplicate can't overwrite it.
-            if p and p["thread"] not in out:
-                out[p["thread"]] = {"message_id": m["id"], "payload": p}
+            if p and p["thread"] not in cards:
+                cards[p["thread"]] = {"message_id": m["id"], "payload": p,
+                                      "content": content}
+            elif p is None and content.startswith(SUMMARY_MARK) and summary is None:
+                summary = m
         if len(page) < 100:
-            return out
+            return cards, summary
         before = page[-1]["id"]
+
+
+def fetch_state(d: Discord, cid: str) -> dict[str, dict]:
+    """The cards Discord is holding, keyed by thread_id."""
+    return fetch_channel(d, cid)[0]
 
 
 def skew_seconds(msg: dict) -> float | None:
@@ -300,7 +383,7 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
     """
     if cards is None:
         cards = load_board(db)
-    state = fetch_state(d, cid)
+    state, summary = fetch_channel(d, cid)
     pos = positions(cards)
     con = rw(db)
     counts = {"posted": 0, "edited": 0, "unchanged": 0}
@@ -324,7 +407,8 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
                 sent = d.write("POST", f"/channels/{cid}/messages",
                                content=content)
                 counts["posted"] += 1
-            elif same_state(known["payload"], c.payload()):
+            elif (same_state(known["payload"], c.payload())
+                  and prose_of(known.get("content", "")) == prose_of(content)):
                 counts["unchanged"] += 1
             else:
                 sent = d.write("PATCH",
@@ -341,6 +425,14 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
             con.commit()
     finally:
         con.close()
+
+    # Last, so it sits below the cards it describes on a first run.
+    try:
+        counts["summary"] = publish_summary(d, cid, cards, summary)
+    except httpx.HTTPStatusError as e:
+        # A board that can't render its own summary is still a working board.
+        print(f"  !! summary not written: {e.response.status_code}",
+              file=sys.stderr)
 
     if skew is not None and abs(skew) > SKEW_WARN_S:
         counts["clock_skew_s"] = round(skew, 1)

@@ -106,8 +106,18 @@ other's API. Priority, rank, work items and completion live in
   the 2000-character content cap.
 - Each message names its own `thread_id`, so the channel is self-describing
   and an interrupted publish resumes without duplicating.
-- The human line is derived and never parsed back. Editing the prose in
-  Discord cannot corrupt the board.
+- Everything above the fence is derived and never parsed back, so editing
+  the prose in Discord cannot corrupt the board -- which is what lets it be
+  chatty enough to read: band and position, the bubbles with ticked ones
+  struck through, and who last touched it.
+- One extra message carries a **`**Board**` summary** -- the whole running
+  order, in the same band order Bert shows, so the channel can be read top to
+  bottom when checking two boards agree. It holds no state, is skipped by
+  `parse()`, and carries no timestamp of its own: one would differ on every
+  publish and rewrite the message every cycle for nothing.
+- A card message is rewritten when its state changes *or* when the prose
+  would read differently, so changing `render()` re-renders the channel
+  rather than leaving old cards in the old format forever.
 - **The two directions live in different processes**, because
   `ernie_sync.py` is read-only against Discord and `ernie_outbox.py` is the
   only thing that writes there. Sync pulls the channel into SQLite; the
