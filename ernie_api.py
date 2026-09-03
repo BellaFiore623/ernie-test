@@ -326,6 +326,14 @@ def health():
     last = con.execute(
         """SELECT started_at, finished_at, threads_seen, messages_new, error
            FROM sync_runs ORDER BY run_id DESC LIMIT 1""").fetchone()
+    # The newest row is the running cycle for the few seconds one takes, and
+    # its finished_at is NULL until it lands. Staleness is about the last run
+    # that actually finished: reading it off the newest row reported nothing
+    # at all once a minute, for as long as each cycle took, which Bert drew as
+    # "never synced".
+    done = con.execute(
+        """SELECT finished_at FROM sync_runs WHERE finished_at IS NOT NULL
+           ORDER BY run_id DESC LIMIT 1""").fetchone()
     board = con.execute(
         "SELECT COUNT(*) FROM cards WHERE completed_at IS NULL").fetchone()[0]
 
@@ -368,14 +376,18 @@ def health():
     con.close()
 
     stale = None
-    if last and last["finished_at"]:
-        delta = datetime.now(timezone.utc) - datetime.fromisoformat(last["finished_at"])
+    if done:
+        delta = datetime.now(timezone.utc) - datetime.fromisoformat(done["finished_at"])
         stale = int(delta.total_seconds())
 
     return {
         "ok": bool(last and not last["error"]),
         "last_sync": dict(last) if last else None,
         "seconds_since_sync": stale,
+        # Which read of Discord that age belongs to, so Bert can tell a new
+        # one landing from the same one ageing, and whether one is running now.
+        "synced_at": done["finished_at"] if done else None,
+        "syncing": bool(last and not last["finished_at"]),
         "board_size": board,
         "sharing": sharing,
         "queued": {"count": owed["n"], "due_at": owed["soonest"]},

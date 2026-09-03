@@ -45,6 +45,13 @@ LOGO = pathlib.Path(__file__).parent / "assets" / "bert_logo.png"
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
+MIRROR_STALE_S = 180   # the same three cycles, asked of Ernie's own reading:
+                       # past this the sync loop has stopped and the board is
+                       # older than it looks
+AWAIT_GIVEUP_S = 90    # a manual refresh waits for the next read of Discord,
+                       # which is the only thing that moves the number. Past a
+                       # cycle and a half the sync loop isn't running, and the
+                       # amber age says more than a spinner does.
 TOAST_MS = 6_000      # a ceiling: the toast normally clears the
                       # moment the board comes back without the card
 
@@ -1822,7 +1829,12 @@ class Bert(QMainWindow):
         self.last_sync = None
         self.health = {}            # the last /health payload
         self.sharing = None         # its sharing block, or None if solo
-        self.sharing_at = 0.0
+        self.health_at = 0.0        # when that payload arrived, so both ages
+                                    # off it go on counting between polls
+        self.awaiting = False       # a manual refresh, waiting on the next
+        self.await_run = None       # read of Discord. await_run is the read it
+        self.await_since = 0.0      # started from, to tell a new one landing
+                                    # from the same one ageing
         self.filters = {q: True for q in QUEUE}
         self.cards = []
         self.feed = []
@@ -1969,8 +1981,8 @@ class Bert(QMainWindow):
         lay.addWidget(self.fresh)
 
         # Second freshness, and a different question. self.fresh says how long
-        # since Bert asked Ernie; this says how long since Ernie and the other
-        # person's board agreed. On a solo setup it stays hidden.
+        # since Ernie last read Discord; this says how long since Ernie and the
+        # other person's board agreed. On a solo setup it stays hidden.
         self.shared = QLabel("")
         self.shared.setStyleSheet(f"color:{MUTED}; font-size:11px;")
         self.shared.hide()
@@ -1978,7 +1990,9 @@ class Bert(QMainWindow):
         lay.addWidget(self.shared)
 
         self.refresh_btn = chrome_button("\u21bb", "Refresh")
-        self.refresh_btn.clicked.connect(self.refresh)
+        # Through a lambda: clicked passes its checked flag as the first
+        # argument, which would arrive as manual=False and undo the point.
+        self.refresh_btn.clicked.connect(lambda: self.refresh(manual=True))
         lay.addWidget(self.refresh_btn)
 
         self.who = QLabel("")
@@ -2133,32 +2147,60 @@ class Bert(QMainWindow):
 
     # -- polling -----------------------------------------------------------
 
-    def refresh(self):
+    def refresh(self, manual=False):
         if self.dragging:
             return                      # never yank the board out from under a drag
-        # One poll at a time.
+        if manual:
+            # The button cannot make a sync happen -- ernie_sync runs its own
+            # cycle in its own process, and this only re-asks Ernie, which Bert
+            # does every POLL_MS anyway. So the press waits for the next read
+            # of Discord to land, and says so until it does. Flashing
+            # something and putting the same number back read as a dead button.
+            self.awaiting = True
+            self.await_run = self.health.get("synced_at")
+            self.await_since = time.time()
+            self.refresh_btn.setEnabled(False)
+            self._tick_freshness()
+        # One poll at a time. A manual press during an automatic one still gets
+        # its answer: that poll is already on its way back.
         if self.poller is not None and self.poller.isRunning():
             return
-        self.refresh_btn.setToolTip("Refreshing\u2026")
         self.poller = Poller(self.api)
         self.poller.loaded.connect(self.on_loaded)
         self.poller.failed.connect(self.on_failed)
         self.poller.start()
+
+    def _check_awaited(self):
+        """Stop waiting once Discord has actually been read again.
+
+        A newly finished run, not merely a new answer from Ernie: the age only
+        moves when ernie_sync completes a cycle, so clearing on anything else
+        would put the same number back and read as the press being ignored.
+        """
+        if not self.awaiting:
+            return
+        synced = self.health.get("synced_at")
+        if ((synced and synced != self.await_run)
+                or time.time() - self.await_since > AWAIT_GIVEUP_S):
+            self._stop_awaiting()
+
+    def _stop_awaiting(self):
+        self.awaiting = False
+        self.refresh_btn.setEnabled(True)
 
     def on_loaded(self, p):
         self.fail_since = None
         self.connected = True
         self.last_sync = time.time()
         self.banner.hide()
-        self.refresh_btn.setToolTip("Refresh")
         incoming = p["board"]["cards"]
         self.feed = p["events"]["events"]
         # Held with the moment it arrived, so the age can go on counting up
         # between polls instead of freezing at whatever the last poll said.
         self.health = p.get("health") or {}
         self.sharing = self.health.get("sharing")
-        self.sharing_at = time.time()
-        self._tick_sharing()
+        self.health_at = time.time()
+        self._tick_freshness()          # both labels come off this payload
 
         # The card outlives the click by a poll or two; drop the toast the
         # moment it is genuinely off the board rather than on a timer.
@@ -2229,7 +2271,9 @@ class Bert(QMainWindow):
                            f"Saving will ask you before overwriting.")
 
     def on_failed(self, err):
-        self.refresh_btn.setToolTip("Refresh")
+        # No way to hear a sync land while Ernie is unreachable, and the
+        # banner is already saying what is wrong.
+        self._stop_awaiting()
         t = time.time()
         if self.fail_since is None:
             self.fail_since = t
@@ -2312,7 +2356,7 @@ class Bert(QMainWindow):
         waiting = s.get("waiting_to_send") or 0
         agreed = s.get("seconds_since_agreed")
         if agreed is not None:
-            agreed += int(time.time() - self.sharing_at)
+            agreed += int(time.time() - self.health_at)
 
         if agreed is None:
             # Publishing proves nothing about the other direction, and the
@@ -2344,22 +2388,55 @@ class Bert(QMainWindow):
         self.shared.show()
 
     def _tick_freshness(self):
+        """How old the board is.
+
+        This counted from the last time Bert asked Ernie, which Bert does
+        every POLL_MS -- so it read "updated just now" permanently, and went
+        on saying it with the sync loop dead and the mirror hours behind.
+        Ernie's last finished read of Discord is the age worth showing: it is
+        the one that moves, and the one that can be bad news.
+        """
+        self._check_awaited()
         self._tick_sharing()
         if self.last_sync is None:
-            self.fresh.setText("never updated")
+            self._say_fresh("never updated", False,
+                            "Bert hasn't reached Ernie yet.")
             return
-        s = int(time.time() - self.last_sync)
-        if s < 5:
-            txt = "updated just now"
-        elif s < 60:
-            txt = f"updated {s}s ago"
-        elif s < 3600:
-            txt = f"updated {s // 60}m ago"
+
+        since = self.health.get("seconds_since_sync")
+        if since is not None:
+            since += int(time.time() - self.health_at)
+
+        if self.awaiting:
+            self._say_fresh("refreshing\u2026", False,
+                            "Waiting for Ernie's next read of Discord. "
+                            + (f"The board is {ago(since)} old."
+                               if since is not None
+                               else "Nothing has been read from Discord yet."))
+            return
+
+        if since is None:
+            self._say_fresh("never synced", True,
+                            "Ernie has no finished sync run, so nothing has "
+                            "been read from Discord yet. Check the sync loop "
+                            "is running.")
+            return
+
+        if since > MIRROR_STALE_S:
+            self._say_fresh(f"synced {ago(since)} ago", True,
+                            "Ernie hasn't read Discord in a while, so new "
+                            "tickets and edits there aren't showing. Check "
+                            "the sync loop is running.")
         else:
-            txt = f"updated {s // 3600}h ago"
-        self.fresh.setText(txt)
+            self._say_fresh("synced just now" if since < 5
+                            else f"synced {ago(since)} ago", False,
+                            f"Ernie last read Discord {ago(since)} ago.")
+
+    def _say_fresh(self, text, amber, tip):
+        self.fresh.setText(text)
         self.fresh.setStyleSheet(
-            f"color:{AMBER_FG if s > 90 else MUTED}; font-size:11px;")
+            f"color:{AMBER_FG if amber else MUTED}; font-size:11px;")
+        self.fresh.setToolTip(tip)
 
     # -- writes ------------------------------------------------------------
 

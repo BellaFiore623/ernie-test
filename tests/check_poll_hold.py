@@ -43,7 +43,10 @@ class FakeBert:
     def render(self):
         self.rendered += 1
 
-    def _tick_sharing(self):
+    def _tick_freshness(self):
+        pass
+
+    def _done_checking(self):
         pass
 
     def _clear_toast(self):
