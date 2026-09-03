@@ -106,6 +106,17 @@ activity feed, undo, and the outbox.
 - Edits are **batched**: saving four fields writes one event and posts one
   message. Do not split this into per-field events.
 - Writes take an idempotency `key`; retries return the original result.
+- A thread opening in Discord writes a **`started`** event, so the feed can
+  say where a card came from -- the one thing on it that nobody did in Bert.
+  `dispatch_after` is NULL, because it happened in Discord already, and undo
+  refuses it in both Bert and the API: there is nothing here to take back.
+  The name is `threads.owner_id` resolved against `messages`, preferring
+  Discord's `global_name` ("Tyler") to the username ("tyler_mazza"). A thread
+  a bot opened gets no line -- the seeder makes two dozen at a time. Neither
+  does one Ernie merely inherited: only a thread created within
+  `WITNESSED_WITHIN_S` of being first seen counts, because a first sync makes
+  a card for every thread there has ever been, and claiming to have watched
+  those start would write a line per thread into the feed and the change log.
 
 ## The state channel
 

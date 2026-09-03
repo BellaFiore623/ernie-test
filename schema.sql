@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS threads (
     archived_by_ernie INTEGER NOT NULL DEFAULT 0,
                     -- set when Ernie archived it on completion; lets the
                     -- reopen check tell a real revival from Ernie's own work
+    owner_id        TEXT,                      -- who opened the thread, per
+                    -- Discord. Only an id: the name is resolved from the
+                    -- messages, which already carry one for every author.
     deleted_at      TEXT                       -- soft delete; never DELETE a row
 );
 
@@ -67,7 +70,11 @@ CREATE TABLE IF NOT EXISTS messages (
     message_id    TEXT PRIMARY KEY,
     thread_id     TEXT NOT NULL REFERENCES threads(thread_id),
     author_id     TEXT NOT NULL,
-    author_name   TEXT,
+    author_name   TEXT,                        -- the @username, always set
+    author_display TEXT,                       -- Discord's global_name: what
+                  -- the person is actually called, and what the feed should
+                  -- say. Absent on older rows and on accounts that never set
+                  -- one, so every read of it falls back to author_name.
     is_bot        INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL,
     first_seen_at TEXT NOT NULL,

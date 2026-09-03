@@ -26,6 +26,12 @@ import ernie_extract as ex
 
 SCHEMA = pathlib.Path(__file__).with_name("schema.sql")
 RANK_STEP = 1000.0
+WITNESSED_WITHIN_S = 600   # a thread Ernie watched appear was created moments
+                           # before it was first seen. One that predates the
+                           # mirror was not, and "somebody started this" about a
+                           # thread from four months ago is not news -- it is a
+                           # first sync writing a line per thread into the feed
+                           # and the change log.
 
 
 def now() -> str:
@@ -87,15 +93,21 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
 
     con.execute(
         """INSERT INTO threads (thread_id, parent_id, guild_id, created_at,
-                                first_seen_at, last_synced_at, archived, locked)
-           VALUES (?,?,?,?,?,?,?,?)
+                                first_seen_at, last_synced_at, archived, locked,
+                                owner_id)
+           VALUES (?,?,?,?,?,?,?,?,?)
            ON CONFLICT(thread_id) DO UPDATE SET
                last_synced_at = excluded.last_synced_at,
                archived       = excluded.archived,
-               locked         = excluded.locked""",
+               locked         = excluded.locked,
+               -- only ever fills a gap: Discord stops sending owner_id on
+               -- some archived threads, and a NULL must not erase what an
+               -- earlier cycle already learned.
+               owner_id       = COALESCE(threads.owner_id, excluded.owner_id)""",
         (tid, t.get("parent_id", ""), t.get("guild_id", ""),
          t.get("created_at") or meta.get("create_timestamp") or ts,
-         ts, ts, int(bool(meta.get("archived"))), int(bool(meta.get("locked")))),
+         ts, ts, int(bool(meta.get("archived"))), int(bool(meta.get("locked"))),
+         t.get("owner_id")),
     )
 
     # Title revision, only when it differs from the last one we saw.
@@ -128,10 +140,11 @@ def load_messages(con: sqlite3.Connection, tid: str, msgs: list, stats: dict) ->
 
         con.execute(
             """INSERT OR IGNORE INTO messages
-               (message_id, thread_id, author_id, author_name, is_bot,
-                created_at, first_seen_at)
-               VALUES (?,?,?,?,?,?,?)""",
+               (message_id, thread_id, author_id, author_name, author_display,
+                is_bot, created_at, first_seen_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (mid, tid, author.get("id", ""), author.get("username"),
+             author.get("global_name"),
              int(bool(author.get("bot"))), m.get("timestamp", ""), ts),
         )
         if con.total_changes:
@@ -255,6 +268,68 @@ def ensure_card(con: sqlite3.Connection, rec: ex.ThreadRecord) -> None:
            VALUES (?,?,?,?,?,?,?,?)""",
         (rec.thread_id, "unassigned", rank, build, ret,
          completed_at, completed_by, now()),
+    )
+    note_started(con, rec)
+
+
+def witnessed_start(con: sqlite3.Connection, thread_id: str) -> bool:
+    """Whether Ernie actually saw this thread appear, rather than inherited it."""
+    r = con.execute(
+        "SELECT created_at, first_seen_at FROM threads WHERE thread_id=?",
+        (thread_id,)).fetchone()
+    if not r:
+        return False
+    try:
+        gap = (datetime.fromisoformat(r["first_seen_at"])
+               - datetime.fromisoformat(r["created_at"])).total_seconds()
+    except (TypeError, ValueError):
+        return False
+    return gap <= WITNESSED_WITHIN_S
+
+
+def creator(con: sqlite3.Connection, rec: ex.ThreadRecord):
+    """Who opened the thread, named the way Discord shows them.
+
+    owner_id is the authority on who it was; the name comes from any message
+    they left, because the mirror already stores one for every author and
+    asking Discord again would be a request per thread for something already
+    on disk. global_name is the display name -- "Tyler", not "tyler_mazza" --
+    and falls back to the username, which is always set.
+    """
+    for sql, args in (
+        ("""SELECT author_display, author_name, is_bot FROM messages
+             WHERE thread_id=? AND author_id=? AND deleted_at IS NULL
+             ORDER BY created_at LIMIT 1""", (rec.thread_id, rec.owner_id or "")),
+        # No owner_id, or they never posted under it: the thread opens with
+        # its author's message, so the first one is the next best answer.
+        ("""SELECT author_display, author_name, is_bot FROM messages
+             WHERE thread_id=? AND deleted_at IS NULL
+             ORDER BY created_at LIMIT 1""", (rec.thread_id,)),
+    ):
+        r = con.execute(sql, args).fetchone()
+        if r:
+            return (r["author_display"] or r["author_name"]), bool(r["is_bot"])
+    return None, False
+
+
+def note_started(con: sqlite3.Connection, rec: ex.ThreadRecord) -> None:
+    """"Tyler started PROD: Penn Hills ..." in the activity feed.
+
+    dispatch_after is NULL: this already happened in Discord, and posting it
+    back would be telling the thread about itself. A thread a bot opened gets
+    no line -- the seeder makes two dozen at a time, and none of them are
+    somebody starting work.
+    """
+    who, is_bot = creator(con, rec)
+    if not who or is_bot or not witnessed_start(con, rec.thread_id):
+        return
+    made = con.execute("SELECT created_at FROM threads WHERE thread_id=?",
+                       (rec.thread_id,)).fetchone()["created_at"]
+    con.execute(
+        """INSERT INTO events (event_id, occurred_at, actor_name, thread_id,
+                               verb, new_value, dispatch_after)
+           VALUES (?,?,?,?,'started',?,NULL)""",
+        (str(uuid.uuid4()), made, who, rec.thread_id, rec.name),
     )
 
 

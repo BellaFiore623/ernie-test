@@ -100,6 +100,11 @@ def describe(e) -> str:
         return f"renamed {where} → *{new}*"
     if verb == "undo_correction":
         return f"retracted an update on {where}"
+    if verb == "started":
+        # Not a change somebody made to the board -- a thread appearing in
+        # Discord, which is where the board's work comes from in the first
+        # place. Worth a line for exactly that reason.
+        return f"started {where}"
     if verb.startswith("set_"):
         return f"set {verb[4:].replace('_', ' ')} on {where} to {new or '(empty)'}"
     return f"{verb.replace('_', ' ')} on {where}"

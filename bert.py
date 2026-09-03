@@ -109,23 +109,27 @@ AMBER_BG, AMBER_FG = "#FCF3E2", "#8A5A08"
 RED_BG, RED_FG, RED_EDGE = "#FBEBEB", "#9B2C2C", "#D14343"
 OK_FG, OK_BG, ACCENT = "#2E6B34", "#EAF2EA", "#2B6CB0"
 INFO_BG, INFO_FG = "#E6EDF7", "#1B3A5C"
-UNASSIGNED_TINT = "#EEF2F8"
 
 # Keep the hitbox for the buttons generous.
 BTN_HIT = "font-size:11px; padding:6px 14px; "
 
 
-# A light wash behind each band's cards.
+# A light wash behind each band's cards. Unassigned is the one neutral in the
+# ramp on purpose: it is not a priority, it is the absence of one, and wearing
+# a near-critical red said the opposite of that from across the room.
 BAND_TINT = {
-    "unassigned": "#F7EEEE",
+    "unassigned": "#E8EBEF",
     "critical":   "#F6E4E4",
     "high":       "#FBF1DF",
     "medium":     "#EAF1FA",
     "low":        "#EFF1F2",
 }
-# The card itself, a shade deeper than the wash.
+# The card itself, a shade deeper than the wash -- except unassigned, which is
+# white on grey the other way about. A blank card reads as one nobody has
+# picked up yet, and it leaves red to mean one thing on this board: a card
+# that needs a person. Those keep their red outline over the white.
 BAND_CARD = {
-    "unassigned": ("#FBEEEE", "#C08A8A"),
+    "unassigned": ("#FFFFFF", "#C6CCD3"),
     "critical":   ("#F7DCDC", "#D14343"),
     "high":       ("#FCEBD1", "#E0A03C"),
     "medium":     ("#E3EDF9", "#7FA8D8"),
@@ -136,7 +140,7 @@ BAND_CARD = {
 # washed in.
 GREY_FG = "#555B60"
 BAND_TEXT = dict.fromkeys(BANDS, ACCENT)
-BAND_TEXT["unassigned"] = RED_FG
+BAND_TEXT["unassigned"] = "#57616B"      # slate: the dark end of its own wash
 BAND_TEXT["critical"] = RED_FG
 BAND_TEXT["high"] = AMBER_FG
 BAND_TEXT["low"] = GREY_FG
@@ -144,6 +148,26 @@ BAND_TEXT["low"] = GREY_FG
 # Issues that mean the thread itself couldn't be read properly.
 BLOCKING = {"title_none", "title_unparseable", "title_prefix_only",
             "title_loose", "title_nonstandard"}
+
+
+def card_skin(data, editing=False):
+    """Fill and outline for one ticket, wherever it is drawn.
+
+    An unreadable thread is outlined, not filled: it keeps its band's colour,
+    so an unassigned one still reads as unassigned and the red says only that
+    a person is needed. 2px, so it reads as outlined next to a critical card
+    that is merely red.
+
+    The card and its row in the side rail have to agree about this, and used
+    to say it separately -- which is how they came to fill it red in two
+    places at once.
+    """
+    tint, edge = BAND_CARD.get(data.get("priority") or "", BAND_CARD["low"])
+    if needs_triage(data):
+        return tint, RED_EDGE, 2
+    if editing:
+        return tint, ACCENT, 1
+    return tint, edge, 1
 
 
 def needs_triage(c) -> bool:
@@ -856,22 +880,13 @@ class Card(QFrame):
         """Colour the card by how urgent it is, and stripe it by whose it is.
         """
         stripe = QUEUE.get(self.data.get("queue") or "", NEUTRAL)[0]
-        tint, edge = BAND_CARD.get(self.data.get("priority") or "",
-                                   BAND_CARD["low"])
-        if self.problem:
-            # An unreadable thread outranks its priority: 2px, so it reads as
-            # outlined next to a critical card that is merely red.
-            self.setStyleSheet(
-                f"Card {{ background:{RED_BG}; border:2px solid {RED_EDGE};"
-                f" border-left:4px solid {RED_EDGE}; }}")
-        elif self.editing:
-            self.setStyleSheet(
-                f"Card {{ background:{tint}; border:1px solid {ACCENT};"
-                f" border-left:3px solid {ACCENT}; }}")
-        else:
-            self.setStyleSheet(
-                f"Card {{ background:{tint}; border:1px solid {edge};"
-                f" border-left:3px solid {stripe}; }}")
+        fill, edge, px = card_skin(self.data, self.editing)
+        # The left edge carries the queue, unless something louder has taken
+        # the card over: triage first, then an open editor.
+        left = RED_EDGE if self.problem else ACCENT if self.editing else stripe
+        self.setStyleSheet(
+            f"Card {{ background:{fill}; border:{px}px solid {edge};"
+            f" border-left:{4 if self.problem else 3}px solid {left}; }}")
 
     def _clear(self):
         # These belong to the view and are about to be deleted. Dropping the
@@ -1487,16 +1502,12 @@ class RailRow(QFrame):
         self._press = None
 
         stripe = QUEUE.get(data.get("queue") or "", NEUTRAL)[0]
-        tint, edge = BAND_CARD.get(data.get("priority") or "", BAND_CARD["low"])
-        if needs_triage(data):
-            # Outlined, like its card, so an unreadable thread stays the
-            # loudest thing in the rail now that whole bands are red-ish.
-            self.setStyleSheet(f"RailRow {{ background:{RED_BG};"
-                               f" border:2px solid {RED_EDGE}; }}")
-        else:
-            self.setStyleSheet(f"RailRow {{ background:{tint};"
-                               f" border:1px solid {edge};"
-                               f" border-left:3px solid {stripe}; }}")
+        fill, edge, px = card_skin(data)
+        # A triage row gives its whole outline over to the red rather than
+        # keeping a queue stripe, which at 26px tall is most of its edge.
+        left = "" if needs_triage(data) else f" border-left:3px solid {stripe};"
+        self.setStyleSheet(f"RailRow {{ background:{fill};"
+                           f" border:{px}px solid {edge};{left} }}")
         self.setCursor(Qt.OpenHandCursor)
 
         lay = QVBoxLayout(self)

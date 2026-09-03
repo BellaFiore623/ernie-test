@@ -174,6 +174,10 @@ REQUIRED_COLUMNS = {
     "cards": ["client_override"],
     "events": ["claimed_at"],
     "work_items": ["item_id", "done_at"],
+    # Not read here, but the sync writes them every cycle and would fail one
+    # thread at a time. Better to say so once, at startup, with the fix.
+    "threads": ["owner_id"],
+    "messages": ["author_display"],
 }
 
 
@@ -829,6 +833,12 @@ def undo(event_id: str, body: ActorBody):
         e = con.execute("SELECT * FROM events WHERE event_id=?", (event_id,)).fetchone()
         if not e:
             raise HTTPException(404, "no such event")
+        # Nothing here made it happen, so there is nothing here to take back:
+        # the thread exists in Discord whatever this row says. Bert offers no
+        # button for it; this is so a stray call can't blank a card either.
+        if e["verb"] == "started":
+            conflict("not_undoable",
+                     "That thread was opened in Discord. Undo can't unmake it.")
         if e["undone_at"]:
             who = e["undone_by"] or "Someone"
             conflict("already_undone", f"{who} has already undone this.",

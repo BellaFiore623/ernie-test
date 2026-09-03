@@ -18,11 +18,12 @@ import ernie_load as load
 import ernie_state as S
 
 
-def a_record(name: str) -> ex.ThreadRecord:
+def a_record(name: str, owner: str | None = None) -> ex.ThreadRecord:
     """The parsed thread ensure_card is handed, with nothing else going on."""
     title = ex.parse_title(name)
     return ex.ThreadRecord(
         thread_id=f"t-{abs(hash(name)) % 10**9}", parent_id="chan", name=name,
+        owner_id=owner,
         title=title, client_key=None, equipment=[], proposals=[], created=[],
         participants=[], message_count=1, first_ts=iso(-60), last_ts=iso(-60),
         archived=False, issues=[])

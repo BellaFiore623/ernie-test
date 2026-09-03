@@ -368,6 +368,7 @@ class ThreadRecord:
     thread_id: str
     parent_id: str
     name: str
+    owner_id: Optional[str]
     title: Title
     client_key: Optional[str]
     equipment: list[Equipment]
@@ -450,6 +451,7 @@ def extract_thread(entry: dict) -> ThreadRecord:
         thread_id=t["id"],
         parent_id=t.get("parent_id", ""),
         name=t.get("name", ""),
+        owner_id=t.get("owner_id"),
         title=title,
         client_key=client_key,
         equipment=equipment,
