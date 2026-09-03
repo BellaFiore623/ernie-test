@@ -240,11 +240,19 @@ CREATE INDEX IF NOT EXISTS ix_events_thread ON events(thread_id, occurred_at DES
 -- Conflict resolution compares against this rather than comparing two
 -- machines' clocks: a laptop whose clock is wrong would otherwise win or
 -- lose every tie, silently, with nothing to show for it.
+--
+-- The two timestamps answer different questions and only one of them is
+-- about the other board. synced_at is written by the publish, which is this
+-- machine pushing its own view -- it says nothing about whether their changes
+-- are reaching us, because it advances just as happily when the sync loop is
+-- dead. agreed_at is written only by the pull, so it is the one Bert reports
+-- as contact. NULL means this machine has published but never yet reconciled.
 CREATE TABLE IF NOT EXISTS state_sync (
     thread_id   TEXT PRIMARY KEY REFERENCES threads(thread_id),
     message_id  TEXT,                       -- the card's message in the channel
     base_json   TEXT NOT NULL,              -- payload as of the last agreement
-    synced_at   TEXT NOT NULL
+    synced_at   TEXT NOT NULL,              -- last publish that wrote this base
+    agreed_at   TEXT                        -- last reconcile that read the channel
 );
 
 

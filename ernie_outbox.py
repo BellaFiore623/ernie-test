@@ -318,8 +318,11 @@ def main() -> None:
         if log_channel and d.writes_allowed:
             try:
                 c = ernie_changelog.tick(d, log_channel, con)
-                if c["sent"]:
-                    print(f"[{now()[:19]}] changelog: {c['sent']} logged")
+                if c["sent"] or c.get("struck"):
+                    note = f"{c['sent']} logged"
+                    if c.get("struck"):
+                        note += f", {c['struck']} struck through"
+                    print(f"[{now()[:19]}] changelog: {note}")
             except Exception as e:
                 print(f"[{now()[:19]}] changelog failed: {e}", file=sys.stderr)
 

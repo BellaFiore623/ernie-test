@@ -3,7 +3,7 @@ Bert -- equipment ticket board.
 
 Drag cards to reprioritise, edit fields inline, mark work complete, undo from
 the activity feed. Every change is attributed to the name in Settings, and
-edits are batched so saving four fields posts one message, not four.
+edits are batched so the server can process them in one go.
 
     pip install PySide6 httpx
     python bert.py --api http://127.0.0.1:8788
@@ -23,7 +23,7 @@ import httpx
 
 # The title format is defined once, in the parser the sync uses. Importing it
 # keeps the editor's validity check and Ernie's own reading of a thread in
-# agreement; it's pure functions over strings, no I/O.
+# agreement.
 import ernie_extract as ex
 from PySide6.QtCore import (
     QMimeData, QPoint, QRect, QSize, Qt, QThread, QTimer, Signal,
@@ -45,39 +45,30 @@ LOGO = pathlib.Path(__file__).parent / "assets" / "bert_logo.png"
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
-TOAST_MS = 6_000      # a ceiling, not a duration: the toast normally clears the
+TOAST_MS = 6_000      # a ceiling: the toast normally clears the
                       # moment the board comes back without the card
+
+#Lefthand Card Rail/Board
 DRAG_THRESHOLD = 5
-RAIL_ZONE_MIN = 34          # the same thing in the rail, where space is
-                            # tighter and a row is only ~26px to begin with
-RAIL_ZONE_GAP = 7           # air above and below it, so the rows either side
-                            # are visibly pushed clear rather than touching
-DROP_ZONE_MIN = 72          # an empty band's drop area during a drag. Tall
-                            # enough to hit with the pointer, which is what
-                            # counts: the pointer lands wherever it was inside
-                            # the card when the drag started, not on the card's
-                            # top edge.
-RANK_STEP = 1000.0          # must match ernie_api, so the optimistic rank
-                            # Bert draws is the one the server writes
-EDGE_SCROLL_ZONE = 64       # holding a card this close to the edge scrolls
-EDGE_SCROLL_MAX = 22        # px per tick right at the edge
+RAIL_ZONE_MIN = 34                               
+RAIL_ZONE_GAP = 7                            
+DROP_ZONE_MIN = 72                     
+RANK_STEP = 1000.0          
+EDGE_SCROLL_ZONE = 64
+EDGE_SCROLL_MAX = 22
 EDGE_SCROLL_MS = 16
-RAIL_WIDTH = 208            # the side rail: wide enough for a client name
-BOARD_PAD = 16              # gutter either side of the bands in the column
-BOARD_MAX = 800             # a ticket stops growing here, however wide the
-                            # window gets. A card running the full width of a
-                            # large monitor puts its client name and its
-                            # buttons a foot apart, and the tint has to stop
-                            # where the cards do or the band is a slab of
-                            # colour with nothing in most of it. Left aligned,
-                            # so the board stays a column next to the rail.
-FEED_HEIGHT = 160           # only until the first render measures the rows
-FEED_FOLDED = 30            # just the caption, when it's folded away
-FEED_ROWS = 4               # height held open even when fewer have come in
-FEED_MAX_ROWS = 8          # rows visible before the feed starts scrolling
-FEED_STATUS_W = 118        # fixed columns, so chips and buttons line up
-FEED_UNDO_W = 88           # down the feed instead of tracking each row's text
-FEED_LIMIT = 200            # how much history to ask Ernie for
+RAIL_WIDTH = 208
+BOARD_PAD = 16              
+BOARD_MAX = 800             
+                           
+#Recent Activity Feed                                           
+FEED_HEIGHT = 160         
+FEED_FOLDED = 30           
+FEED_ROWS = 4              
+FEED_MAX_ROWS = 8          
+FEED_STATUS_W = 118        
+FEED_UNDO_W = 88           
+FEED_LIMIT = 200           
 
 BANDS = ["unassigned", "critical", "high", "medium", "low"]
 BAND_LABEL = {b: b.capitalize() for b in BANDS}
@@ -100,10 +91,8 @@ NEUTRAL = ("#9AA0A6", "#EEEFF1", "#3C4043")
 
 INK, MUTED, LINE = "#1F2124", "#6B7075", "#DFE1E4"
 SURFACE, CANVAS = "#FFFFFF", "#F5F6F7"
-# Behind and to the right of the board column. A shade under the canvas, so a
-# wide window reads as a column of work with room beside it rather than one
-# undifferentiated field -- and so there is somewhere obvious for a second
-# panel to go later.
+
+# Behind and to the right of the board column. A shade under the canvas.
 BESIDE = "#EAECEE"
 AMBER_BG, AMBER_FG = "#FCF3E2", "#8A5A08"
 RED_BG, RED_FG, RED_EDGE = "#FBEBEB", "#9B2C2C", "#D14343"
@@ -111,16 +100,11 @@ OK_FG, OK_BG, ACCENT = "#2E6B34", "#EAF2EA", "#2B6CB0"
 INFO_BG, INFO_FG = "#E6EDF7", "#1B3A5C"
 UNASSIGNED_TINT = "#EEF2F8"
 
-# A stylesheet padding rule replaces the native one outright rather than adding
-# to it, so every button that set its own padding was a smaller target than a
-# default Qt button. These sit on cards that take a drag, and a press a pixel
-# outside the button grabs the card instead of clicking -- so the whole miss is
-# silent. Keep one generous value and use it everywhere something is pressable.
+# Keep the hitbox for the buttons generous.
 BTN_HIT = "font-size:11px; padding:6px 14px; "
 
 
-# A light wash behind each band's cards. The cards themselves stay white, so
-# the tint reads as the container the tickets are sitting in.
+# A light wash behind each band's cards.
 BAND_TINT = {
     "unassigned": "#F7EEEE",
     "critical":   "#F6E4E4",
@@ -128,10 +112,7 @@ BAND_TINT = {
     "medium":     "#EAF1FA",
     "low":        "#EFF1F2",
 }
-# The card itself, a shade deeper than the wash it sits on so it still reads
-# as a card on a band rather than a hole in one. Hot to cold down the ramp:
-# unsorted, on fire, warm, cool, cold -- so the band a card belongs to is
-# readable without finding its header. The queue keeps the left stripe.
+# The card itself, a shade deeper than the wash.
 BAND_CARD = {
     "unassigned": ("#FBEEEE", "#C08A8A"),
     "critical":   ("#F7DCDC", "#D14343"),
@@ -141,10 +122,8 @@ BAND_CARD = {
 }
 
 # Heading ink, one per band, each the dark end of the colour that band is
-# washed in -- so a header, its wash and its cards are all one thing. Medium
-# keeps the blue it always had. Used for the caret, title, count and the rule
-# down the left of the header, and for the band name in the side rail.
-GREY_FG = "#555B60"          # the dark end of low's grey, readable on the wash
+# washed in.
+GREY_FG = "#555B60"
 BAND_TEXT = dict.fromkeys(BANDS, ACCENT)
 BAND_TEXT["unassigned"] = RED_FG
 BAND_TEXT["critical"] = RED_FG
@@ -158,12 +137,6 @@ BLOCKING = {"title_none", "title_unparseable", "title_prefix_only",
 
 def needs_triage(c) -> bool:
     """Whether a card still reads as unreadable.
-
-    The red warning tells the human to fix it by editing the card, but the
-    issue itself is derived from the Discord title and no edit here can clear
-    it -- so the card stayed red no matter what they did. A client typed in by
-    hand is that acknowledgement. The parsed title stays wrong until someone
-    renames the thread, which is correct: Discord is the source of truth.
     """
     if not set(c.get("issues") or []) & BLOCKING:
         return False
@@ -200,10 +173,7 @@ def rgba(hex_colour, alpha):
     return f"rgba({r},{g},{b},{alpha})"
 
 
-# Type into these. The card behind them carries its band's colour now, and a
-# box with no fill of its own just becomes part of it -- and the title box in
-# particular sits inside a holder that was told to be transparent, which its
-# children inherited. State the fill and the frame rather than hoping.
+# Text Fields
 FIELD = (f"background:{SURFACE}; border:1px solid {rgba(INK, 0.28)};"
          f" border-radius:3px; padding:4px 6px; color:{INK};")
 
@@ -330,8 +300,6 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(360)
-        # One box. The two halves were never used apart -- every read of them
-        # joined them straight back together to hand Ernie one string.
         self.who = QLineEdit(current.get("name") or
                              f"{current.get('first_name', '')} "
                              f"{current.get('last_name', '')}".strip())
@@ -423,12 +391,6 @@ class Poller(QThread):
 
 def warning_row(text, fg, size=11):
     """A caution sign beside a wrapped message.
-
-    The sign is its own label rather than the first character of the text.
-    U+26A0 comes from the emoji fallback font, and its glyph box is exactly as
-    tall as an 11px line -- no slack at all -- so at anything but 100% display
-    scaling the rounding clips the top of the triangle. On its own it can be
-    given the room it needs without stretching the line the message sits on.
     """
     row = QWidget()
     row.setStyleSheet("background:transparent;")
@@ -453,9 +415,6 @@ def warning_row(text, fg, size=11):
 
 def chrome_button(glyph, tip):
     """A square button carrying one symbol: refresh, settings.
-
-    Same size and weight for each, so a row of them reads as a set rather
-    than as several unrelated controls.
     """
     b = QPushButton(glyph)
     b.setFixedSize(30, 28)
@@ -468,11 +427,7 @@ def chrome_button(glyph, tip):
 
 
 def tick_icon(colour, side=12):
-    """A check mark drawn rather than typed.
-
-    A tick character comes from whichever font happens to have one, at
-    whatever weight and baseline it likes. Two strokes are the same shape and
-    the same colour everywhere, and can be green while the label stays black.
+    """A check mark.
     """
     scale = 2                       # drawn at 2x so it stays sharp when scaled
     pm = QPixmap(side * scale, side * scale)
@@ -522,12 +477,6 @@ class ClickableLabel(QLabel):
 
 class Combo(QComboBox):
     """A combo box that never changes value on the wheel.
-
-    The editor sits inside the board's scroll area, so a wheel turn over an
-    open card should move the board. Qt's default is for the box under the
-    pointer to eat the wheel and step its own selection instead -- silently
-    editing a field nobody clicked. Ignoring the event lets it fall through
-    to the scroll area; the popup list still scrolls on its own.
     """
 
     def __init__(self, parent=None):
@@ -541,10 +490,6 @@ class Combo(QComboBox):
 
 def plain_cursors(parent):
     """Give the controls on a card their own cursors.
-
-    Qt hands a widget's cursor down to any child that has not set one, so the
-    card's grab cursor lands on every button and field sitting on it. A button
-    under an open hand reads as "drag me", not "click me".
     """
     for w in parent.findChildren(QLineEdit):
         w.setCursor(Qt.IBeamCursor)
@@ -555,10 +500,6 @@ def plain_cursors(parent):
 
 class FlowLayout(QLayout):
     """Left-to-right layout that wraps onto the next line.
-
-    Qt ships nothing that does this. Work items are typed by hand and run from
-    two words to a short sentence, so a row of them has to be able to spill
-    onto a second line instead of squeezing every bubble to nothing.
     """
 
     def __init__(self, parent=None, spacing=5):
@@ -623,10 +564,6 @@ class FlowLayout(QLayout):
 
 class Bubble(QFrame):
     """One work item.
-
-    The button on the right is the point of the widget: a tick while the card
-    is just sitting there -- that item got done -- and a cross while the editor
-    is open, which says it shouldn't have been on the list at all.
     """
 
     acted = Signal(str)          # this bubble's key
@@ -721,11 +658,6 @@ class WorkBar(QWidget):
             self.entry.setPlaceholderText("Type an item and press Enter")
             # A darker frame than the fields above it, and a prompt in the
             # ordinary muted text colour rather than Qt's near-invisible grey:
-            # this box is the only way to add an item, so it has to read as
-            # something you click, not as a caption.
-            # Deliberately without a `color` of its own: a stylesheet colour
-            # overrides the palette, and the palette is the only portable way
-            # to set the placeholder's.
             self.entry.setStyleSheet(
                 f"QLineEdit {{ background:{SURFACE}; border-radius:3px;"
                 f" padding:4px 6px; font-size:11px;"
@@ -791,12 +723,7 @@ class WorkBar(QWidget):
         while self.flow.count():
             w = self.flow.takeAt(0).widget()
             if w is not None:
-                # Unparent before deleteLater: deletion is deferred to the next
-                # trip round the event loop, and until then a bubble that is
-                # still a child of the holder goes on being painted where it
-                # last sat -- a ghost of the item just removed. Hold the widget
-                # in a local first: the layout item drops it the moment it is
-                # unparented, so asking twice gets None the second time.
+                # Unparent before deleteLater.
                 w.setParent(None)
                 w.deleteLater()
         for row in self._rows:
@@ -819,11 +746,6 @@ class WorkBar(QWidget):
 
 class QueueBox(QCheckBox):
     """A queue filter that wears its queue's own colours.
-
-    Painted rather than styled: a stylesheet can only put a tick in a checkbox
-    by loading an image from disk, and the tick is the part that has to be the
-    tag's dark ink. So the whole control is drawn here -- pale fill, dark tick,
-    dark label -- straight off the same three colours the tag chip uses.
     """
 
     SIDE = 15                 # the box; the hit area is the whole widget
@@ -843,10 +765,7 @@ class QueueBox(QCheckBox):
                      max(self.SIDE, fm.height()) + 10)
 
     def hitButton(self, pos):
-        # The whole control is the target. Qt's default click region comes from
-        # the style's own indicator and label rects, and those no longer line up
-        # with anything now that paintEvent draws the control itself -- clicks
-        # near the box quietly did nothing.
+        # The whole control is the target.
         return self.rect().contains(pos)
 
     def paintEvent(self, _event):
@@ -897,11 +816,6 @@ class Card(QFrame):
 
     def _paint(self):
         """Colour the card by how urgent it is, and stripe it by whose it is.
-
-        Background is the priority band, so a card carries its band with it --
-        across a drag, and down a long board where the header has scrolled off.
-        The queue keeps the left stripe and the tag chip, so a card still says
-        both things at once.
         """
         stripe = QUEUE.get(self.data.get("queue") or "", NEUTRAL)[0]
         tint, edge = BAND_CARD.get(self.data.get("priority") or "",
@@ -927,10 +841,7 @@ class Card(QFrame):
         self.edit_btn = self.done_btn = self.work = None
 
         def drop(w):
-            # Unparent before deleteLater. Deletion waits for the next trip
-            # round the event loop, and until then a widget that is still a
-            # child of the card goes on painting where it last sat -- the old
-            # view showing through the editor for a frame.
+            # Unparent before deleteLater.
             w.setParent(None)
             w.deleteLater()
 
@@ -1022,10 +933,7 @@ class Card(QFrame):
         self.edit_btn.clicked.connect(self.enter_edit)
         foot.addWidget(self.edit_btn)
 
-        # Qt puts a button's icon on the left, always. Flipping this one
-        # button's layout direction puts the tick after the word instead; the
-        # trailing space is the gap Qt then doesn't leave between them, and is
-        # non-breaking so nothing trims it back off.
+        # Qt puts a button's icon on the left, always.
         self.done_btn = QPushButton("Complete ")
         self.done_btn.setLayoutDirection(Qt.RightToLeft)
         self.done_btn.setStyleSheet(BTN_HIT)
@@ -1051,9 +959,7 @@ class Card(QFrame):
         self._paint()
 
         d = self.data
-        # What the server held when this editor opened. Saving sends it back so
-        # the server can tell a field this person changed from one they merely
-        # had on screen, and refuse to silently clobber somebody else's work.
+        # What the server held when this editor opened.
         self._edit_base = {f: (d.get(f) or "") for f in
                            ("client_override",)}
         # The thread title lives on Discord, not on the card, so it travels
@@ -1105,8 +1011,7 @@ class Card(QFrame):
         form.addRow("Client", self.f_client)
         form.addRow("Work items", self.f_work)
         # The labels QFormLayout makes for itself paint their palette
-        # background, which is a pale block on a card that now carries its
-        # queue's colour.
+        # background.
         for i in range(form.rowCount()):
             lab = form.itemAt(i, QFormLayout.LabelRole)
             if lab is not None and lab.widget() is not None:
@@ -1139,12 +1044,6 @@ class Card(QFrame):
 
     def _suggest_title(self, _text=None):
         """Keep the title in step with the client, until someone types in it.
-
-        Work items deliberately have no say here. They are notes about what is
-        happening on a thread -- added, ticked off and dropped all day -- and
-        the thread title is not a running commentary on them. Renaming a
-        Discord thread every time somebody wrote down a detail was noise for
-        everyone watching the thread.
         """
         if getattr(self, "_title_touched", True):
             return
@@ -1171,8 +1070,7 @@ class Card(QFrame):
             self.f_title.setText(f"{q}: {t.summary or ''}".strip())
         else:
             # Nothing parseable to keep, so lay out the standard shape from the
-            # fields. Today's date is a starting point, not a claim -- it sits
-            # in an editable box the person still has to save.
+            # fields.
             client = self.f_client.text().strip() or "Client"
             today = datetime.now(timezone.utc).date()
             self.f_title.setText(
@@ -1231,6 +1129,8 @@ class Card(QFrame):
         self._clear()
         self._paint()
         self._build_view()
+        # Redrawing is safe again now the editor is gone.
+        self.board.apply_pending()
 
     def save(self):
         fields = {
@@ -1242,10 +1142,7 @@ class Card(QFrame):
             "work_remove": self.f_work.removed(),
         }
         base = getattr(self, "_edit_base", None)
-        # Put the card back in view mode before the write. Leaving it in the
-        # form left its buttons deleted, and a refresh that skipped the rebuild
-        # -- which a title-only edit always does, since the title is not a card
-        # field -- then called set_writable on them.
+        # Put the card back in view mode before the write.
         self.exit_edit()
         self.board.save_edits(self.thread_id, fields, base)
 
@@ -1327,8 +1224,7 @@ class Band(QWidget):
         self.header.clicked.connect(self.toggle)
         self.header.setCursor(Qt.PointingHandCursor)
         # A QWidget *subclass* paints its own background, so a stylesheet
-        # background is ignored until this is set. Plain QWidget doesn't need
-        # it, which is why the header lost its tint when it became clickable.
+        # background is ignored until this is set.
         self.header.setAttribute(Qt.WA_StyledBackground, True)
         h = QHBoxLayout(self.header)
         h.setContentsMargins(8, 5, 8, 5)
@@ -1336,8 +1232,7 @@ class Band(QWidget):
 
         self.caret = QLabel("▾")
         # Once a QLabel carries a stylesheet it paints its palette background,
-        # which is the window colour -- each of these was punching a pale
-        # rectangle through the band's tint. Keep them transparent.
+        # which is the window colour.
         self.caret.setStyleSheet(
             f"color:{accent}; font-size:11px; background:transparent;")
         self.title = QLabel(BAND_LABEL[priority])
@@ -1352,9 +1247,7 @@ class Band(QWidget):
             f"color:{accent}; font-size:11px; background:transparent;")
 
         self.header.setObjectName("bandHeader")
-        # Scope to the header itself. A bare selector cascades into every child
-        # QLabel, so the count and the hint each drew their own accent border
-        # and tinted block and ran into the title.
+        # Scope to the header itself.
         self.header.setStyleSheet(
             f"#bandHeader {{ background:{tint};"
             f" border-left:3px solid {accent}; }}")
@@ -1466,9 +1359,7 @@ class Band(QWidget):
     def _drop_index(self, y, dragged_id=None):
         """
         Index into the card list (excluding the dragged card) where the drop
-        lands. Counting cards rather than layout rows, and skipping the card
-        being dragged, keeps this aligned with the neighbour list -- otherwise
-        every drop below the card's own row is off by one and swaps break.
+        lands.
         """
         index = 0
         for i in range(self.lay.count()):
@@ -1503,8 +1394,7 @@ class Band(QWidget):
     def dragMoveEvent(self, e):
         if not e.mimeData().hasFormat(MIME):
             return
-        # Detach first, THEN measure. Computing an index with the marker still
-        # in the layout and removing it afterwards shrinks the count under it.
+        # Detach first, THEN measure.
         self.lay.removeWidget(self.marker)
         if not self.cards:
             # The 'drop here' panel is the whole band; an insertion line under
@@ -1516,8 +1406,7 @@ class Band(QWidget):
         index = self._drop_index(e.position().toPoint().y(), dragged)
         # insertWidget() reparents the marker before inserting it, which drops
         # it back out of this layout and shrinks the count under a slot that was
-        # measured a moment ago. A slot one past the end then makes Qt warn and
-        # append anyway, so clamp it.
+        # measured a moment ago.
         slot = min(self._marker_slot(index, dragged), self.lay.count())
         self.lay.insertWidget(slot, self.marker)
         self.marker.show()
@@ -1550,11 +1439,6 @@ class Band(QWidget):
 
 class RailRow(QFrame):
     """One line in the side rail: who it's for, in the colour of its band.
-
-    The band used to be spelled out under every name -- fifty rows reading
-    "critical, high, high, high, medium" down a narrow column, which is a lot
-    of words for five distinct values. The row wears its band's colour instead,
-    the same one the card has on the board, and the name gets the whole line.
     """
 
     def __init__(self, data, board):
@@ -1632,11 +1516,6 @@ class RailRow(QFrame):
 
 class RailZone(QWidget):
     """The place an empty band keeps in the running order, during a drag.
-
-    Without one there is nothing to aim at: the rail is a flat list of rows,
-    so a band with no tickets has no rows, no height, and no way to be dropped
-    into -- the gap between two rules is a hairline. This is that band's slot,
-    and it says which band it is, since the rows no longer do.
     """
 
     def __init__(self, priority):
@@ -1644,8 +1523,7 @@ class RailZone(QWidget):
         self.priority = priority
 
         # The dashed box is inset, so the rows above and below are pushed clear
-        # of it rather than sitting against its border -- a slot the width of
-        # the rail with 4px of air either side reads as overlapping them.
+        # of it rather than sitting against its border
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, RAIL_ZONE_GAP, 0, RAIL_ZONE_GAP)
         lay.setSpacing(0)
@@ -1670,11 +1548,6 @@ class RailZone(QWidget):
 
 class Rail(QWidget):
     """Every open ticket on one screen, in board order.
-
-    Fifty cards don't fit on the board at once, which turns a move into a
-    scrolling exercise -- you can't see where the card is and where it's going
-    at the same time. Here both ends are always visible. Click a row to jump
-    the board to it, or drag the row itself.
     """
 
     def __init__(self, board):
@@ -1693,8 +1566,7 @@ class Rail(QWidget):
         outer.setSpacing(6)
 
         # Not "Priority" -- the bands are the priorities, so that name reads
-        # like a filter. This is the order the work gets worked, which is also
-        # the reason to drag anything in here.
+        # like a filter.
         self.head = QLabel("Running order")
         f = QFont()
         f.setPointSize(10)
@@ -1761,8 +1633,7 @@ class Rail(QWidget):
                                  else "Hide the running order")
 
         # Folded, the list that was absorbing the spare height is hidden, and
-        # the button drifts to the middle of the spine. Hold it at the top so
-        # it doesn't move when you fold and unfold.
+        # the button drifts to the middle of the spine.
         lay = self.layout()
         if yes and self._spacer is None:
             lay.addStretch(1)
@@ -1772,9 +1643,7 @@ class Rail(QWidget):
             self._spacer = None
 
     def set_cards(self, cards):
-        # Same signature check the bands use: redrawing 50 rows on every poll
-        # for identical content is wasted work. The drag state is part of it --
-        # empty bands take a slot in the rail while a drag is running.
+        # Same signature check the bands use.
         sig = json.dumps([cards, self.board.dragging], sort_keys=True, default=str)
         if sig == self._sig:
             self.cards = cards
@@ -1786,26 +1655,20 @@ class Rail(QWidget):
             it = self.lay.takeAt(0)
             w = it.widget()
             if w is not None and w is not self.marker:
-                # Unparent first -- see Band.set_cards. This is the one that
-                # showed: the rail rebuilds as a drag starts, to make room for
-                # the empty bands' slots, and every old row stayed painted
-                # where it was with the new ones drawn over the top.
+                # Unparent first -- see Band.set_cards.
                 w.setParent(None)
                 w.deleteLater()
         self.marker.hide()
 
         # Walk the bands rather than the cards, so a band with nothing in it
-        # still gets its turn. Card order inside a band is left as the board
-        # sent it -- unassigned floats its unreadable threads to the top.
+        # still gets its turn.
         first = True
         for band in BANDS:
             group = [c for c in self.cards if c["priority"] == band]
             if not group and not self.board.dragging:
                 continue
             if not first:
-                # Where the next band starts. This carries more than it did,
-                # now that the rows no longer spell their band out, so it is a
-                # solid rule in the new band's ink rather than a hairline.
+                # Where the next band starts.
                 line = QFrame()
                 line.setFixedHeight(2)
                 line.setStyleSheet(
@@ -1832,14 +1695,6 @@ class Rail(QWidget):
 
     def _drop_at(self, y, dragged):
         """Where a drop at this height lands, as (band, after_id, before_id).
-
-        Read off the row the pointer is actually over and which half of it,
-        rather than off "the row above the gap". That older rule made the top
-        of a band unreachable: the space above a band's first row still
-        resolved to the band before it, so a card dropped there joined the
-        bottom of the previous band, and a card dropped a few pixels lower
-        went in second. Half a row is a real target; the seam between two was
-        not.
         """
         rows = [w for w in self._rows() if w.thread_id != dragged]
         if not rows:
@@ -1960,7 +1815,7 @@ class Bert(QMainWindow):
         self.settings = load_settings()
         self.fail_since = None
         self.dragging = False
-        self._pending = None        # a poll that landed mid-drag, held back
+        self._pending = None        # a poll held back by a drag or an editor
         self.editing_card = None
         self.poller = None
         self.connected = True
@@ -2020,9 +1875,7 @@ class Bert(QMainWindow):
 
         board = QWidget()
         board.setObjectName("boardColumn")
-        # The column keeps the canvas colour and stops where the bands stop,
-        # with an edge to say so. Scoped to the id: a bare selector would hand
-        # the same background to every band and card under it.
+        # The column keeps the canvas colour and stops where the bands stop
         board.setStyleSheet(f"#boardColumn {{ background:{CANVAS};"
                             f" border-right:1px solid {LINE}; }}")
         self.board_lay = QVBoxLayout(board)
@@ -2246,9 +2099,7 @@ class Bert(QMainWindow):
 
         # Hold FEED_ROWS open even when fewer have come in, so the panel and
         # the board above it don't jump as rows arrive, and stop growing at
-        # FEED_MAX_ROWS -- past that the scroll area takes over. Measured from
-        # the tallest row on screen, because a row with an Undo button is
-        # taller than one without.
+        # FEED_MAX_ROWS
         shown = min(max(len(rows), FEED_ROWS), FEED_MAX_ROWS)
         view = stack(shown) if self._feed_row_h else 0
         self.feed_scroll.setFixedHeight(view)
@@ -2285,9 +2136,7 @@ class Bert(QMainWindow):
     def refresh(self):
         if self.dragging:
             return                      # never yank the board out from under a drag
-        # One poll at a time. Reassigning self.poller while the last one is
-        # still running drops its only reference and Qt tears the thread down
-        # underneath itself -- "QThread: Destroyed while thread is running".
+        # One poll at a time.
         if self.poller is not None and self.poller.isRunning():
             return
         self.refresh_btn.setToolTip("Refreshing\u2026")
@@ -2318,9 +2167,14 @@ class Bert(QMainWindow):
             self._clear_toast()
 
         # An open editor must not be redrawn out from under someone mid-sentence,
-        # but they should still hear that the card moved. Warn, don't redraw.
+        # but they should still hear that the card moved. Warn, don't redraw --
+        # and hold the payload rather than drop it. Dropping it froze the whole
+        # board for as long as somebody was typing, so a ticket raised in
+        # Discord meanwhile did not arrive until whichever poll happened to
+        # follow the editor closing.
         if self.editing_card:
             self._flag_edited_underneath(incoming)
+            self._pending = p
             return
 
         # A poll that set off before the drag began still lands in the middle
@@ -2332,6 +2186,10 @@ class Bert(QMainWindow):
             self._pending = p
             return
 
+        # Nothing is holding the board, so whatever was held is older than
+        # what just arrived. Clearing it stops a later release replaying a
+        # stale board over this one.
+        self._pending = None
         self.cards = incoming
         self.render()
 
@@ -2456,7 +2314,16 @@ class Bert(QMainWindow):
         if agreed is not None:
             agreed += int(time.time() - self.sharing_at)
 
-        if agreed is not None and agreed > SHARED_STALE_S:
+        if agreed is None:
+            # Publishing proves nothing about the other direction, and the
+            # publish is what created these rows. Until a pull has actually
+            # read the channel there is no contact to report, and saying
+            # "in step" here is how this indicator used to lie.
+            text, colour = "shared · no contact yet", AMBER_FG
+            tip = ("This board hasn't reconciled with the channel yet, so "
+                   "their changes aren't showing. It clears on the next sync "
+                   "cycle -- if it doesn't, the sync loop isn't running.")
+        elif agreed > SHARED_STALE_S:
             # Long enough that the sync loop is probably not running -- the
             # board on screen may be missing whatever they have done since.
             text, colour = f"shared · no contact for {ago(agreed)}", AMBER_FG
@@ -2469,8 +2336,7 @@ class Bert(QMainWindow):
                    "about yet. They go out on the next cycle.")
         else:
             text, colour = "shared · in step", MUTED
-            tip = (f"Agreed with the other board {ago(agreed)} ago."
-                   if agreed is not None else "Sharing a board.")
+            tip = f"Agreed with the other board {ago(agreed)} ago."
 
         self.shared.setText(text)
         self.shared.setStyleSheet(f"color:{colour}; font-size:11px;")
@@ -2509,13 +2375,9 @@ class Bert(QMainWindow):
     def move_card(self, tid, priority, after, before):
         if not self._guard():
             return
-        # Show the move now. The POST plus a full board reload is slow enough
-        # that the card otherwise sits in its old slot looking like the drag
-        # didn't take. The refresh below replaces these ranks with the server's.
+        # Show the move now.
         self._reorder_local(tid, priority, after, before)
-        # This runs from dropEvent, which is inside drag.exec(). Redrawing here
-        # would delete the widget being dragged out from under Qt; end_drag()
-        # repaints the board the instant the drag returns.
+        # This runs from dropEvent, which is inside drag.exec().
         if not self.dragging:
             self.render()
         try:
@@ -2727,8 +2589,15 @@ class Bert(QMainWindow):
         for b in self.bands.values():
             b.marker.hide()
         self.render()
-        # Whatever the poll brought in while the drag was running, applied now
-        # that redrawing is safe again.
+        self.apply_pending()
+
+    def apply_pending(self):
+        """Draw a poll that landed while the board was held.
+
+        Both holds park the payload here -- a drag in flight, and an open
+        editor. on_loaded re-checks both, so a release while the other one is
+        still on simply parks it again rather than redrawing under it.
+        """
         pending, self._pending = self._pending, None
         if pending is not None:
             self.on_loaded(pending)
@@ -2799,17 +2668,16 @@ class Bert(QMainWindow):
             f"<span style='color:{RED_FG}'>{problems} need attention</span>"
             if problems else "")
 
-        # Collect the bands in the order they're drawn, because that is not the
-        # order the server sent: unassigned floats its unreadable threads to the
-        # top. The rail has to be the same list top to bottom -- it looked wrong
-        # side by side, and its drop targets are read off adjacency, so a
-        # different order there means the wrong neighbours get sent.
+        # Straight down the order the server sent. Unassigned used to float its
+        # unreadable threads here, which put them at the top of the board while
+        # every other view -- the state channel, the numbers on the card
+        # messages -- still read them in rank order, and left a drop between
+        # two visible cards computing a rank against neighbours that were not
+        # its neighbours. They are ranked to the top for real now, in
+        # ensure_card, so there is one order and this draws it.
         ordered = []
         for band, w in self.bands.items():
             group = [c for c in shown if c["priority"] == band]
-            if band == "unassigned":
-                # Unreadable threads float to the top so they get triaged first.
-                group.sort(key=lambda c: (not needs_triage(c), c["rank"]))
             w.set_cards(group)
             ordered.extend(group)
 
@@ -2833,10 +2701,7 @@ class Bert(QMainWindow):
         self._render_feed()
 
     def _render_feed(self):
-        # Every row is rebuilt on every poll and after every undo. Without
-        # holding the offset, anyone reading back through the feed is thrown
-        # to the top every five seconds, and pressing Undo yanks the row out
-        # from under the pointer.
+        # Every row is rebuilt on every poll and after every undo.
         keep = self.feed_scroll.verticalScrollBar().value()
 
         while self.feed_lay.count():
@@ -2867,9 +2732,7 @@ class Bert(QMainWindow):
             h.addWidget(txt)
             h.addStretch()
 
-            # Its own column, right-aligned and always the same width: a
-            # chip that follows the text sits in a different place on every
-            # row, and a column of eight of them read as a mess.
+            # Its own column, right-aligned and always the same width.
             status = self._feed_status(e, e["event_id"] in revoking)
             status_col = QWidget()
             sc = QHBoxLayout(status_col)
@@ -2908,18 +2771,12 @@ class Bert(QMainWindow):
                 b.clicked.connect(lambda _, i=e["event_id"]: self.undo(i))
                 uc.addWidget(b)
             self.feed_lay.addWidget(row)
-            # Qt reports a widget that has not been shown yet as zero-sized,
-            # and _fit_feed() measures these a moment from now -- without this
-            # it sizes the panel for an empty feed and squashes every row.
             row.show()
 
-        # Otherwise a short feed's rows share the viewport's spare height
-        # between them instead of sitting at the top.
         self.feed_lay.addStretch()
         self._fit_feed()
 
-        # After a rebuild the layout hasn't settled, so the scrollbar's range
-        # is still the old one and clamping against it now would land short.
+        # After a rebuild the layout hasn't settled
         bar = self.feed_scroll.verticalScrollBar()
         QTimer.singleShot(0, lambda: bar.setValue(min(keep, bar.maximum())))
 
@@ -2927,11 +2784,6 @@ class Bert(QMainWindow):
     def _feed_status(e, revoking):
         """
         Where a change has got to, as (text, background, foreground).
-
-        The feed used to say a change had happened the instant it was made and
-        then say nothing more, so there was no way to tell a change still
-        inside its undo window from one already in the customer thread. Every
-        column this reads is on the event row already.
         """
         if revoking:
             return ("attempting to revoke…", AMBER_BG, AMBER_FG)
@@ -2949,19 +2801,11 @@ class Bert(QMainWindow):
                 return None
             return ((f"sending in {left}s" if left > 0 else "sending…"),
                     INFO_BG, INFO_FG)
-        # No dispatch means nothing was ever queued: a reorder, or a change
-        # replayed from the other board, whose own machine posts it. Saying
-        # anything here would be saying it twice or saying it wrong.
         return None
 
     @staticmethod
     def _feed_text(e):
         """One line of the activity feed.
-
-        A priority change carries the two bands it went between -- "priority
-        changed" on its own said that something moved but not where to, which
-        is the only part worth reading. Each band is in its own colour, the
-        same one it wears on the board.
         """
         who = e.get("actor_name") or "Ernie"
         what = (e.get("thread_name") or "")[:46]
@@ -2980,10 +2824,7 @@ class Bert(QMainWindow):
                     f"{band(new)}")
 
         if e["verb"] == "work_done" and (new or "").strip():
-            # Which item, not just which thread -- the text is right there on
-            # the event, and "work done" alone was the same gap the priority
-            # rows had. Clipped so a long item can't push the Undo button off
-            # the end of the row.
+            # Which item, not just which thread.
             item = new.strip()
             if len(item) > 44:
                 item = item[:43].rstrip() + "…"
@@ -2992,9 +2833,6 @@ class Bert(QMainWindow):
                     f"<b>{item}</b>")
 
         if e["verb"] == "undo_correction":
-            # The catch-all rendered this as "undo correction", which read as
-            # a noun somebody had done to the thread. It only surfaced once
-            # the feed started showing more than the last four rows.
             return f"<b>{who}</b> retracted an update to {thread}"
 
         return f"<b>{who}</b> {e['verb'].replace('_', ' ')} {thread}"

@@ -222,9 +222,23 @@ def ensure_card(con: sqlite3.Connection, rec: ex.ThreadRecord) -> None:
                    (rec.thread_id,)).fetchone():
         return
 
-    top = con.execute(
-        "SELECT MAX(rank) AS m FROM cards WHERE priority='unassigned'").fetchone()
-    rank = (top["m"] or 0) + RANK_STEP
+    # A thread nobody can read is ranked to the top of unassigned rather than
+    # the bottom, because it is the one that needs a person soonest and the
+    # bottom of a nineteen-card band is where it goes unlooked-at. This is a
+    # real rank and not a trick of Bert's rendering: the board, the state
+    # channel and the numbers on the card messages all read the same order,
+    # and dragging one down leaves it down -- a later re-sync does not haul it
+    # back up.
+    if rec.title_unreadable:
+        edge = con.execute(
+            "SELECT MIN(rank) AS m FROM cards WHERE priority='unassigned'"
+        ).fetchone()
+        rank = (RANK_STEP if edge["m"] is None else edge["m"]) - RANK_STEP
+    else:
+        edge = con.execute(
+            "SELECT MAX(rank) AS m FROM cards WHERE priority='unassigned'"
+        ).fetchone()
+        rank = (edge["m"] or 0) + RANK_STEP
 
     build = "created" if any(t.kind == "build" for t in rec.created) else "needs_created"
     ret = "created" if any(t.kind == "return" for t in rec.created) else "needs_created"

@@ -85,6 +85,14 @@ def parse_date(token: str) -> Optional[date]:
         return None
 
 
+# The confidences that mean the title did not parse. Every title_* issue on a
+# card reduces to this: extract_thread turns "none" and "loose" into
+# title_unparseable and title_nonstandard, and the API derives title_{conf} for
+# all three. Bert's BLOCKING set is the same statement in issue form, and both
+# it and ernie_load read this rather than restating the list.
+UNREADABLE_CONFIDENCE = ("none", "loose", "prefix_only")
+
+
 @dataclasses.dataclass
 class Title:
     queue: Optional[str] = None
@@ -374,7 +382,17 @@ class ThreadRecord:
 
     @property
     def needs_attention(self) -> bool:
-        return bool(self.issues) or self.title.confidence in ("loose", "prefix_only", "none")
+        return bool(self.issues) or self.title.confidence in UNREADABLE_CONFIDENCE
+
+    @property
+    def title_unreadable(self) -> bool:
+        """Nobody can read this title, so a human has to look at the thread.
+
+        Narrower than needs_attention, which any issue trips -- a pending
+        equipment number is a card worth a second glance, not one whose
+        client is unknown.
+        """
+        return self.title.confidence in UNREADABLE_CONFIDENCE
 
 
 def extract_thread(entry: dict) -> ThreadRecord:

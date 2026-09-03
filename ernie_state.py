@@ -299,7 +299,12 @@ def render_summary(cards: list[Card]) -> str:
     # doesn't have to be rewritten for the clock to stay right.
     lines = [f"{SUMMARY_MARK} — {len(live)} open, {len(cards) - len(live)} closed",
              "_the running order both boards should agree on_"]
-    lines.append(f"last checked {discord_time(now_iso())}")
+    # "last checked" read as "the two boards were compared and agree", which
+    # this message cannot say: it is written by whichever machine published,
+    # from its own copy, and a board whose sync has stopped goes on stamping a
+    # confident clock over a stale order. When it was written is what it
+    # honestly knows. Whether contact is live is Bert's indicator, off agreed_at.
+    lines.append(f"last published {discord_time(now_iso())}")
 
     for band in BAND_ORDER:
         in_band = sorted((c for c in live if c.priority == band),
@@ -325,13 +330,18 @@ def render_summary(cards: list[Card]) -> str:
     return out
 
 
-CHECKED = re.compile(r"last checked <t:(\d+):")
+CHECKED = re.compile(r"last (?:published|checked) <t:(\d+):")
+
+# Both spellings: a channel written before the rename still holds the old
+# line, and it has to be stripped for the comparison too or every one of those
+# messages reads as changed twice -- once to drop it, once to settle.
+_STAMP_LINES = ("last published ", "last checked ")
 
 
 def without_stamp(content: str) -> str:
     """The summary minus its clock, which changes on every publish."""
     return "\n".join(l for l in (content or "").splitlines()
-                     if not l.startswith("last checked "))
+                     if not l.startswith(_STAMP_LINES))
 
 
 def publish_summary(d: Discord, cid: str, cards: list[Card],
@@ -339,10 +349,10 @@ def publish_summary(d: Discord, cid: str, cards: list[Card],
     """
     Post or edit the summary. Returns what happened, for the caller's count.
 
-    "last checked" is what tells a reader whether to trust what they are
-    looking at, so it has to keep moving -- but rewriting the message every
-    cycle just to advance a clock is noise. So: rewrite whenever the board
-    itself changed, and otherwise only once the stamp has gone stale.
+    The stamp is what tells a reader whether to trust what they are looking
+    at, so it has to keep moving -- but rewriting the message every cycle just
+    to advance a clock is noise. So: rewrite whenever the board itself
+    changed, and otherwise only once the stamp has gone stale.
     """
     content = render_summary(cards)
     if existing is None:
@@ -677,6 +687,13 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
 
     A card with no base is one this machine has never reconciled, so it adopts
     the channel: a board joining an existing session takes the shared state.
+
+    Every card that gets as far as being compared has its agreed_at stamped,
+    whichever way the comparison went -- including the two quiet outcomes that
+    write nothing else. That column is the only honest answer to "are their
+    changes reaching us", because it moves solely when this loop has read the
+    channel. publish() must never touch it: it advances even while the sync is
+    stopped, which is the state worth reporting.
     """
     remote = fetch_state(d, cid)
     con = rw(db)
@@ -684,6 +701,7 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
     local = {c.thread_id: c.payload() for c in load_board(db)}
     report = {"applied": [], "ahead": [], "conflicts": [], "unknown": [],
               "settled": 0}
+    compared = []
     try:
         for tid, entry in remote.items():
             p = entry["payload"]
@@ -701,6 +719,8 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
             base = bases.get(tid)
             they_moved = base is None or theirs != base
             we_moved = base is not None and ours != base
+
+            compared.append(tid)
 
             if theirs == ours:
                 # Agreed however they got there; record it so neither side
@@ -723,6 +743,16 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
             else:
                 save_base(con, tid, entry["message_id"], p)
                 con.commit()       # per card, so the write lock is never held long
+
+        # One statement for the whole pass rather than a commit per card: on a
+        # quiet board every card takes the settled path, and 27 write
+        # transactions a minute to move 27 timestamps is lock Bert could have
+        # had.
+        if compared and not dry_run:
+            con.executemany(
+                "UPDATE state_sync SET agreed_at=? WHERE thread_id=?",
+                [(now_iso(), tid) for tid in compared])
+            con.commit()
     finally:
         con.close()
     return report

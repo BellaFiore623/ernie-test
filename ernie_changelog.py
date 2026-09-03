@@ -24,7 +24,7 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import ernie_load as load
 from ernie_state import connect, discord_time
@@ -32,6 +32,10 @@ from ernie_sync import Discord
 
 POLL_SECONDS = 60
 BATCH = 20          # lines per pass, so a backlog doesn't hold the loop
+# Must match ernie_api.UNDO_WINDOW_S. Copied rather than imported: ernie_api
+# pulls in FastAPI, and the outbox process this runs inside has no other
+# reason to load it.
+UNDO_WINDOW_S = 60
 
 
 def now_iso() -> str:
@@ -45,12 +49,33 @@ def settled(e) -> bool:
     An event inside its undo window may still be cancelled, and logging it
     then would put something in the record that never happened. Waiting costs
     a minute and means the log only ever says true things.
+
+    A silent change -- every band move that isn't in or out of critical, and
+    every reorder -- carries no dispatch_after, because Ernie is never going
+    to post it to the thread. That is not the same as being finished, and
+    reading it that way logged the bulk of the board's activity the instant it
+    happened, ahead of the changes that do wait. They get the same minute,
+    measured from when they happened rather than from a dispatch they haven't
+    got.
     """
     if e["undone_at"]:
         return True                       # undone is itself an outcome
-    if e["dispatch_after"] and not e["posted_at"]:
+    if e["posted_at"]:
+        return True                       # already out; undo posts a correction
+    if e["dispatch_after"]:
         return e["dispatch_after"] <= now_iso()
-    return True
+    return deadline(e["occurred_at"]) <= now_iso()
+
+
+def deadline(occurred_at: str) -> str:
+    """When a silent change stops being cancellable without a trace."""
+    try:
+        at = datetime.fromisoformat(occurred_at)
+    except (TypeError, ValueError):
+        # An unparseable timestamp is not a reason to withhold the record
+        # forever. Log it and let the line carry whatever it says.
+        return "0000"
+    return (at + timedelta(seconds=UNDO_WINDOW_S)).isoformat()
 
 
 def describe(e) -> str:
@@ -113,6 +138,31 @@ def mark(con, event_id: str, message_id: str | None) -> None:
         " VALUES (?,?,?)", (event_id, message_id, now_iso()))
 
 
+def retracted(con, limit: int = BATCH) -> list:
+    """
+    Lines already posted that have since been undone.
+
+    Undo has no deadline, so waiting out the window is not enough on its own:
+    a change can be taken back a day later, long after its line went up. The
+    line has to be corrected where it stands, or the record quietly keeps
+    asserting something that was reversed.
+
+    sent_at against undone_at is the whole bookkeeping. Editing the message
+    re-stamps sent_at, which puts it past the undo and takes the row back out
+    of this list, so a failed edit retries and a successful one doesn't.
+    """
+    return con.execute(
+        """SELECT e.*, v.name AS thread_name, s.message_id AS log_message_id
+           FROM events e
+           JOIN changelog_sent s ON s.event_id = e.event_id
+           LEFT JOIN v_thread_current v ON v.thread_id = e.thread_id
+           WHERE e.undone_at IS NOT NULL
+             AND s.message_id IS NOT NULL
+             AND datetime(s.sent_at) < datetime(e.undone_at)
+           ORDER BY e.undone_at
+           LIMIT ?""", (limit,)).fetchall()
+
+
 def catch_up(con, note: str = "") -> int:
     """
     Mark everything already in the database as logged, without posting it.
@@ -144,7 +194,24 @@ def mark_initialised(con) -> None:
 
 def drain(d: Discord, cid: str, con) -> dict:
     """Post what's due. One message per change, so each is quotable on its own."""
-    sent = failed = 0
+    sent = failed = struck = 0
+
+    # Corrections first: a line that is now wrong is worse than a line that is
+    # late, and if the channel is refusing writes this pass, fixing the record
+    # is the half worth having attempted.
+    for e in retracted(con):
+        try:
+            d.write("PATCH", f"/channels/{cid}/messages/{e['log_message_id']}",
+                    content=render(e))
+            mark(con, e["event_id"], e["log_message_id"])
+            con.commit()
+            struck += 1
+        except Exception as err:
+            print(f"  changelog: {e['event_id'][:8]} strike failed -- {err}",
+                  file=sys.stderr)
+            failed += 1
+            break
+
     for e in pending(con):
         try:
             msg = d.write("POST", f"/channels/{cid}/messages", content=render(e))
@@ -156,7 +223,7 @@ def drain(d: Discord, cid: str, con) -> dict:
                   file=sys.stderr)
             failed += 1
             break                 # channel is unhappy; try again next pass
-    return {"sent": sent, "failed": failed}
+    return {"sent": sent, "failed": failed, "struck": struck}
 
 
 def tick(d: Discord, cid: str, con) -> dict:
@@ -170,7 +237,7 @@ def tick(d: Discord, cid: str, con) -> dict:
     if not initialised(con):
         catch_up(con)
         mark_initialised(con)
-        return {"sent": 0, "failed": 0}
+        return {"sent": 0, "failed": 0, "struck": 0}
     return drain(d, cid, con)
 
 
@@ -207,8 +274,11 @@ def main() -> None:
     while True:
         try:
             c = drain(d, cid, con)
-            if c["sent"]:
-                print(f"[{now_iso()[:19]}] changelog: {c['sent']} logged")
+            if c["sent"] or c.get("struck"):
+                note = f"{c['sent']} logged"
+                if c.get("struck"):
+                    note += f", {c['struck']} struck through"
+                print(f"[{now_iso()[:19]}] changelog: {note}")
         except Exception as e:
             print(f"[{now_iso()[:19]}] changelog failed: {e}", file=sys.stderr)
         if a.once:

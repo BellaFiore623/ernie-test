@@ -29,6 +29,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `assets/bert_logo.png` | Bert's mark. `bert.py` resolves it relative to itself. |
 | `requirements.txt` | httpx, fastapi, uvicorn, pydantic; PySide6 for Bert only. |
 | `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
+| `tests/` | `python tests/run.py`. Standard library, no network, no database of yours -- the fixture builds one from `schema.sql` in a temp directory. |
 | `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |
 | `TESTING.md` | Hand this to the tester. Both setups, start to finish. |
 
@@ -63,6 +64,15 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 - Priority bands: `unassigned`, `critical`, `high`, `medium`, `low`. New
   threads land in `unassigned`; a human drags them out. Ties within a band
   are broken by a shared fractional `rank`.
+- **`rank` is the order, and it is the only one.** A thread nobody can read
+  (`ex.UNREADABLE_CONFIDENCE`) is ranked to the *top* of unassigned by
+  `ensure_card`, not the bottom, because it needs a person soonest. Bert used
+  to arrange that at draw time instead: the card sat first on screen and
+  twelfth in the state channel, and a drop between two visible cards was
+  measured against neighbours that were not its neighbours. Nothing may sort
+  a band by anything but `rank` -- if a card belongs somewhere, give it the
+  rank that puts it there. Dragging one down leaves it down; a later rename
+  to something unreadable does not haul it back up.
 - Work is a list, not a field: `work_items`, one row per bubble on the card.
   Rows are never deleted — a tick in view mode sets `done_at`, an ✕ in the
   editor sets `removed_at`, and undo needs both rows still there. The editor
@@ -120,9 +130,11 @@ other's API. Priority, rank, work items and completion live in
   struck through, and who last touched it.
 - One extra message carries a **`**Board**` summary** -- the whole running
   order, in the same band order Bert shows, so the channel can be read top to
-  bottom when checking two boards agree. It holds no state, is skipped by
-  `parse()`, and carries no timestamp of its own: one would differ on every
-  publish and rewrite the message every cycle for nothing.
+  bottom when checking two boards agree. It holds no state and is skipped by
+  `parse()`. Its only clock is the **last published** line, kept out of the
+  comparison by `without_stamp()` and refreshed on its own heartbeat --
+  otherwise it would differ on every publish and rewrite the message every
+  cycle for nothing.
 - A card message is rewritten when its state changes *or* when the prose
   would read differently, so changing `render()` re-renders the channel
   rather than leaving old cards in the old format forever.
@@ -142,6 +154,17 @@ other's API. Priority, rank, work items and completion live in
   the replayed event, clamped to now so a fast laptop can't park its changes
   at the top of the feed. `publish()` checks this machine against Discord's
   clock -- the one clock both share -- and says so past `SKEW_WARN_S`.
+- **`state_sync` has two timestamps and only `agreed_at` is about the other
+  board.** `synced_at` is the publish, which is this machine pushing its own
+  view; it advances every cycle whether or not anything is coming back, so
+  measuring contact with it reported "in step" with the sync loop stopped.
+  `agreed_at` is written by `reconcile()` alone, on every card it compared
+  including the two quiet outcomes, and is what `/health` and Bert's
+  indicator report. NULL means published but never yet reconciled, which Bert
+  shows as `no contact yet` rather than folding into "in step". The publish
+  must never write it. The summary message says **last published**, not "last
+  checked", for the same reason: it is one machine's write time, not an
+  agreement between two.
 - Applying a remote change writes an event with **`dispatch_after` NULL**.
   The machine that made the change already queued its own message; giving
   the replay a dispatch would post the same update twice, once per board.
@@ -163,8 +186,17 @@ changes worth interrupting somebody for; this gets all of them.
 - SQLite -> Discord, so it rides with the outbox like the state publish does.
 - Nothing is logged until it has **settled**: an event inside its undo window
   may still be cancelled, and a record that says things that never happened
-  is worse than no record. An undone change is logged struck through, because
-  that it was made and taken back is itself part of the record.
+  is worse than no record. A silent change -- every band move that isn't in
+  or out of `critical`, and every reorder -- has no `dispatch_after`, which
+  is not the same as being finished; it gets the same `UNDO_WINDOW_S`,
+  measured from `occurred_at`. Reading NULL as settled logged the bulk of the
+  board's activity instantly, ahead of the changes that do wait.
+- An undone change is logged struck through, because that it was made and
+  taken back is itself part of the record. Undo has no deadline, so waiting
+  out the window is not enough on its own: a line already posted and undone
+  later is **edited in place**, off `changelog_sent.sent_at` against
+  `events.undone_at`. The edit re-stamps `sent_at`, which is what stops it
+  being struck twice.
 - `changelog_sent` tracks it per event rather than by a high-water mark: a
   change replayed from the other board carries the timestamp it originally
   happened at, so events do not arrive in `occurred_at` order and a cursor

@@ -335,8 +335,17 @@ def health():
     sharing = None
     if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                    "AND name='state_sync'").fetchone():
+        # agreed_at arrived after the table did, so ask for it the same way --
+        # a database that has not had migrate_state_agreed_at.py run against
+        # it should report no contact yet, not 500.
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(state_sync)")}
+        # The pull writes agreed_at; the publish writes synced_at. Contact is
+        # the pull: their changes only reach this board down that direction,
+        # and synced_at keeps advancing on a machine whose sync has stopped,
+        # which is exactly the case worth reporting.
+        col = "agreed_at" if "agreed_at" in cols else "NULL"
         agreed = con.execute(
-            "SELECT COUNT(*) AS n, MAX(synced_at) AS last FROM state_sync").fetchone()
+            f"SELECT COUNT(*) AS n, MAX({col}) AS last FROM state_sync").fetchone()
         if agreed["n"]:
             # datetime() on both sides, and both written by this machine, so
             # the other person's clock has no say in it.
