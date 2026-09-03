@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import sys
 import time
@@ -26,11 +27,12 @@ import httpx
 # agreement.
 import ernie_extract as ex
 from PySide6.QtCore import (
-    QMimeData, QPoint, QRect, QSize, Qt, QThread, QTimer, Signal,
+    QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer,
+    Signal,
 )
 from PySide6.QtGui import (
     QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon, QPainter,
-    QPalette, QPen, QPixmap,
+    QPalette, QPen, QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
@@ -92,58 +94,239 @@ STATES = [("needs_created", "Needs created"),
           ("not_needed", "Not needed")]
 DIRECTIONS = [("", "\u2014"), ("leaving", "Leaving"), ("coming_back", "Coming back")]
 
-QUEUE = {
-    "PROD": ("#EF9F27", "#FAEEDA", "#633806"),
-    "OPS":  ("#97C459", "#EAF3DE", "#27500A"),
-    "ENG":  ("#6F9BD1", "#E6EDF7", "#1B3A5C"),
-    "CS":   ("#B08BD4", "#F0E9F7", "#3D2154"),
-}
-NEUTRAL = ("#9AA0A6", "#EEEFF1", "#3C4043")
-
-INK, MUTED, LINE = "#1F2124", "#6B7075", "#DFE1E4"
-SURFACE, CANVAS = "#FFFFFF", "#F5F6F7"
-
-# Behind and to the right of the board column. A shade under the canvas.
-BESIDE = "#EAECEE"
-AMBER_BG, AMBER_FG = "#FCF3E2", "#8A5A08"
-RED_BG, RED_FG, RED_EDGE = "#FBEBEB", "#9B2C2C", "#D14343"
-OK_FG, OK_BG, ACCENT = "#2E6B34", "#EAF2EA", "#2B6CB0"
-INFO_BG, INFO_FG = "#E6EDF7", "#1B3A5C"
-
-# Keep the hitbox for the buttons generous.
+# A stylesheet padding rule replaces the native one outright rather than
+# adding to it, so every button that sets its own padding is a smaller target
+# than a default Qt one. These sit on cards that take a drag, and a press a
+# pixel outside the button grabs the card instead -- a silent miss. One
+# generous value, used everywhere something is pressable. No colour in it, so
+# it is the same in both themes.
 BTN_HIT = "font-size:11px; padding:6px 14px; "
 
 
-# A light wash behind each band's cards. Unassigned is the one neutral in the
-# ramp on purpose: it is not a priority, it is the absence of one, and wearing
-# a near-critical red said the opposite of that from across the room.
-BAND_TINT = {
-    "unassigned": "#E8EBEF",
-    "critical":   "#F6E4E4",
-    "high":       "#FBF1DF",
-    "medium":     "#EAF1FA",
-    "low":        "#EFF1F2",
-}
-# The card itself, a shade deeper than the wash -- except unassigned, which is
-# white on grey the other way about. A blank card reads as one nobody has
-# picked up yet, and it leaves red to mean one thing on this board: a card
-# that needs a person. Those keep their red outline over the white.
-BAND_CARD = {
-    "unassigned": ("#FFFFFF", "#C6CCD3"),
-    "critical":   ("#F7DCDC", "#D14343"),
-    "high":       ("#FCEBD1", "#E0A03C"),
-    "medium":     ("#E3EDF9", "#7FA8D8"),
-    "low":        ("#EDEFF1", "#C2C7CC"),
+# --------------------------------------------------------------------------
+# Colour
+#
+# Two palettes with the same keys, and nothing below reads a colour any other
+# way. Adding one means adding it to both, which is the point: a hex written
+# straight into a stylesheet is a value that only works in one theme, and
+# there were a hundred and seventy of them here.
+# --------------------------------------------------------------------------
+
+LIGHT = {
+    "ink": "#1F2124", "muted": "#6B7075", "line": "#DFE1E4",
+    "surface": "#FFFFFF", "canvas": "#F5F6F7",
+    # Behind and to the right of the board column, a shade under the canvas.
+    "beside": "#EAECEE",
+    "amber_bg": "#FCF3E2", "amber_fg": "#8A5A08",
+    "red_bg": "#FBEBEB", "red_fg": "#9B2C2C", "red_edge": "#D14343",
+    "ok_fg": "#2E6B34", "ok_bg": "#EAF2EA", "accent": "#2B6CB0",
+    "info_bg": "#E6EDF7", "info_fg": "#1B3A5C",
+    "grey_fg": "#555B60",
+    # A tag carrying a fact rather than a warning -- an equipment number, a
+    # ticket count. Quiet on purpose: there are several per card and they are
+    # reference, not news.
+    "chip_bg": "#EEEFF1",
+    # Text on an accent-filled button, and the wash under a hovered bubble.
+    "on_accent": "#FFFFFF", "hover_bg": "#D6E4F5",
+    "neutral": ("#9AA0A6", "#EEEFF1", "#3C4043"),
+    "queue": {
+        "PROD": ("#EF9F27", "#FAEEDA", "#633806"),
+        "OPS":  ("#97C459", "#EAF3DE", "#27500A"),
+        "ENG":  ("#6F9BD1", "#E6EDF7", "#1B3A5C"),
+        "CS":   ("#B08BD4", "#F0E9F7", "#3D2154"),
+    },
+    # A wash behind each band's cards. Unassigned is the one neutral in the
+    # ramp on purpose: it is not a priority, it is the absence of one, and
+    # wearing a near-critical red said the opposite of that across the room.
+    "band_tint": {
+        "unassigned": "#E8EBEF", "critical": "#F6E4E4", "high": "#FBF1DF",
+        "medium": "#EAF1FA", "low": "#EFF1F2",
+    },
+    # The card, a shade deeper than its wash -- except unassigned, which is
+    # the plain surface, the other way about. A blank card reads as one
+    # nobody has picked up, and it leaves red to mean one thing on this
+    # board: a card that needs a person. Those keep their outline over it.
+    "band_card": {
+        "unassigned": ("#FFFFFF", "#C6CCD3"), "critical": ("#F7DCDC", "#D14343"),
+        "high": ("#FCEBD1", "#E0A03C"), "medium": ("#E3EDF9", "#7FA8D8"),
+        "low": ("#EDEFF1", "#C2C7CC"),
+    },
+    # Heading ink, one per band, the dark end of the colour it is washed in.
+    "band_text": {
+        "unassigned": "#57616B", "critical": "#9B2C2C", "high": "#8A5A08",
+        "medium": "#2B6CB0", "low": "#555B60",
+    },
 }
 
-# Heading ink, one per band, each the dark end of the colour that band is
-# washed in.
-GREY_FG = "#555B60"
-BAND_TEXT = dict.fromkeys(BANDS, ACCENT)
-BAND_TEXT["unassigned"] = "#57616B"      # slate: the dark end of its own wash
-BAND_TEXT["critical"] = RED_FG
-BAND_TEXT["high"] = AMBER_FG
-BAND_TEXT["low"] = GREY_FG
+# The neutral ramp is lifted from the PortalBear prototype, which had already
+# been tuned against a real screen. The hues stay Bert's own, lifted until
+# they read on a dark ground: a fill chosen to sit under black text is not a
+# fill any more once the text on it is pale, it is a smudge. So the fills go
+# deep and the inks come up, which is the opposite move to the light palette
+# and the reason this could never have been a filter over the other one.
+DARK = {
+    "ink": "#E6E9EC", "muted": "#98A2AD", "line": "#333B45",
+    "surface": "#1B2027", "canvas": "#14181D",
+    "beside": "#222831",
+    "amber_bg": "#2E2718", "amber_fg": "#EFC15E",
+    "red_bg": "#301D1C", "red_fg": "#F5AAA2", "red_edge": "#E08078",
+    "ok_fg": "#A8DC8B", "ok_bg": "#1E2A1C", "accent": "#7FA9DA",
+    "info_bg": "#232E3B", "info_fg": "#A3C8F0",
+    "grey_fg": "#A8B2BD",
+    # The light one is a near-white, which on this ground stopped being quiet
+    # and became the brightest thing on the card.
+    "chip_bg": "#262D36",
+    "on_accent": "#12202E", "hover_bg": "#2A3A4E",
+    "neutral": ("#6E7883", "#262D36", "#B6C0CB"),
+    "queue": {
+        "PROD": ("#EF9F27", "#33291A", "#EFC15E"),
+        "OPS":  ("#97C459", "#232E1D", "#A8DC8B"),
+        "ENG":  ("#6F9BD1", "#212B38", "#A3C8F0"),
+        "CS":   ("#B08BD4", "#2A2334", "#D3BCE8"),
+    },
+    "band_tint": {
+        "unassigned": "#232A32", "critical": "#2E1E1D", "high": "#2C2318",
+        "medium": "#1F2833", "low": "#212730",
+    },
+    "band_card": {
+        "unassigned": ("#1B2027", "#3E4753"), "critical": ("#3A2422", "#E08078"),
+        "high": ("#382C18", "#D9A441"), "medium": ("#24303E", "#5A82B0"),
+        "low": ("#262D36", "#3E4753"),
+    },
+    "band_text": {
+        "unassigned": "#9AA6B3", "critical": "#F5AAA2", "high": "#EFC15E",
+        "medium": "#A3C8F0", "low": "#A8B2BD",
+    },
+}
+
+# What Settings offers. "system" is read from the desktop when it is applied
+# and again whenever the desktop says it has changed, so a machine that
+# darkens at sunset takes the board with it. An explicit light or dark is a
+# decision and the desktop does not overrule it.
+THEMES = ("system", "light", "dark")
+THEME_LABEL = {"system": "Follow the desktop", "light": "Light", "dark": "Dark"}
+
+
+class Theme:
+    """The active palette, reached by name.
+
+    Attribute access rather than a dict lookup, so the call sites read the way
+    the constants they replaced did -- T.INK, not COLOURS["ink"] -- and so a
+    colour a palette is missing is an AttributeError the first time the board
+    draws rather than a KeyError somewhere down a later repaint.
+    """
+
+    _p = LIGHT
+
+    def __init__(self):
+        self.name = "light"
+
+    def use(self, name: str) -> None:
+        self.name = "dark" if name == "dark" else "light"
+        self._p = DARK if self.name == "dark" else LIGHT
+
+    @property
+    def dark(self) -> bool:
+        return self.name == "dark"
+
+    def __getattr__(self, key):
+        # _p resolves off the class, so this never recurses looking for it.
+        try:
+            return self._p[key.lower()]
+        except KeyError:
+            raise AttributeError(key) from None
+
+
+T = Theme()
+
+# PySide keeps no reference of its own to a top-level window. One built inside
+# a method and left to a local goes when that method returns, taking the
+# window with it -- so every Bert window that is meant to stay on screen is
+# held here.
+_OPEN = []
+
+
+def dark_titlebar(win, on=None) -> bool:
+    """Ask Windows to draw this window's title bar dark.
+
+    The strip with the minimise and close buttons is drawn by the desktop, not
+    by Qt, so no stylesheet and no QPalette reaches it -- a dark board under a
+    bright white frame. DWM will darken it on request, which is the same
+    switch every native app uses.
+
+    Windows only, and quietly nothing anywhere else. The attribute was 19
+    before Windows 10 build 18985 and 20 after, and asking with the wrong one
+    is a returned error rather than a raise, so both are offered.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        flag = ctypes.c_int(1 if (T.dark if on is None else on) else 0)
+        for attr in (20, 19):
+            ok = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                ctypes.c_void_p(int(win.winId())), ctypes.c_int(attr),
+                ctypes.byref(flag), ctypes.sizeof(flag))
+            if ok == 0:
+                return True
+    except Exception:
+        pass          # a nicety; never worth failing to open a window over
+    return False
+
+
+def desktop_is_dark() -> bool:
+    """What the desktop is set to, when Qt is willing to say.
+
+    colorScheme() landed in Qt 6.5; on anything older there is no answer to
+    give and light is the safer guess, since that is what every stylesheet
+    here was written against.
+    """
+    hints = QApplication.styleHints() if QApplication.instance() else None
+    scheme = getattr(hints, "colorScheme", None)
+    if scheme is None:
+        return False
+    try:
+        return scheme() == Qt.ColorScheme.Dark
+    except (AttributeError, TypeError):
+        return False
+
+
+def resolve_theme(choice: str) -> str:
+    """A stored setting to the palette to actually load."""
+    if choice in ("light", "dark"):
+        return choice
+    return "dark" if desktop_is_dark() else "light"
+
+
+def apply_theme(choice: str) -> None:
+    """Load a palette and hand Qt a matching one for what it draws itself.
+
+    The stylesheets below cover Bert's own widgets. Everything Qt renders on
+    its own -- menus, tooltips, scrollbars, the popup list on a combo box,
+    every QMessageBox -- reads QPalette instead, and would otherwise stay
+    bright white in the middle of a dark board.
+    """
+    T.use(resolve_theme(choice))
+    app = QApplication.instance()
+    if app is None:
+        return
+
+    pal = QPalette()
+    ink, surface, canvas = QColor(T.INK), QColor(T.SURFACE), QColor(T.CANVAS)
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText,
+                 QPalette.ToolTipText):
+        pal.setColor(role, ink)
+    pal.setColor(QPalette.Window, canvas)
+    pal.setColor(QPalette.Base, surface)
+    pal.setColor(QPalette.AlternateBase, QColor(T.BESIDE))
+    pal.setColor(QPalette.ToolTipBase, surface)
+    pal.setColor(QPalette.Button, QColor(T.BESIDE))
+    pal.setColor(QPalette.Highlight, QColor(T.ACCENT))
+    pal.setColor(QPalette.HighlightedText, QColor(T.ON_ACCENT))
+    pal.setColor(QPalette.PlaceholderText, QColor(T.MUTED))
+    pal.setColor(QPalette.Disabled, QPalette.Text, QColor(T.MUTED))
+    pal.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(T.MUTED))
+    app.setPalette(pal)
 
 # Issues that mean the thread itself couldn't be read properly.
 BLOCKING = {"title_none", "title_unparseable", "title_prefix_only",
@@ -162,11 +345,11 @@ def card_skin(data, editing=False):
     to say it separately -- which is how they came to fill it red in two
     places at once.
     """
-    tint, edge = BAND_CARD.get(data.get("priority") or "", BAND_CARD["low"])
+    tint, edge = T.BAND_CARD.get(data.get("priority") or "", T.BAND_CARD["low"])
     if needs_triage(data):
-        return tint, RED_EDGE, 2
+        return tint, T.RED_EDGE, 2
     if editing:
-        return tint, ACCENT, 1
+        return tint, T.ACCENT, 1
     return tint, edge, 1
 
 
@@ -208,9 +391,11 @@ def rgba(hex_colour, alpha):
     return f"rgba({r},{g},{b},{alpha})"
 
 
-# Text Fields
-FIELD = (f"background:{SURFACE}; border:1px solid {rgba(INK, 0.28)};"
-         f" border-radius:3px; padding:4px 6px; color:{INK};")
+def field() -> str:
+    """Type into these. A function, not a constant: a constant would be built
+    once at import, in whichever palette happened to be loaded first."""
+    return (f"background:{T.SURFACE}; border:1px solid {rgba(T.INK, 0.28)};"
+            f" border-radius:3px; padding:4px 6px; color:{T.INK};")
 
 
 def show_value(v):
@@ -268,6 +453,7 @@ class ConflictDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Someone else changed this card")
         self.setMinimumWidth(520)
+        dark_titlebar(self)
         self.choice = None
 
         lay = QVBoxLayout(self)
@@ -280,7 +466,7 @@ class ConflictDialog(QDialog):
         when = detail.get("at")
         if when:
             sub = QLabel(moments_ago(when))
-            sub.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+            sub.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
             lay.addWidget(sub)
 
         grid = QFormLayout()
@@ -288,9 +474,9 @@ class ConflictDialog(QDialog):
         for ch in detail.get("changes", []):
             box = QVBoxLayout()
             theirs = QLabel(f"Theirs:  {show_value(ch.get('theirs'))}")
-            theirs.setStyleSheet(f"color:{AMBER_FG}; font-size:12px;")
+            theirs.setStyleSheet(f"color:{T.AMBER_FG}; font-size:12px;")
             mine = QLabel(f"Mine:    {show_value(ch.get('mine'))}")
-            mine.setStyleSheet(f"color:{ACCENT}; font-size:12px;")
+            mine.setStyleSheet(f"color:{T.ACCENT}; font-size:12px;")
             box.addWidget(theirs)
             box.addWidget(mine)
             holder = QWidget()
@@ -301,7 +487,7 @@ class ConflictDialog(QDialog):
         note = QLabel("Overwriting replaces their value with yours. Keeping "
                       "theirs discards what you typed.")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        note.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
         lay.addWidget(note)
 
         row = QHBoxLayout()
@@ -310,7 +496,7 @@ class ConflictDialog(QDialog):
         keep.clicked.connect(lambda: self._pick("keep"))
         row.addWidget(keep)
         over = QPushButton("Overwrite with mine")
-        over.setStyleSheet(f"background:{ACCENT}; color:white; border:none;"
+        over.setStyleSheet(f"background:{T.ACCENT}; color:{T.ON_ACCENT}; border:none;"
                            f" padding:5px 14px;")
         over.clicked.connect(lambda: self._pick("overwrite"))
         row.addWidget(over)
@@ -335,16 +521,26 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(360)
+        dark_titlebar(self)
         self.who = QLineEdit(current.get("name") or
                              f"{current.get('first_name', '')} "
                              f"{current.get('last_name', '')}".strip())
         self.who.setPlaceholderText("First Last")
+        self.theme = Combo()
+        for key in THEMES:
+            self.theme.addItem(THEME_LABEL[key], key)
+        stored = current.get("theme", "system")
+        self.theme.setCurrentIndex(
+            THEMES.index(stored) if stored in THEMES else 0)
         form = QFormLayout()
         form.addRow("Your name", self.who)
+        form.addRow("Theme", self.theme)
         note = QLabel("Your name is added to thread updates so the team can see "
-                      "who made each change. Changes are blocked until it's set.")
+                      "who made each change. Changes are blocked until it's "
+                      "set. Following the desktop tracks it as it changes, so "
+                      "a machine that darkens at sunset takes Bert with it.")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        note.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
         bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
@@ -354,7 +550,8 @@ class SettingsDialog(QDialog):
         lay.addWidget(bb)
 
     def values(self):
-        return {"name": self.who.text().strip()}
+        return {"name": self.who.text().strip(),
+                "theme": self.theme.currentData()}
 
 
 class Api:
@@ -482,12 +679,18 @@ def tick_icon(colour, side=12):
     return QIcon(pm)
 
 
-def spin_icon(angle, colour=INK, side=14):
-    """The refresh glyph, turned.
+def spin_icon(angle, colour=None, side=14):
+    """The refresh arrow, at one point in its turn.
 
-    Painted for the same reason the tick is: a rotation happens to a pixmap,
-    and a QPushButton will not turn its own text. The character is still the
-    shape, so it stays the glyph everyone already knows.
+    Drawn rather than typed, and for a sharper reason than the tick was: a
+    rotated character is a glyph under a transform, and a font engine that
+    will not draw one draws nothing at all -- no glyph, no error, just a
+    button with no icon on it. An arc has no such opinion, and the turn
+    becomes where the arc starts rather than a transform over the painter.
+
+    Colour is resolved on the call, never in the signature: a default
+    argument is evaluated when this file is imported, which is before any
+    theme has been chosen.
     """
     scale = 2                       # drawn at 2x so it stays sharp when scaled
     n = side * scale
@@ -495,15 +698,34 @@ def spin_icon(angle, colour=INK, side=14):
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setRenderHint(QPainter.TextAntialiasing)
-    f = p.font()
-    f.setPixelSize(int(n * 0.84))
-    p.setFont(f)
-    p.setPen(QColor(colour))
-    p.translate(n / 2, n / 2)
-    p.rotate(angle)
-    p.translate(-n / 2, -n / 2)
-    p.drawText(QRect(0, 0, n, n), Qt.AlignCenter, REFRESH_GLYPH)
+    ink = QColor(colour or T.INK)
+    stroke = 1.8 * scale
+    pen = QPen(ink, stroke)
+    pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
+
+    # Inset by the stroke and the head, so neither is clipped at the edge.
+    m = n * 0.19
+    box = QRectF(m, m, n - 2 * m, n - 2 * m)
+    # Qt counts sixteenths of a degree, anticlockwise from 3 o'clock. Sweeping
+    # negative draws it clockwise, which is the way the glyph's arrow pointed.
+    sweep = -260
+    p.drawArc(box, int(-angle * 16), sweep * 16)
+
+    # The head sits at the open end, pointing along the tangent there.
+    cx, cy, r = n / 2, n / 2, (n - 2 * m) / 2
+    theta = math.radians(-angle + sweep)
+    px, py = cx + r * math.cos(theta), cy - r * math.sin(theta)
+    tx, ty = math.sin(theta), math.cos(theta)       # tangent, clockwise
+    nx, ny = math.cos(theta), -math.sin(theta)      # outward normal
+    h, w = n * 0.17, n * 0.13
+    p.setPen(Qt.NoPen)
+    p.setBrush(ink)
+    p.drawPolygon(QPolygonF([
+        QPointF(px + tx * h, py + ty * h),
+        QPointF(px - tx * h * 0.3 + nx * w, py - ty * h * 0.3 + ny * w),
+        QPointF(px - tx * h * 0.3 - nx * w, py - ty * h * 0.3 - ny * w),
+    ]))
     p.end()
     pm.setDevicePixelRatio(scale)
     return QIcon(pm)
@@ -638,15 +860,15 @@ class Bubble(QFrame):
         # White, not a tint: the card underneath is now its queue's colour, and
         # a pale blue bubble all but disappeared on a blue ENG card.
         self.setStyleSheet(
-            f"#bubble {{ background:{SURFACE};"
-            f" border:1px solid {rgba(INK, 0.16)}; border-radius:11px; }}")
+            f"#bubble {{ background:{T.SURFACE};"
+            f" border:1px solid {rgba(T.INK, 0.16)}; border-radius:11px; }}")
 
         h = QHBoxLayout(self)
         h.setContentsMargins(10, 2, 3, 2)
         h.setSpacing(4)
 
         lab = QLabel(body)
-        lab.setStyleSheet(f"color:{INK}; font-size:11px;"
+        lab.setStyleSheet(f"color:{T.INK}; font-size:11px;"
                           f" background:transparent; border:none;")
         h.addWidget(lab)
 
@@ -656,12 +878,12 @@ class Bubble(QFrame):
         self.btn.setFixedSize(22, 22)
         self.btn.setCursor(Qt.PointingHandCursor)
         self.btn.setToolTip("Remove this item" if editing else "Mark this done")
-        hover, ink = (RED_BG, RED_FG) if editing else ("#D6E4F5", OK_FG)
+        hover, ink = (T.RED_BG, T.RED_FG) if editing else (T.HOVER_BG, T.OK_FG)
         self.btn.setStyleSheet(
             f"QPushButton {{ border:none; border-radius:11px; font-size:11px;"
-            f" background:transparent; color:{MUTED}; }}"
+            f" background:transparent; color:{T.MUTED}; }}"
             f"QPushButton:hover {{ background:{hover}; color:{ink}; }}"
-            f"QPushButton:disabled {{ color:{LINE}; background:transparent; }}")
+            f"QPushButton:disabled {{ color:{T.LINE}; background:transparent; }}")
         self.btn.clicked.connect(lambda: self.acted.emit(self.key))
         h.addWidget(self.btn)
 
@@ -721,13 +943,13 @@ class WorkBar(QWidget):
             # A darker frame than the fields above it, and a prompt in the
             # ordinary muted text colour rather than Qt's near-invisible grey:
             self.entry.setStyleSheet(
-                f"QLineEdit {{ background:{SURFACE}; border-radius:3px;"
+                f"QLineEdit {{ background:{T.SURFACE}; border-radius:3px;"
                 f" padding:4px 6px; font-size:11px;"
-                f" border:1px solid {rgba(INK, 0.38)}; }}"
-                f"QLineEdit:hover {{ border:1px solid {ACCENT}; }}"
-                f"QLineEdit:focus {{ border:1px solid {ACCENT}; }}")
+                f" border:1px solid {rgba(T.INK, 0.38)}; }}"
+                f"QLineEdit:hover {{ border:1px solid {T.ACCENT}; }}"
+                f"QLineEdit:focus {{ border:1px solid {T.ACCENT}; }}")
             pal = self.entry.palette()
-            pal.setColor(QPalette.PlaceholderText, QColor(MUTED))
+            pal.setColor(QPalette.PlaceholderText, QColor(T.MUTED))
             self.entry.setPalette(pal)
             self.entry.setCursor(Qt.IBeamCursor)
             self.entry.returnPressed.connect(self.commit_typed)
@@ -814,7 +1036,7 @@ class QueueBox(QCheckBox):
 
     def __init__(self, queue):
         super().__init__(queue)
-        self.stripe, self.tint, self.ink = QUEUE.get(queue, NEUTRAL)
+        self.stripe, self.tint, self.ink = T.QUEUE.get(queue, T.NEUTRAL)
         self.setCursor(Qt.PointingHandCursor)
         f = QFont()
         f.setPointSize(9)
@@ -836,8 +1058,8 @@ class QueueBox(QCheckBox):
         on = self.isChecked()
 
         box = QRect(2, (self.height() - self.SIDE) // 2, self.SIDE, self.SIDE)
-        p.setPen(QPen(QColor(self.ink if on else LINE), 1))
-        p.setBrush(QColor(self.tint) if on else QColor(SURFACE))
+        p.setPen(QPen(QColor(self.ink if on else T.LINE), 1))
+        p.setBrush(QColor(self.tint) if on else QColor(T.SURFACE))
         p.drawRoundedRect(box, 3, 3)
 
         if on:
@@ -852,7 +1074,7 @@ class QueueBox(QCheckBox):
                             QPoint(x + int(w * 0.43), y + int(h * 0.71)),
                             QPoint(x + int(w * 0.77), y + int(h * 0.29))])
 
-        p.setPen(QColor(self.ink if on else MUTED))
+        p.setPen(QColor(self.ink if on else T.MUTED))
         p.setFont(self.font())
         p.drawText(QRect(box.right() + 7, 0,
                          self.width() - box.right() - 7, self.height()),
@@ -879,11 +1101,11 @@ class Card(QFrame):
     def _paint(self):
         """Colour the card by how urgent it is, and stripe it by whose it is.
         """
-        stripe = QUEUE.get(self.data.get("queue") or "", NEUTRAL)[0]
+        stripe = T.QUEUE.get(self.data.get("queue") or "", T.NEUTRAL)[0]
         fill, edge, px = card_skin(self.data, self.editing)
         # The left edge carries the queue, unless something louder has taken
         # the card over: triage first, then an open editor.
-        left = RED_EDGE if self.problem else ACCENT if self.editing else stripe
+        left = T.RED_EDGE if self.problem else T.ACCENT if self.editing else stripe
         self.setStyleSheet(
             f"Card {{ background:{fill}; border:{px}px solid {edge};"
             f" border-left:{4 if self.problem else 3}px solid {left}; }}")
@@ -912,7 +1134,7 @@ class Card(QFrame):
 
     def _build_view(self):
         d = self.data
-        cbg, cfg = QUEUE.get(d.get("queue") or "", NEUTRAL)[1:]
+        cbg, cfg = T.QUEUE.get(d.get("queue") or "", T.NEUTRAL)[1:]
 
         head = QHBoxLayout()
         head.setSpacing(8)
@@ -924,37 +1146,37 @@ class Card(QFrame):
         f.setPointSize(11)
         f.setWeight(QFont.DemiBold)
         client.setFont(f)
-        client.setStyleSheet(f"color:{RED_FG if self.problem else INK};"
+        client.setStyleSheet(f"color:{T.RED_FG if self.problem else T.INK};"
                              f" background:transparent;")
         client.setToolTip("Double-click to edit")
         client.doubleClicked.connect(self.enter_edit)
         head.addWidget(client)
         if d.get("client_override"):
-            head.addWidget(chip("edited", "#EEEFF1", MUTED))
+            head.addWidget(chip("edited", T.CHIP_BG, T.MUTED))
         head.addStretch()
 
         if d.get("ticket_count"):
-            head.addWidget(chip(f"{d['ticket_count']} tickets", "#EEEFF1", MUTED))
+            head.addWidget(chip(f"{d['ticket_count']} tickets", T.CHIP_BG, T.MUTED))
         ago = QLabel(self._ago(d.get("last_human_at")))
-        ago.setStyleSheet(f"color:{MUTED}; font-size:11px; background:transparent;")
+        ago.setStyleSheet(f"color:{T.MUTED}; font-size:11px; background:transparent;")
         head.addWidget(ago)
         self.body.addLayout(head)
 
         if self.problem:
             self.body.addWidget(warning_row(
                 "Couldn't read this thread's title \u2014 check the client and "
-                "details, then edit to fix.", RED_FG))
+                "details, then edit to fix.", T.RED_FG))
 
         if d.get("equipment"):
             row = QHBoxLayout()
             row.setSpacing(5)
             for e in d["equipment"][:6]:
                 if e["state"] == "resolved":
-                    row.addWidget(chip(e["raw"], "#F2F3F4", MUTED))
+                    row.addWidget(chip(e["raw"], T.CHIP_BG, T.MUTED))
                 elif e["state"] == "pending":
-                    row.addWidget(chip(e["raw"], AMBER_BG, AMBER_FG, dashed=True))
+                    row.addWidget(chip(e["raw"], T.AMBER_BG, T.AMBER_FG, dashed=True))
                 else:
-                    row.addWidget(chip(e["raw"], RED_BG, RED_FG))
+                    row.addWidget(chip(e["raw"], T.RED_BG, T.RED_FG))
             row.addStretch()
             self.body.addLayout(row)
 
@@ -968,7 +1190,7 @@ class Card(QFrame):
             # this is about rather than leaving a hole in the card.
             work = ClickableLabel(d.get("summary") or d.get("name") or "")
             work.setWordWrap(True)
-            work.setStyleSheet(f"color:{MUTED}; font-size:12px;"
+            work.setStyleSheet(f"color:{T.MUTED}; font-size:12px;"
                                f" background:transparent;")
             work.setToolTip("Double-click to edit")
             work.doubleClicked.connect(self.enter_edit)
@@ -979,7 +1201,7 @@ class Card(QFrame):
         foot.addStretch()
         for issue in (d.get("issues") or [])[:2]:
             if issue not in BLOCKING:
-                foot.addWidget(chip(issue.replace("_", " "), AMBER_BG, AMBER_FG))
+                foot.addWidget(chip(issue.replace("_", " "), T.AMBER_BG, T.AMBER_FG))
 
         self.edit_btn = QPushButton("Edit")
         self.edit_btn.setStyleSheet(BTN_HIT)
@@ -990,7 +1212,7 @@ class Card(QFrame):
         self.done_btn = QPushButton("Complete ")
         self.done_btn.setLayoutDirection(Qt.RightToLeft)
         self.done_btn.setStyleSheet(BTN_HIT)
-        self.done_btn.setIcon(tick_icon(OK_FG))
+        self.done_btn.setIcon(tick_icon(T.OK_FG))
         self.done_btn.setIconSize(QSize(12, 12))
         self.done_btn.clicked.connect(lambda: self.board.complete(self.thread_id))
         foot.addWidget(self.done_btn)
@@ -1024,11 +1246,11 @@ class Card(QFrame):
         form.setSpacing(6)
 
         self.f_client = QLineEdit(d.get("client_override") or d.get("client_raw") or "")
-        self.f_client.setStyleSheet(FIELD)
+        self.f_client.setStyleSheet(field())
         self.f_work = WorkBar(d.get("work_items") or [], editing=True)
 
         self.f_title = QLineEdit(d.get("name") or "")
-        self.f_title.setStyleSheet(FIELD)
+        self.f_title.setStyleSheet(field())
         self.title_state = QLabel()
         self.title_state.setWordWrap(True)
         # Room under the caution sign the two unparseable branches put in
@@ -1074,7 +1296,7 @@ class Card(QFrame):
         note = QLabel("Saving posts one update to the thread, however many "
                       "fields you change. Changing the title renames the "
                       "Discord thread.")
-        note.setStyleSheet(f"color:{MUTED}; font-size:11px;"
+        note.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                            f" background:transparent;")
         self.body.addWidget(note)
 
@@ -1085,7 +1307,7 @@ class Card(QFrame):
         cancel.clicked.connect(self.exit_edit)
         row.addWidget(cancel)
         save = QPushButton("Save")
-        save.setStyleSheet(BTN_HIT + f"background:{ACCENT}; color:white;"
+        save.setStyleSheet(BTN_HIT + f"background:{T.ACCENT}; color:{T.ON_ACCENT};"
                                      f" border:none;")
         save.clicked.connect(self.save)
         row.addWidget(save)
@@ -1141,18 +1363,18 @@ class Card(QFrame):
                 self.f_queue.blockSignals(False)
         if t.confidence in ("strict", "loose"):
             self.title_state.setText(
-                f"<span style='color:{OK_FG}'>✓</span> "
-                f"<span style='color:{MUTED}'>{t.queue} &middot; {t.client_raw} "
+                f"<span style='color:{T.OK_FG}'>✓</span> "
+                f"<span style='color:{T.MUTED}'>{t.queue} &middot; {t.client_raw} "
                 f"&middot; {title_stamp(t.date)} &middot; {t.summary or ''}</span>")
         elif t.confidence == "prefix_only":
             self.title_state.setText(
-                f"<span style='color:{AMBER_FG}'>⚠ no date Ernie can read</span> "
-                f"<span style='color:{MUTED}'>&mdash; tag {t.queue} is fine, "
+                f"<span style='color:{T.AMBER_FG}'>⚠ no date Ernie can read</span> "
+                f"<span style='color:{T.MUTED}'>&mdash; tag {t.queue} is fine, "
                 f"the rest won't parse</span>")
         else:
             self.title_state.setText(
-                f"<span style='color:{RED_FG}'>⚠ doesn't match</span> "
-                f"<span style='color:{MUTED}'>TAG: Client - 25Aug26 - "
+                f"<span style='color:{T.RED_FG}'>⚠ doesn't match</span> "
+                f"<span style='color:{T.MUTED}'>TAG: Client - 25Aug26 - "
                 f"what it's about</span>")
 
     def warn_changed(self, msg):
@@ -1163,8 +1385,8 @@ class Card(QFrame):
             self._warn_label = QWidget()
             self._warn_label.setObjectName("editWarn")
             self._warn_label.setStyleSheet(
-                f"#editWarn {{ background:{AMBER_BG}; padding:6px;"
-                f" border:1px solid {AMBER_FG}44; }}")
+                f"#editWarn {{ background:{T.AMBER_BG}; padding:6px;"
+                f" border:1px solid {T.AMBER_FG}44; }}")
             lay = QVBoxLayout(self._warn_label)
             lay.setContentsMargins(6, 5, 6, 5)
             self.body.insertWidget(0, self._warn_label)
@@ -1173,7 +1395,7 @@ class Card(QFrame):
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
-        self._warn_label.layout().addWidget(warning_row(msg, AMBER_FG))
+        self._warn_label.layout().addWidget(warning_row(msg, T.AMBER_FG))
         self._warn_label.show()
 
     def exit_edit(self):
@@ -1265,8 +1487,8 @@ class Band(QWidget):
         self.setAcceptDrops(True)
         self.setMaximumWidth(BOARD_MAX)
 
-        tint = BAND_TINT[priority]
-        accent = BAND_TEXT[priority]
+        tint = T.BAND_TINT[priority]
+        accent = T.BAND_TEXT[priority]
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1501,7 +1723,7 @@ class RailRow(QFrame):
         self.thread_id = data["thread_id"]
         self._press = None
 
-        stripe = QUEUE.get(data.get("queue") or "", NEUTRAL)[0]
+        stripe = T.QUEUE.get(data.get("queue") or "", T.NEUTRAL)[0]
         fill, edge, px = card_skin(data)
         # A triage row gives its whole outline over to the red rather than
         # keeping a queue stripe, which at 26px tall is most of its edge.
@@ -1521,7 +1743,7 @@ class RailRow(QFrame):
         f.setPointSize(9)
         f.setWeight(QFont.DemiBold)
         name.setFont(f)
-        name.setStyleSheet(f"color:{INK}; background:transparent;")
+        name.setStyleSheet(f"color:{T.INK}; background:transparent;")
         lay.addWidget(name)
 
         # The band in words, and the untruncated name, one hover away.
@@ -1583,8 +1805,8 @@ class RailZone(QWidget):
         self._paint(False)
 
     def _paint(self, hot):
-        tint, edge = BAND_CARD[self.priority]
-        ink = BAND_TEXT[self.priority]
+        tint, edge = T.BAND_CARD[self.priority]
+        ink = T.BAND_TEXT[self.priority]
         self.box.setStyleSheet(
             f"background:{tint if hot else 'transparent'}; color:{ink};"
             f" font-size:10px; border:2px dashed {edge if hot else rgba(ink, 0.4)};"
@@ -1608,7 +1830,7 @@ class Rail(QWidget):
         self._spacer = None
         self.setAcceptDrops(True)
         self.setFixedWidth(RAIL_WIDTH)
-        self.setStyleSheet(f"background:{CANVAS};")
+        self.setStyleSheet(f"background:{T.CANVAS};")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 4, 8)
@@ -1621,16 +1843,16 @@ class Rail(QWidget):
         f.setPointSize(10)
         f.setWeight(QFont.DemiBold)
         self.head.setFont(f)
-        self.head.setStyleSheet(f"color:{INK}; background:transparent;")
+        self.head.setStyleSheet(f"color:{T.INK}; background:transparent;")
 
         self.fold_btn = QPushButton("\u00ab")
         self.fold_btn.setFixedSize(24, 24)
         self.fold_btn.setCursor(Qt.PointingHandCursor)
         self.fold_btn.setToolTip("Hide the running order")
         self.fold_btn.setStyleSheet(
-            f"QPushButton {{ border:1px solid {LINE}; border-radius:3px;"
-            f" background:{SURFACE}; color:{MUTED}; font-size:11px; }}"
-            f"QPushButton:hover {{ background:#EAF1FA; color:{ACCENT}; }}")
+            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:3px;"
+            f" background:{T.SURFACE}; color:{T.MUTED}; font-size:11px; }}"
+            f"QPushButton:hover {{ background:#EAF1FA; color:{T.ACCENT}; }}")
         self.fold_btn.clicked.connect(self.toggle_fold)
 
         top = QHBoxLayout()
@@ -1656,13 +1878,13 @@ class Rail(QWidget):
 
         self.hint = QLabel("Drag to reorder, click to jump")
         self.hint.setWordWrap(True)
-        self.hint.setStyleSheet(f"color:{MUTED}; font-size:10px;"
+        self.hint.setStyleSheet(f"color:{T.MUTED}; font-size:10px;"
                                 f" background:transparent;")
         outer.addWidget(self.hint)
 
         self.marker = QFrame(inner)
         self.marker.setFixedHeight(3)
-        self.marker.setStyleSheet(f"background:{ACCENT};")
+        self.marker.setStyleSheet(f"background:{T.ACCENT};")
         self.marker.hide()
 
     def toggle_fold(self):
@@ -1721,7 +1943,7 @@ class Rail(QWidget):
                 line = QFrame()
                 line.setFixedHeight(2)
                 line.setStyleSheet(
-                    f"background:{rgba(BAND_TEXT[band], 0.55)}; border:none;")
+                    f"background:{rgba(T.BAND_TEXT[band], 0.55)}; border:none;")
                 self.lay.addWidget(line)
             first = False
             for c in group:
@@ -1873,11 +2095,19 @@ class Bert(QMainWindow):
         self.sharing = None         # its sharing block, or None if solo
         self.health_at = 0.0        # when that payload arrived, so both ages
                                     # off it go on counting between polls
+        dark_titlebar(self)
+        # Following the desktop has to mean following it, not reading it once
+        # at startup: a laptop that darkens at sunset would otherwise leave
+        # Bert the only bright window on the screen until it was restarted.
+        hints = QApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self.desktop_theme_changed)
+        self._swapping_theme = False   # closing to reopen, not to quit
         self.awaiting = False       # a manual refresh, waiting on the next
         self.await_run = None       # read of Discord. await_run is the read it
         self.await_since = 0.0      # started from, to tell a new one landing
                                     # from the same one ageing
-        self.filters = {q: True for q in QUEUE}
+        self.filters = {q: True for q in T.QUEUE}
         self.cards = []
         self.feed = []
         self.completing = set()     # closed here, still drawn on the board
@@ -1886,7 +2116,7 @@ class Bert(QMainWindow):
         if LOGO.exists():
             self.setWindowIcon(QIcon(str(LOGO)))
         self.resize(1000, 840)
-        self.setStyleSheet(f"QMainWindow {{ background:{CANVAS}; }}")
+        self.setStyleSheet(f"QMainWindow {{ background:{T.CANVAS}; }}")
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -1904,7 +2134,7 @@ class Bert(QMainWindow):
         self.toast = QLabel()
         self.toast.setAlignment(Qt.AlignCenter)
         self.toast.setStyleSheet(
-            f"background:{INFO_BG}; color:{INFO_FG}; padding:7px; font-size:12px;")
+            f"background:{T.INFO_BG}; color:{T.INFO_FG}; padding:7px; font-size:12px;")
         self.toast.hide()
         outer.addWidget(self.toast)
         self.toast_timer = QTimer(self)
@@ -1922,7 +2152,7 @@ class Bert(QMainWindow):
         vp = self.scroll.viewport()
         vp.setAutoFillBackground(True)
         pal = vp.palette()
-        pal.setColor(QPalette.Window, QColor(BESIDE))
+        pal.setColor(QPalette.Window, QColor(T.BESIDE))
         vp.setPalette(pal)
         # Widget smaller than the viewport: pin it left, don't centre it.
         self.scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -1930,8 +2160,8 @@ class Bert(QMainWindow):
         board = QWidget()
         board.setObjectName("boardColumn")
         # The column keeps the canvas colour and stops where the bands stop
-        board.setStyleSheet(f"#boardColumn {{ background:{CANVAS};"
-                            f" border-right:1px solid {LINE}; }}")
+        board.setStyleSheet(f"#boardColumn {{ background:{T.CANVAS};"
+                            f" border-right:1px solid {T.LINE}; }}")
         self.board_lay = QVBoxLayout(board)
         self.board_lay.setContentsMargins(BOARD_PAD, 10, BOARD_PAD, 24)
         self.board_lay.setSpacing(16)
@@ -1976,7 +2206,7 @@ class Bert(QMainWindow):
 
     def _toolbar(self):
         bar = QWidget()
-        bar.setStyleSheet(f"background:{SURFACE}; border-bottom:1px solid {LINE};")
+        bar.setStyleSheet(f"background:{T.SURFACE}; border-bottom:1px solid {T.LINE};")
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(16, 10, 16, 10)
         lay.setSpacing(10)
@@ -2000,11 +2230,11 @@ class Bert(QMainWindow):
         f.setPointSize(14)
         f.setWeight(QFont.DemiBold)
         title.setFont(f)
-        title.setStyleSheet(f"color:{INK}; background:transparent;")
+        title.setStyleSheet(f"color:{T.INK}; background:transparent;")
         lay.addWidget(title)
 
         self.count = QLabel("")
-        self.count.setStyleSheet(f"color:{MUTED}; font-size:12px;")
+        self.count.setStyleSheet(f"color:{T.MUTED}; font-size:12px;")
         lay.addWidget(self.count)
         lay.addSpacing(10)
 
@@ -2014,7 +2244,7 @@ class Bert(QMainWindow):
         self.search.textChanged.connect(self.render)
         lay.addWidget(self.search)
 
-        for q in QUEUE:
+        for q in T.QUEUE:
             cb = QueueBox(q)
             cb.setChecked(True)
             cb.stateChanged.connect(
@@ -2024,14 +2254,14 @@ class Bert(QMainWindow):
         lay.addStretch()
 
         self.fresh = QLabel("")
-        self.fresh.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        self.fresh.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
         lay.addWidget(self.fresh)
 
         # Second freshness, and a different question. self.fresh says how long
         # since Ernie last read Discord; this says how long since Ernie and the
         # other person's board agreed. On a solo setup it stays hidden.
         self.shared = QLabel("")
-        self.shared.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        self.shared.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
         self.shared.hide()
         lay.addSpacing(10)
         lay.addWidget(self.shared)
@@ -2056,8 +2286,8 @@ class Bert(QMainWindow):
         w.setObjectName("feedPanel")
         # Scoped, so the caption and the rows don't each paint their own block
         # of it the way a bare selector would.
-        w.setStyleSheet(f"#feedPanel {{ background:{SURFACE};"
-                        f" border-top:1px solid {LINE}; }}")
+        w.setStyleSheet(f"#feedPanel {{ background:{T.SURFACE};"
+                        f" border-top:1px solid {T.LINE}; }}")
         w.setFixedHeight(FEED_HEIGHT)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(16, 6, 16, 8)
@@ -2072,10 +2302,10 @@ class Bert(QMainWindow):
         hh.setContentsMargins(0, 0, 0, 0)
         hh.setSpacing(6)
         self.feed_caret = QLabel("\u25be")
-        self.feed_caret.setStyleSheet(f"color:{MUTED}; font-size:11px;"
+        self.feed_caret.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                                       f" background:transparent;")
         lab = QLabel("Recent activity")
-        lab.setStyleSheet(f"color:{MUTED}; font-size:11px;"
+        lab.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                           f" background:transparent;")
         hh.addWidget(self.feed_caret)
         hh.addWidget(lab)
@@ -2183,6 +2413,7 @@ class Bert(QMainWindow):
         return bool(self.name()) and self.connected
 
     def open_settings(self):
+        was = self.settings.get("theme", "system")
         dlg = SettingsDialog(self, self.settings)
         if dlg.exec() == QDialog.Accepted:
             self.settings.update(dlg.values())
@@ -2190,7 +2421,51 @@ class Bert(QMainWindow):
             self.settings.pop("first_name", None)
             self.settings.pop("last_name", None)
             SETTINGS.write_text(json.dumps(self.settings, indent=2))
+            if self.settings.get("theme", "system") != was:
+                self.rebuild_in_new_theme()
+                return
             self.render()
+
+    def desktop_theme_changed(self, *_):
+        """The desktop flipped. Only this board's business if it was following.
+
+        An explicit light or dark is a decision, and the desktop does not get
+        to overrule it -- that is the whole difference between the two.
+        """
+        if self.settings.get("theme", "system") != "system":
+            return
+        if T.name == resolve_theme("system"):
+            return                  # already showing what the desktop asks for
+        self.rebuild_in_new_theme()
+
+    def rebuild_in_new_theme(self):
+        """Build the window again in the other palette.
+
+        Every stylesheet here is written where its widget is made, which is
+        what keeps each one next to the thing it explains -- and the price is
+        that there is no one sheet to swap. Restyling in place would mean
+        finding all seventy-six of them again and being sure none was missed,
+        and a single miss is a white panel in a dark board. Building the
+        window once more cannot miss any. It costs the scroll position and one
+        poll, on a setting nobody changes twice in a day.
+        """
+        apply_theme(self.settings.get("theme", "system"))
+        fresh = Bert(self.api.base)
+        _OPEN.append(fresh)
+        fresh.search.setText(self.search.text())     # a typed search survives
+        fresh.setGeometry(self.geometry())
+        fresh.showMaximized() if self.isMaximized() else fresh.show()
+
+        # Shown before the old one closes, so the last-window-closed quit
+        # never fires; and the timers stopped by hand, because a closed window
+        # is not a deleted one and its poll would go on running behind this.
+        self._swapping_theme = True
+        for t in (self.timer, self.clock, self.spin_timer, self.edge_timer):
+            t.stop()
+        self.close()
+        if self in _OPEN:
+            _OPEN.remove(self)
+        self.deleteLater()
 
     # -- polling -----------------------------------------------------------
 
@@ -2354,13 +2629,13 @@ class Bert(QMainWindow):
         if down < BLOCKED_S:
             self.banner.setText("Reconnecting to Ernie\u2026")
             self.banner.setStyleSheet(
-                f"background:{AMBER_BG}; color:{AMBER_FG}; padding:7px; font-size:12px;")
+                f"background:{T.AMBER_BG}; color:{T.AMBER_FG}; padding:7px; font-size:12px;")
         else:
             self.connected = False
             self.banner.setText("Can't reach Ernie. Showing the last known board "
                                 "\u2014 changes are paused until it's back.")
             self.banner.setStyleSheet(
-                f"background:{RED_BG}; color:{RED_FG}; padding:7px; font-size:12px;")
+                f"background:{T.RED_BG}; color:{T.RED_FG}; padding:7px; font-size:12px;")
             self.render()
 
     def notify(self, text):
@@ -2386,7 +2661,9 @@ class Bert(QMainWindow):
         """
         q = self.health.get("queued") or {}
         n = q.get("count") or 0
-        if not n or not self.connected:
+        # A theme swap closes this window and opens another one. Nothing is
+        # being shut down, so there is nothing to warn about.
+        if self._swapping_theme or not n or not self.connected:
             return super().closeEvent(ev)
 
         due = ""
@@ -2433,7 +2710,7 @@ class Bert(QMainWindow):
             # publish is what created these rows. Until a pull has actually
             # read the channel there is no contact to report, and saying the
             # boards match here is how this indicator used to lie.
-            text, colour = "shared board · no contact yet", AMBER_FG
+            text, colour = "shared board · no contact yet", T.AMBER_FG
             tip = ("This board has published to the shared copy in "
                    "#ernie-state but hasn't read it back yet, so changes made "
                    "on the other machine aren't showing. It clears on the "
@@ -2443,18 +2720,18 @@ class Bert(QMainWindow):
             # Long enough that the sync loop is probably not running -- the
             # board on screen may be missing whatever they have done since.
             text = f"shared board · no contact for {ago(agreed)}"
-            colour = AMBER_FG
+            colour = T.AMBER_FG
             tip = ("Ernie hasn't compared this board against the shared copy "
                    "in #ernie-state recently, so anything done on the other "
                    "machine won't be showing. Check their stack is running.")
         elif waiting:
             text = f"shared board · {waiting} to send"
-            colour = AMBER_FG
+            colour = T.AMBER_FG
             tip = (f"{waiting} change(s) made here that the shared copy in "
                    "#ernie-state hasn't been told about yet. They go out on "
                    "the next cycle.")
         else:
-            text, colour = "shared board · up to date", MUTED
+            text, colour = "shared board · up to date", T.MUTED
             tip = ("This board matches the shared copy in #ernie-state, which "
                    "is what a second machine reads and writes -- so anyone "
                    "else running Bert is seeing what you see. Last compared "
@@ -2513,7 +2790,7 @@ class Bert(QMainWindow):
     def _say_fresh(self, text, amber, tip):
         self.fresh.setText(text)
         self.fresh.setStyleSheet(
-            f"color:{AMBER_FG if amber else MUTED}; font-size:11px;")
+            f"color:{T.AMBER_FG if amber else T.MUTED}; font-size:11px;")
         self.fresh.setToolTip(tip)
 
     # -- writes ------------------------------------------------------------
@@ -2820,7 +3097,7 @@ class Bert(QMainWindow):
         # did anything with -- the board itself says how much there is.
         problems = sum(1 for c in shown if needs_triage(c))
         self.count.setText(
-            f"<span style='color:{RED_FG}'>{problems} need attention</span>"
+            f"<span style='color:{T.RED_FG}'>{problems} need attention</span>"
             if problems else "")
 
         # Straight down the order the server sent. Unassigned used to float its
@@ -2847,7 +3124,7 @@ class Bert(QMainWindow):
 
         if not self.name():
             self.who.setText("Set your name to make changes")
-            self.who.setStyleSheet(f"color:{AMBER_FG}; font-size:12px;")
+            self.who.setStyleSheet(f"color:{T.AMBER_FG}; font-size:12px;")
         else:
             # Your own name told you nothing you didn't know. It only earns
             # toolbar space when it's missing, which blocks every write.
@@ -2879,11 +3156,11 @@ class Bert(QMainWindow):
 
             when = QLabel(self._clock(e["occurred_at"]))
             when.setFixedWidth(60)
-            when.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+            when.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
             h.addWidget(when)
 
             txt = QLabel(self._feed_text(e))
-            txt.setStyleSheet(f"color:{INK}; font-size:12px;")
+            txt.setStyleSheet(f"color:{T.INK}; font-size:12px;")
             h.addWidget(txt)
             h.addStretch()
 
@@ -2918,10 +3195,10 @@ class Bert(QMainWindow):
                 b.setCursor(Qt.PointingHandCursor)
                 b.setStyleSheet(
                     f"QPushButton {{ {BTN_HIT}"
-                    f" border:1px solid {ACCENT}; border-radius:3px;"
-                    f" color:{ACCENT}; background:{SURFACE}; }}"
+                    f" border:1px solid {T.ACCENT}; border-radius:3px;"
+                    f" color:{T.ACCENT}; background:{T.SURFACE}; }}"
                     f"QPushButton:hover {{ background:#EAF1FA; }}"
-                    f"QPushButton:disabled {{ color:{MUTED}; border-color:{LINE}; }}")
+                    f"QPushButton:disabled {{ color:{T.MUTED}; border-color:{T.LINE}; }}")
                 b.setEnabled(self.writable())
                 b.clicked.connect(lambda _, i=e["event_id"]: self.undo(i))
                 uc.addWidget(b)
@@ -2941,13 +3218,13 @@ class Bert(QMainWindow):
         Where a change has got to, as (text, background, foreground).
         """
         if revoking:
-            return ("attempting to revoke…", AMBER_BG, AMBER_FG)
+            return ("attempting to revoke…", T.AMBER_BG, T.AMBER_FG)
         if e.get("undone_at"):
-            return ("undone", "#EEEFF1", MUTED)
+            return ("undone", T.CHIP_BG, T.MUTED)
         if e.get("posted_at"):
-            return ("in the thread", OK_BG, OK_FG)
+            return ("in the thread", T.OK_BG, T.OK_FG)
         if e.get("claimed_at"):
-            return ("posting…", AMBER_BG, AMBER_FG)
+            return ("posting…", T.AMBER_BG, T.AMBER_FG)
         if e.get("dispatch_after"):
             try:
                 due = datetime.fromisoformat(e["dispatch_after"])
@@ -2955,7 +3232,7 @@ class Bert(QMainWindow):
             except (ValueError, TypeError):
                 return None
             return ((f"sending in {left}s" if left > 0 else "sending…"),
-                    INFO_BG, INFO_FG)
+                    T.INFO_BG, T.INFO_FG)
         return None
 
     @staticmethod
@@ -2964,18 +3241,18 @@ class Bert(QMainWindow):
         """
         who = e.get("actor_name") or "Ernie"
         what = (e.get("thread_name") or "")[:46]
-        thread = f"<span style='color:{MUTED}'>{what}</span>"
+        thread = f"<span style='color:{T.MUTED}'>{what}</span>"
 
         old, new = e.get("old_value"), e.get("new_value")
         if e["verb"] == "priority_changed" and old in BANDS and new in BANDS:
             def band(b):
-                return (f"<b style='color:{BAND_TEXT[b]}'>"
+                return (f"<b style='color:{T.BAND_TEXT[b]}'>"
                         f"{BAND_LABEL[b]}</b>")
             # A middot before the bands: thread names end in a date, and
             # "5June26 High" ran together into one thing to read.
             return (f"<b>{who}</b> moved {thread}"
-                    f"<span style='color:{LINE}'> &middot; </span>"
-                    f"{band(old)} <span style='color:{MUTED}'>&#8594;</span> "
+                    f"<span style='color:{T.LINE}'> &middot; </span>"
+                    f"{band(old)} <span style='color:{T.MUTED}'>&#8594;</span> "
                     f"{band(new)}")
 
         if e["verb"] == "work_done" and (new or "").strip():
@@ -2984,7 +3261,7 @@ class Bert(QMainWindow):
             if len(item) > 44:
                 item = item[:43].rstrip() + "…"
             return (f"<b>{who}</b> finished {thread}"
-                    f"<span style='color:{LINE}'> &middot; </span>"
+                    f"<span style='color:{T.LINE}'> &middot; </span>"
                     f"<b>{item}</b>")
 
         if e["verb"] == "undo_correction":
@@ -3012,11 +3289,12 @@ def main():
     ap.add_argument("--api", default="http://127.0.0.1:8787")
     a = ap.parse_args()
     app = QApplication(sys.argv)
+    # Fusion draws the same way on every desktop, which is what makes one
+    # QPalette enough to carry the dark theme through Qt's own widgets.
     app.setStyle("Fusion")
-    pal = app.palette()
-    pal.setColor(QPalette.Window, QColor(CANVAS))
-    app.setPalette(pal)
+    apply_theme(load_settings().get("theme", "system"))
     w = Bert(a.api)
+    _OPEN.append(w)
     w.show()
     sys.exit(app.exec())
 

@@ -272,3 +272,14 @@ Environment: Windows, Git Bash (MINGW64), Python 3.13, SQLite in WAL mode.
 Match what's there: standard library first, `httpx` for HTTP, dataclasses for
 records, plain functions over classes unless state demands it. Comments
 explain *why*, not *what*. No new dependencies without a reason.
+
+**No colour literals in Bert.** Every colour comes off `T`, the active
+palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
+both `LIGHT` and `DARK`. A hex typed into a stylesheet works in one theme and
+is wrong in the other, silently, in whichever theme nobody happened to be
+looking at. Settings offers light, dark, or following the desktop; changing it
+rebuilds the window, because each widget styles itself where it is made and
+there is no single sheet to swap -- and a stylesheet missed on a restyle is a
+white panel in a dark board. `tests/check_palette.py` holds the two palettes
+to the same keys, which is the invariant that keeps a theme from crashing only
+for the person using the other one.

@@ -143,6 +143,10 @@ Do this before anything else. Every change is recorded against a person, that
 name goes into the Discord thread, and it's what the other person sees in
 their activity feed. Until it's set, Bert won't let you change anything.
 
+The same dialog has **Theme** — light, dark, or following the desktop, which
+tracks it as it changes. Saving a different one reopens the window; nothing is
+lost but your place on the board.
+
 ## What you'll see
 
 Top right, next to the refresh button, is the shared-board indicator:
