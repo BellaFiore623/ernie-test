@@ -27,13 +27,34 @@ import ernie_api as api
 
 class FakeButton:
     def __init__(self):
-        self.enabled = True
+        self.down = False
+        self.text = bert.REFRESH_GLYPH
 
-    def setEnabled(self, v):
-        self.enabled = v
+    def setDown(self, v):
+        self.down = v
+
+    def setText(self, t):
+        self.text = t
+
+    def setIcon(self, i):
+        pass
 
     def setToolTip(self, t):
         pass
+
+
+class FakeTimer:
+    """The spin timer. Whether it runs is the testable part; the painting
+    needs a QApplication and is left to the running app."""
+
+    def __init__(self):
+        self.running = False
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
 
 
 class Running:
@@ -55,6 +76,8 @@ class FakeBert:
         self.await_run = None
         self.await_since = 0.0
         self.refresh_btn = FakeButton()
+        self.spin_timer = FakeTimer()
+        self.spin_angle = 0
         self.poller = Running()
         self.dragging = False
         self.said = None
@@ -68,6 +91,7 @@ class FakeBert:
     _tick_freshness = bert.Bert._tick_freshness
     _check_awaited = bert.Bert._check_awaited
     _stop_awaiting = bert.Bert._stop_awaiting
+    _show_busy = bert.Bert._show_busy
     refresh = bert.Bert.refresh
 
 
@@ -131,9 +155,16 @@ def check_refresh_waits_for_a_read() -> bool:
     b = FakeBert(since=42, synced_at="run-1")
     b.refresh(manual=True)
     c.ok(b.awaiting, "the press is registered")
-    c.ok(not b.refresh_btn.enabled, "the button shows it is busy")
-    c.equal(said(b), "refreshing…", "and says so")
+    c.ok(b.refresh_btn.down, "the button is held down, so it looks darker")
+    c.ok(b.spin_timer.running, "and the glyph is turning")
+    c.equal(b.refresh_btn.text, "", "the still glyph is out of the way")
+    c.equal(said(b), "refreshing…", "and the label says so")
     c.ok("42s old" in b.said[2], "the tooltip keeps the age to hand")
+
+    # A second press must not restart the wait it is already serving.
+    was = b.await_since
+    b.refresh(manual=True)
+    c.equal(b.await_since, was, "pressing again while waiting changes nothing")
 
     # Ernie answering again is not the thing being waited for -- the same read
     # of Discord, however freshly fetched, puts the same number back.
@@ -147,7 +178,9 @@ def check_refresh_waits_for_a_read() -> bool:
     b.health_at = time.time()
     c.equal(said(b), "synced just now", "a new read ends the wait")
     c.ok(not b.awaiting, "and the wait is over")
-    c.ok(b.refresh_btn.enabled, "the button comes back")
+    c.ok(not b.refresh_btn.down, "the button comes back up")
+    c.ok(not b.spin_timer.running, "the glyph stops turning")
+    c.equal(b.refresh_btn.text, bert.REFRESH_GLYPH, "and is the glyph again")
 
     return c.report()
 
@@ -163,13 +196,15 @@ def check_refresh_gives_up() -> bool:
 
     c.equal(said(b), "synced 5m ago", "it falls back to the real age")
     c.ok(amber(b), "which by now is amber, and more use than a spinner")
-    c.ok(b.refresh_btn.enabled, "the button comes back")
+    c.ok(not b.refresh_btn.down, "the button comes back up")
+    c.ok(not b.spin_timer.running, "and stops turning")
 
     # An automatic poll never starts a wait.
     auto = FakeBert(since=10)
     auto.refresh()
     c.ok(not auto.awaiting, "an automatic poll stays silent")
-    c.ok(auto.refresh_btn.enabled, "and leaves the button alone")
+    c.ok(not auto.refresh_btn.down, "and leaves the button alone")
+    c.ok(not auto.spin_timer.running, "with nothing turning")
 
     return c.report()
 

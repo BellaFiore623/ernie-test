@@ -48,6 +48,10 @@ SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
 MIRROR_STALE_S = 180   # the same three cycles, asked of Ernie's own reading:
                        # past this the sync loop has stopped and the board is
                        # older than it looks
+REFRESH_GLYPH = "\u21bb"
+SPIN_MS = 33           # the glyph turns while a manual refresh waits, so the
+SPIN_STEP = 11         # wait reads from across the room and not only in the
+                       # wording beside it. A full turn in about a second.
 AWAIT_GIVEUP_S = 90    # a manual refresh waits for the next read of Discord,
                        # which is the only thing that moves the number. Past a
                        # cycle and a half the sync loop isn't running, and the
@@ -449,6 +453,33 @@ def tick_icon(colour, side=12):
     p.drawPolyline([QPoint(int(n * 0.18), int(n * 0.52)),
                     QPoint(int(n * 0.42), int(n * 0.76)),
                     QPoint(int(n * 0.84), int(n * 0.24))])
+    p.end()
+    pm.setDevicePixelRatio(scale)
+    return QIcon(pm)
+
+
+def spin_icon(angle, colour=INK, side=14):
+    """The refresh glyph, turned.
+
+    Painted for the same reason the tick is: a rotation happens to a pixmap,
+    and a QPushButton will not turn its own text. The character is still the
+    shape, so it stays the glyph everyone already knows.
+    """
+    scale = 2                       # drawn at 2x so it stays sharp when scaled
+    n = side * scale
+    pm = QPixmap(n, n)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.TextAntialiasing)
+    f = p.font()
+    f.setPixelSize(int(n * 0.84))
+    p.setFont(f)
+    p.setPen(QColor(colour))
+    p.translate(n / 2, n / 2)
+    p.rotate(angle)
+    p.translate(-n / 2, -n / 2)
+    p.drawText(QRect(0, 0, n, n), Qt.AlignCenter, REFRESH_GLYPH)
     p.end()
     pm.setDevicePixelRatio(scale)
     return QIcon(pm)
@@ -1922,6 +1953,11 @@ class Bert(QMainWindow):
         self.clock = QTimer(self)
         self.clock.timeout.connect(self._tick_freshness)
         self.clock.start(1000)
+        # Turns the refresh glyph, and only while a manual refresh is waiting.
+        self.spin_angle = 0
+        self.spin_timer = QTimer(self)
+        self.spin_timer.setInterval(SPIN_MS)
+        self.spin_timer.timeout.connect(self._spin)
 
         QTimer.singleShot(0, self.refresh)
         if not self.name():
@@ -1989,7 +2025,7 @@ class Bert(QMainWindow):
         lay.addSpacing(10)
         lay.addWidget(self.shared)
 
-        self.refresh_btn = chrome_button("\u21bb", "Refresh")
+        self.refresh_btn = chrome_button(REFRESH_GLYPH, "Refresh")
         # Through a lambda: clicked passes its checked flag as the first
         # argument, which would arrive as manual=False and undo the point.
         self.refresh_btn.clicked.connect(lambda: self.refresh(manual=True))
@@ -2151,6 +2187,8 @@ class Bert(QMainWindow):
         if self.dragging:
             return                      # never yank the board out from under a drag
         if manual:
+            if self.awaiting:
+                return              # already waiting on the next read
             # The button cannot make a sync happen -- ernie_sync runs its own
             # cycle in its own process, and this only re-asks Ernie, which Bert
             # does every POLL_MS anyway. So the press waits for the next read
@@ -2159,7 +2197,7 @@ class Bert(QMainWindow):
             self.awaiting = True
             self.await_run = self.health.get("synced_at")
             self.await_since = time.time()
-            self.refresh_btn.setEnabled(False)
+            self._show_busy(True)
             self._tick_freshness()
         # One poll at a time. A manual press during an automatic one still gets
         # its answer: that poll is already on its way back.
@@ -2186,7 +2224,28 @@ class Bert(QMainWindow):
 
     def _stop_awaiting(self):
         self.awaiting = False
-        self.refresh_btn.setEnabled(True)
+        self._show_busy(False)
+
+    def _show_busy(self, busy):
+        """The button, while it waits on a read of Discord.
+
+        Held down for the darker fill Qt already draws for a press -- its own
+        rendering, so it matches whatever the desktop does -- and the glyph
+        swapped for a turning one. It stays enabled: a second press is ignored
+        above rather than by greying out the only thing saying anything.
+        """
+        self.refresh_btn.setDown(busy)
+        if busy:
+            self.refresh_btn.setText("")
+            self.spin_timer.start()
+        else:
+            self.spin_timer.stop()
+            self.refresh_btn.setIcon(QIcon())
+            self.refresh_btn.setText(REFRESH_GLYPH)
+
+    def _spin(self):
+        self.spin_angle = (self.spin_angle + SPIN_STEP) % 360
+        self.refresh_btn.setIcon(spin_icon(self.spin_angle))
 
     def on_loaded(self, p):
         self.fail_since = None
@@ -2361,26 +2420,34 @@ class Bert(QMainWindow):
         if agreed is None:
             # Publishing proves nothing about the other direction, and the
             # publish is what created these rows. Until a pull has actually
-            # read the channel there is no contact to report, and saying
-            # "in step" here is how this indicator used to lie.
-            text, colour = "shared · no contact yet", AMBER_FG
-            tip = ("This board hasn't reconciled with the channel yet, so "
-                   "their changes aren't showing. It clears on the next sync "
-                   "cycle -- if it doesn't, the sync loop isn't running.")
+            # read the channel there is no contact to report, and saying the
+            # boards match here is how this indicator used to lie.
+            text, colour = "shared board · no contact yet", AMBER_FG
+            tip = ("This board has published to the shared copy in "
+                   "#ernie-state but hasn't read it back yet, so changes made "
+                   "on the other machine aren't showing. It clears on the "
+                   "next sync cycle -- if it doesn't, the sync loop isn't "
+                   "running.")
         elif agreed > SHARED_STALE_S:
             # Long enough that the sync loop is probably not running -- the
             # board on screen may be missing whatever they have done since.
-            text, colour = f"shared · no contact for {ago(agreed)}", AMBER_FG
-            tip = ("Ernie hasn't agreed with the other board recently. Their "
-                   "changes won't be showing. Check their stack is running.")
-        elif waiting:
-            text = f"shared · {waiting} not sent yet"
+            text = f"shared board · no contact for {ago(agreed)}"
             colour = AMBER_FG
-            tip = ("Changes made here that the other board hasn't been told "
-                   "about yet. They go out on the next cycle.")
+            tip = ("Ernie hasn't compared this board against the shared copy "
+                   "in #ernie-state recently, so anything done on the other "
+                   "machine won't be showing. Check their stack is running.")
+        elif waiting:
+            text = f"shared board · {waiting} to send"
+            colour = AMBER_FG
+            tip = (f"{waiting} change(s) made here that the shared copy in "
+                   "#ernie-state hasn't been told about yet. They go out on "
+                   "the next cycle.")
         else:
-            text, colour = "shared · in step", MUTED
-            tip = f"Agreed with the other board {ago(agreed)} ago."
+            text, colour = "shared board · up to date", MUTED
+            tip = ("This board matches the shared copy in #ernie-state, which "
+                   "is what a second machine reads and writes -- so anyone "
+                   "else running Bert is seeing what you see. Last compared "
+                   f"{ago(agreed)} ago.")
 
         self.shared.setText(text)
         self.shared.setStyleSheet(f"color:{colour}; font-size:11px;")

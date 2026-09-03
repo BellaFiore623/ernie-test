@@ -147,12 +147,16 @@ their activity feed. Until it's set, Bert won't let you change anything.
 
 Top right, next to the refresh button, is the shared-board indicator:
 
-- **`shared · in step`** — your board and theirs agree.
-- **`shared · 2 not sent yet`** — you've changed something they haven't been
+- **`shared board · up to date`** — your board and theirs agree.
+- **`shared board · 2 to send`** — you've changed something they haven't been
   told about. It goes out on the next cycle. Normal for up to a minute.
-- **`shared · no contact for 5m`** — nothing has been exchanged in a while.
-  Usually their stack isn't running, or yours has stopped. Check the terminal
-  you started it in.
+- **`shared board · no contact for 5m`** — nothing has been exchanged in a
+  while. Usually their stack isn't running, or yours has stopped. Check the
+  terminal you started it in.
+
+Hover any of them for the longer version. The "shared board" is one message
+per card in the `#ernie-state` channel: it is the copy both machines read and
+write, and it is what makes two Berts one board rather than two.
 
 If the indicator isn't there at all, `STATE_CHANNEL_ID` isn't set — you have
 a private board and nothing you do will reach them.
@@ -195,7 +199,7 @@ than fighting it.
 terminal you started it in. Nothing you do is lost — Bert reconnects on its
 own.
 
-**`shared · no contact` that doesn't clear.** Their stack is down, or your
+**`shared board · no contact` that doesn't clear.** Their stack is down, or your
 sync has died. Check with them, then check your own terminal.
 
 **Nothing you do reaches them.** Run the check, which looks for exactly

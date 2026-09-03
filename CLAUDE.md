@@ -244,9 +244,11 @@ than `SKEW_WARN_S`. Clock skew is read from the `Date` header of a live
 response -- an existing message's timestamp says when it was written, not
 what time it is, so measuring against one reports its age as skew.
 
-Bert shows which it is: the `shared · …` indicator by the refresh button
-appears only when `state_sync` has rows, and reports in step, waiting to
-send, or out of contact.
+Bert shows which it is: the `shared board · …` indicator by the refresh
+button appears only when `state_sync` has rows, and reports up to date,
+waiting to send, or out of contact. It says "shared board" rather than just
+"shared" because the label has to answer *what* it is talking about on its
+own -- read cold, `shared · in step` told nobody what was in step with what.
 
 The API has no authentication, so on `lan` anyone who can reach the port can
 move cards and post to the thread. Trusted network, for as long as the test
