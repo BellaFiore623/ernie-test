@@ -1626,10 +1626,15 @@ class Band(QWidget):
         h.addStretch(1)
         outer.addWidget(self.header)
 
-        # -- the tinted container the cards sit in ----------------------------
+        # -- the container the cards sit in -----------------------------------
+        # Untinted. The band's colour belongs on its header, which is the thing
+        # that names the band; washing the whole run of cards in it as well put
+        # a second colour behind every ticket, so a PROD card in Medium was
+        # amber on blue and a PROD card in High was amber on amber. The tickets
+        # carry the colour now, and this is what they sit on.
         self.panel = QWidget()
         self.panel.setObjectName("bandPanel")
-        self.panel.setStyleSheet(f"#bandPanel {{ background:{tint}; }}")
+        self.panel.setStyleSheet("#bandPanel { background:transparent; }")
         self.lay = QVBoxLayout(self.panel)
         self.lay.setContentsMargins(8, 8, 8, 8)
         self.lay.setSpacing(8)

@@ -407,6 +407,14 @@ free to mean one thing again -- it used to be shared with critical, and two
 red bands at the top of a board is an emergency that isn't one. Triage stays a
 2px outline over whatever fill the card has.
 
+**The band's colour is on its header only.** `BAND_TINT` fills `#bandHeader`
+and nothing else; the panel the cards sit in is transparent. Tinting both put
+a second colour behind every ticket, which stopped working the moment tickets
+took their tag's colour -- a PROD card read as amber on blue in Medium and
+amber on amber in High. `tests/check_palette.py` reads this off the source
+rather than building a `Band`: a widget built with no QApplication does not
+raise, it aborts the process, and the checks deliberately never make one.
+
 **No colour literals in Bert.** Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 both `LIGHT` and `DARK`. A hex typed into a stylesheet works in one theme and

@@ -461,9 +461,44 @@ def check_the_queues_the_board_can_draw() -> bool:
     return c.report()
 
 
+def check_only_the_header_is_tinted() -> bool:
+    """
+    The band's colour names the band; it does not wash the tickets.
+
+    Both the header and the panel the cards sit in were filled with
+    BAND_TINT, so every ticket had a second colour behind it -- and once
+    tickets took their tag's colour that meant a PROD card read as amber on
+    blue in Medium and amber on amber in High. The header keeps it, because
+    the header is the thing that says which band this is.
+
+    Read off the source: building a Band needs a QApplication, and the checks
+    deliberately never make one -- it does not raise, it aborts the process.
+    """
+    c = Check("only the band header carries the band's colour")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    head = next((l for l in src.splitlines() if "#bandHeader {{" in l), "")
+    panel = next((l for l in src.splitlines() if "#bandPanel {" in l), "")
+
+    c.ok(head, "the header still styles itself")
+    c.ok("{tint}" in head, "and is filled with the band's tint")
+
+    c.ok(panel, "the panel still styles itself")
+    c.ok("{tint}" not in panel and "tint" not in panel,
+         "but not with the tint -- the tickets carry the colour now")
+    c.ok("transparent" in panel, "it lets the board through instead")
+
+    # And the tint is not reaching the cards by some other route.
+    uses = [l.strip() for l in src.splitlines() if "T.BAND_TINT" in l]
+    c.equal(len(uses), 1, f"BAND_TINT is read in one place only ({uses})")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
           check_triage_is_outlined_not_filled,
           check_the_other_skins, check_choosing_a_theme,
-          check_the_queues_the_board_can_draw)
+          check_the_queues_the_board_can_draw,
+          check_only_the_header_is_tinted)
