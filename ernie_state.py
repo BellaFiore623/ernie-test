@@ -663,7 +663,18 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
                   old=row["priority"], new=p["priority"], at=at)
     elif row["rank"] != p["rank"]:
         changed.append(f"reordered in {p['priority']}")
-        log_event(con, thread_id=tid, verb="reordered", actor=actor, at=at)
+        # The same two positions the board that made the move recorded, worked
+        # out against this machine's copy of the band. Ranks are fractions and
+        # say nothing to a reader on their own.
+        others = [r[0] for r in con.execute(
+            """SELECT rank FROM cards
+               WHERE priority=? AND thread_id<>? AND completed_at IS NULL""",
+            (p["priority"], tid))]
+        was = sum(1 for r in others if r < row["rank"]) + 1
+        now = sum(1 for r in others if r < p["rank"]) + 1
+        if was != now:
+            log_event(con, thread_id=tid, verb="reordered", actor=actor,
+                      old=str(was), new=str(now), at=at)
     if row["priority"] != p["priority"] or row["rank"] != p["rank"]:
         con.execute("UPDATE cards SET priority=?, rank=?, updated_at=? "
                     "WHERE thread_id=?",

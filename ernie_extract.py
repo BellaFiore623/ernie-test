@@ -70,6 +70,15 @@ LOOSE = re.compile(
 PREFIX_ONLY = re.compile(rf"^{_PREFIX}(?P<rest>.+)$", re.IGNORECASE)
 
 
+def ordinal(n: int) -> str:
+    """1st, 2nd, 3rd, 4th -- and 11th, 12th, 13th, which are the ones that
+    catch a naive rule out."""
+    n = int(n)
+    if 11 <= abs(n) % 100 <= 13:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(abs(n) % 10, 'th') }"
+
+
 def parse_date(token: str) -> Optional[date]:
     """Parse the date forms actually observed in thread titles."""
     token = token.strip()

@@ -13,6 +13,7 @@ disagree.
 
 from support import Board, Check, iso
 
+import ernie_api as api
 import ernie_extract as ex
 import ernie_load as load
 import ernie_state as S
@@ -131,4 +132,99 @@ def check_one_order() -> bool:
     return c.report()
 
 
-CHECKS = (check_predicate, check_new_cards_rank, check_one_order)
+def check_a_reorder_says_where_it_went() -> bool:
+    """
+    rank is a fraction and says nothing to a reader.
+
+    "reordered PROD: ..." was the whole line, for every drag, so the feed and
+    the change log recorded that something moved and not where. The position
+    in the band is what the person was looking at when they dragged it, and it
+    is derivable at the moment of the write from the ranks it is ordered
+    against -- afterwards it is not, because the other ranks have moved on.
+    """
+    c = Check("a reorder records the places it moved between")
+
+    with Board() as b:
+        api.DB = b.path
+        ids = [b.card(f"PROD: Client {i} - 02Sep26 - item {i}", "high",
+                      1000.0 * (i + 1)) for i in range(5)]
+
+        def positions(tid):
+            row = b.con.execute(
+                "SELECT priority, rank FROM cards WHERE thread_id=?",
+                (tid,)).fetchone()
+            others = [r[0] for r in b.con.execute(
+                """SELECT rank FROM cards WHERE priority=? AND thread_id<>?
+                   AND completed_at IS NULL""", (row["priority"], tid))]
+            return sum(1 for r in others if r < row["rank"]) + 1
+
+        def last_reorder():
+            r = b.con.execute(
+                """SELECT old_value, new_value FROM events WHERE verb='reordered'
+                   ORDER BY rowid DESC LIMIT 1""").fetchone()
+            return (r["old_value"], r["new_value"]) if r else None
+
+        before = b.con.execute(
+            "SELECT COUNT(*) FROM events WHERE verb='reordered'").fetchone()[0]
+
+        # Last card to the front.
+        api.move_card(ids[4], api.MoveBody(priority="high", before_id=ids[0],
+                                      actor="Tester"))
+        c.equal(positions(ids[4]), 1, "it really is first now")
+        c.equal(last_reorder(), ("5", "1"), "and the event says 5th to 1st")
+
+        # And back down between two others.
+        api.move_card(ids[4], api.MoveBody(priority="high", after_id=ids[1],
+                                      actor="Tester"))
+        c.equal(last_reorder(), ("1", str(positions(ids[4]))),
+                "the next move starts from where the last one left it")
+
+        return_ = b.con.execute(
+            "SELECT COUNT(*) FROM events WHERE verb='reordered'").fetchone()[0]
+        c.equal(return_ - before, 2, "one event per move that moved something")
+
+    return c.report()
+
+
+def check_a_reorder_that_moves_nothing_says_nothing() -> bool:
+    """
+    A drag that lands a card back where it started is not a change.
+
+    It still writes the rank, so two boards agree about it, but four identical
+    "reordered" lines in a row for a card that never went anywhere is the feed
+    reporting the dragging rather than the outcome.
+    """
+    c = Check("a drag that changes nothing writes no line")
+
+    with Board() as b:
+        api.DB = b.path
+        ids = [b.card(f"OPS: Client {i} - 02Sep26 - item {i}", "medium",
+                      1000.0 * (i + 1)) for i in range(4)]
+
+        def reorders():
+            return b.con.execute(
+                "SELECT COUNT(*) FROM events WHERE verb='reordered'").fetchone()[0]
+
+        # Drop it straight back after the card it already follows.
+        rank_before = b.con.execute(
+            "SELECT rank FROM cards WHERE thread_id=?", (ids[2],)).fetchone()[0]
+        api.move_card(ids[2], api.MoveBody(priority="medium", after_id=ids[1],
+                                      actor="Tester"))
+        c.equal(reorders(), 0, "no line for a move that went nowhere")
+
+        rank_after = b.con.execute(
+            "SELECT rank FROM cards WHERE thread_id=?", (ids[2],)).fetchone()[0]
+        c.ok(rank_after is not None, "but the rank is still written")
+        c.ok(rank_before is not None, "and it had one before")
+
+        # A real move still speaks up.
+        api.move_card(ids[3], api.MoveBody(priority="medium", before_id=ids[0],
+                                      actor="Tester"))
+        c.equal(reorders(), 1, "a move that goes somewhere still does")
+
+    return c.report()
+
+
+CHECKS = (check_predicate, check_new_cards_rank, check_one_order,
+          check_a_reorder_says_where_it_went,
+          check_a_reorder_that_moves_nothing_says_nothing)

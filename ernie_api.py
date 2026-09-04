@@ -657,7 +657,21 @@ def move_card(thread_id: str, body: MoveBody):
             log_event(con, thread_id=thread_id, verb="priority_changed", actor=actor,
                       old=card["priority"], new=body.priority, post=loud)
         else:
-            log_event(con, thread_id=thread_id, verb="reordered", actor=actor)
+            # Where it sat, and where it now sits, counted against the cards it
+            # is ordered among -- `ranks` already leaves this card out, so
+            # both are the position it takes rather than one it shares.
+            #
+            # rank is a fraction and means nothing to a reader: "1000 -> 1500"
+            # says only that something moved. The feed and the change log want
+            # the place in the band, which is what the person was looking at.
+            was = sum(1 for r in ranks if r < card["rank"]) + 1
+            now = sum(1 for r in ranks if r < new_rank) + 1
+            # A drag that lands a card back where it started is not a change
+            # anybody needs a line about. It still writes the new rank, so the
+            # boards agree; it just doesn't announce a move that didn't happen.
+            if was != now:
+                log_event(con, thread_id=thread_id, verb="reordered",
+                          actor=actor, old=str(was), new=str(now))
 
         # Renormalise if the gap is collapsing toward float precision limits.
         if lo is not None and hi is not None and abs(hi - lo) < 0.001:

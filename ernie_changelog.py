@@ -23,6 +23,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+
+import ernie_extract as ex
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -87,6 +89,11 @@ def describe(e) -> str:
     if verb == "priority_changed":
         return f"moved {where} — {old or 'unassigned'} → {new or 'unassigned'}"
     if verb == "reordered":
+        # Older rows carry no positions; they were written before the move was
+        # recorded and there is nothing to work them out from now.
+        if (old or "").isdigit() and (new or "").isdigit():
+            return (f"reordered {where} "
+                    f"— {ex.ordinal(old)} → {ex.ordinal(new)}")
         return f"reordered {where}"
     if verb == "completed":
         return f"completed {where}"

@@ -3444,6 +3444,14 @@ class Bert(QMainWindow):
                     f"<span style='color:{T.LINE}'> &middot; </span>"
                     f"<b>{item}</b>")
 
+        if (e["verb"] == "reordered"
+                and (old or "").isdigit() and (new or "").isdigit()):
+            return (f"<b>{who}</b> reordered {thread}"
+                    f"<span style='color:{T.LINE}'> &middot; </span>"
+                    f"<b>{ex.ordinal(old)}</b> "
+                    f"<span style='color:{T.MUTED}'>&#8594;</span> "
+                    f"<b>{ex.ordinal(new)}</b>")
+
         if e["verb"] == "undo_correction":
             return f"<b>{who}</b> retracted an update to {thread}"
 

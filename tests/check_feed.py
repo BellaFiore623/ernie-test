@@ -424,6 +424,41 @@ def check_the_scale_is_capped_at_half_the_window() -> bool:
     return c.report()
 
 
+def check_reordered_says_where_it_went() -> bool:
+    """
+    The row used to be the verb and nothing else.
+
+    rank is a fraction, so it could never be shown as it stands; the positions
+    are worked out where the move happens and stored on the event, because
+    afterwards the ranks they were measured against have moved on.
+    """
+    c = Check("a reorder says where it went")
+
+    line = text(ev("reordered", "5", "2"))
+    c.ok("reordered" in line, "it still says reordered")
+    c.ok("5th" in line and "2nd" in line, "and the two places it moved between")
+    c.ok("Penn Hills" in line, "and which ticket")
+
+    # The ones a naive ordinal rule gets wrong.
+    teens = text(ev("reordered", "13", "11"))
+    c.ok("13th" in teens and "11th" in teens, "11th and 13th, not 13rd and 11st")
+    c.ok("21st" in text(ev("reordered", "22", "21")), "and 21st after them")
+
+    # Every reorder written before this existed carries nothing, and there is
+    # no way to work it out now -- the ranks it was measured against are gone.
+    old_row = text(ev("reordered", None, None))
+    c.ok("reordered" in old_row and "Penn Hills" in old_row,
+         "an older row still reads, without the places")
+    c.ok("th" not in old_row.split("Penn")[0],
+         "and invents no position it never recorded")
+
+    # Not a number is not a position.
+    c.ok("reordered" in text(ev("reordered", "somewhere", "else")),
+         "and anything that isn't a number falls back too")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -437,4 +472,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_opening_a_row_never_shortens_it,
           check_a_wide_window_shows_more,
           check_the_scale_never_shrinks_a_narrow_board,
-          check_the_scale_is_capped_at_half_the_window)
+          check_the_scale_is_capped_at_half_the_window,
+          check_reordered_says_where_it_went)

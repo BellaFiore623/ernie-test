@@ -113,6 +113,16 @@ activity feed, undo, and the outbox.
 - Priority moves are silent except in or out of `critical`, which posts. Every
   other band change, and every reorder within a band, is board housekeeping:
   posting each nudge between high and medium is noise in a customer thread.
+- A **`reordered`** event carries the card's position in its band before and
+  after, as plain numbers in `old_value` / `new_value`. Not the rank: that is a
+  fraction and "1000 -> 1500" tells a reader only that something moved. The
+  positions have to be worked out where the move happens, against the ranks it
+  is ordered among, because afterwards those ranks have moved on and it is no
+  longer derivable. Rows written before this carry nothing and are shown
+  without the places rather than being given invented ones. **A drag that lands
+  a card back where it started writes no event at all** -- the rank is still
+  saved so both boards agree, but four identical lines for a card that never
+  went anywhere is the feed reporting the dragging rather than the outcome.
 - Undo inside the window deletes nothing from Discord because nothing was
   ever sent. Undo after it posts a correction message instead.
 - Edits are **batched**: saving four fields writes one event and posts one
