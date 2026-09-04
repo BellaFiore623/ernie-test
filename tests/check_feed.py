@@ -468,6 +468,63 @@ def check_reordered_says_where_it_went() -> bool:
     return c.report()
 
 
+def check_a_narrow_window_keeps_the_controls() -> bool:
+    """
+    Undo disappeared when the window got narrower, with nothing to say why.
+
+    An unwrapped QLabel cannot be made smaller than its text, so the row's
+    minimum width was the whole line plus every fixed column -- measured at
+    1644px inside a 1000px window. The feed's horizontal scrollbar is off, so
+    everything past the edge was cut away silently, and the Undo button is the
+    last column. The text is what should give: it is a summary, and the whole
+    of it is one click away.
+    """
+    c = Check("a narrow window keeps the Undo button")
+
+    render = _method("_render_feed")
+
+    policies = [n for n in ast.walk(render)
+                if isinstance(n, ast.Call)
+                and getattr(n.func, "attr", None) == "setSizePolicy"]
+    c.equal(len(policies), 1, "one widget in the row is allowed to be squeezed")
+    c.ok(any(getattr(a, "attr", None) == "Ignored" for n in policies
+             for a in ast.walk(n)),
+         "and it is the text, told to ignore its own width")
+
+    # The chevron cannot ride along in the text: clipping the line would take
+    # away the only sign that there is more of it.
+    src = ast.dump(render)
+    c.ok("FEED_MORE_W" in src, "the chevron has a column of its own")
+    body = _bert_src()
+    c.ok("body += " not in body,
+         "and is not appended to the line it would be clipped with")
+
+    return c.report()
+
+
+def check_the_window_has_a_floor() -> bool:
+    """Below some width the board stops being usable at all -- the feed's
+    fixed columns crowd the line out and the bands are too tight to drop
+    into. It opens at that width, so it may as well not go under it."""
+    c = Check("the window will not be squeezed to nothing")
+
+    init = _method("__init__")
+    mins = [n for n in ast.walk(init)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", None) == "setMinimumWidth"]
+    c.ok(mins, "the window has a minimum width")
+
+    resizes = [n for n in ast.walk(init)
+               if isinstance(n, ast.Call)
+               and getattr(n.func, "attr", None) == "resize"]
+    c.ok(resizes, "and an opening size")
+    if mins and resizes:
+        c.equal(mins[0].args[0].value, resizes[0].args[0].value,
+                "which is the same number -- it opens at its narrowest")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -482,4 +539,6 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_a_wide_window_shows_more,
           check_the_scale_never_shrinks_a_narrow_board,
           check_the_scale_is_capped_at_half_the_window,
-          check_reordered_says_where_it_went)
+          check_reordered_says_where_it_went,
+          check_a_narrow_window_keeps_the_controls,
+          check_the_window_has_a_floor)

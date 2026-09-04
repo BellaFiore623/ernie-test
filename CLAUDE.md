@@ -142,6 +142,17 @@ activity feed, undo, and the outbox.
   everything. Which rows are open is held on the window by `event_id`, not on
   the widgets: `_render_feed` throws every row away and builds it again on each
   poll, so a row opened to read would shut again within five seconds.
+- **In a feed row the text is what gives way, never the controls.** An
+  unwrapped `QLabel` cannot be made narrower than its text, so the row's
+  minimum width was the whole line plus every fixed column -- 1644px inside a
+  1000px window, measured -- and `feed_scroll` has its horizontal scrollbar
+  off, so everything past the edge was cut away in silence. Undo is the last
+  column, so Undo is what disappeared. The label is `QSizePolicy.Ignored`
+  across, which lets it be squeezed to nothing before any control is touched,
+  and the chevron sits in its own column rather than on the end of the line it
+  would be clipped with. The window's minimum width is its opening width: below
+  that the fixed columns crowd the line out and the bands are too tight to drop
+  into.
 - **A closed feed row never word-wraps.** `_fit_feed` takes the height every
   row is held to from the closed rows' `sizeHint()`, and a wrapped `QLabel`
   reports its hint at a heuristic width of its own rather than the width the

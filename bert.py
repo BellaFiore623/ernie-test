@@ -83,6 +83,7 @@ FEED_MAX_ROWS = 8
 # setFixedHeight, which sets minimum and maximum together.
 UNCAPPED = 16777215
 FEED_TIME_W = 60           # the timestamp column
+FEED_MORE_W = 14           # the chevron, in its own column so it survives
 # What a closed row is clipped to at the narrowest. The widths at each
 # site (46 for the thread, 44 for the detail, 40 for a new name) are
 # scaled up together from here, so their proportions survive.
@@ -2155,6 +2156,9 @@ class Bert(QMainWindow):
         if LOGO.exists():
             self.setWindowIcon(QIcon(str(LOGO)))
         self.resize(1000, 840)
+        # Narrower than this and the feed's fixed columns start eating
+        # the line, and the board columns are too tight to drop into.
+        self.setMinimumWidth(1000)
         self.setStyleSheet(f"QMainWindow {{ background:{T.CANVAS}; }}")
 
         root = QWidget()
@@ -2419,9 +2423,10 @@ class Bert(QMainWindow):
         f.setPixelSize(FEED_FONT_PX)
         fm = QFontMetrics(f)
         per = max(fm.horizontalAdvance(FEED_SAMPLE) / len(FEED_SAMPLE), 1.0)
-        gaps = 3 * max(self.feed_lay.spacing(), 0)
+        gaps = 4 * max(self.feed_lay.spacing(), 0)
         room = (self.feed_scroll.viewport().width()
-                - FEED_TIME_W - FEED_STATUS_W - FEED_UNDO_W - gaps)
+                - FEED_TIME_W - FEED_MORE_W - FEED_STATUS_W
+                - FEED_UNDO_W - gaps)
         room = min(room, self.width() // 2)
         return max(1.0, room / per / FEED_BASE_CHARS)
 
@@ -3316,11 +3321,7 @@ class Bert(QMainWindow):
             when.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
             h.addWidget(when, 0, Qt.AlignTop)
 
-            body = whole if opened else short
-            if more:
-                body += (f"<span style='color:{T.MUTED}'>&nbsp;"
-                         f"{'&#9662;' if opened else '&#9656;'}</span>")
-            txt = QLabel(body)
+            txt = QLabel(whole if opened else short)
             # Wrapping only when open. A closed row is a one-line summary and
             # has to stay exactly one line tall, because _fit_feed takes the
             # height every row is held to from these -- and a wrapped QLabel
@@ -3330,12 +3331,26 @@ class Bert(QMainWindow):
             # the panel grew to fit it, and _feed_row_h only ever grows, so
             # every redraw ratcheted it further.
             txt.setWordWrap(opened)
+            # The label is what gives way when the window is narrow. Without
+            # this its minimum is the whole line -- an unwrapped QLabel cannot
+            # be smaller than its text -- so the row grew wider than the
+            # viewport and, with the horizontal scrollbar off, the fixed
+            # columns past it were simply cut away. The Undo button vanished
+            # and nothing said why.
+            txt.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             # Given the spare width rather than a stretch beside it: the label
             # used to take its one-line size hint and get cut off by whatever
             # was left over.
             txt.setStyleSheet(
                 f"color:{T.INK}; font-size:{FEED_FONT_PX}px;")
             h.addWidget(txt, 1, Qt.AlignTop)
+
+            # Its own column, so a narrow window clipping the text cannot also
+            # take away the only sign that there is more of it to read.
+            chevron = QLabel("&#9662;" if opened else "&#9656;" if more else "")
+            chevron.setFixedWidth(FEED_MORE_W)
+            chevron.setStyleSheet(f"color:{T.MUTED}; font-size:{FEED_FONT_PX}px;")
+            h.addWidget(chevron, 0, Qt.AlignTop)
 
             row.text_label = txt
             row.expanded = opened
