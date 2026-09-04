@@ -10,6 +10,9 @@ meanwhile did not appear until whichever poll happened to follow the editor
 closing. Both hold the same way now, and both draw what they held.
 """
 
+import ast
+import pathlib
+
 from support import Check
 
 import bert
@@ -162,5 +165,58 @@ def check_stale_hold_dropped() -> bool:
     return c.report()
 
 
+def _method(name):
+    """The AST of one Bert method. Reading the source beats building a window:
+    the checks deliberately never make a QApplication."""
+    tree = ast.parse(pathlib.Path(bert.__file__).read_text(encoding="utf-8"))
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+    return next(n for n in cls.body
+                if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def check_render_keeps_your_place() -> bool:
+    """
+    Ticking a work bubble off threw the view up or down the board.
+
+    render() tears every card down and builds it again whenever the data
+    changes, so the scrollbar loses its place -- the widgets it was measuring
+    against stop existing for a moment. Tick one bubble on a card halfway down
+    a fifty-ticket board and you ended up somewhere else entirely. The activity
+    feed had the same bug after an undo and fixed it the same way.
+    """
+    c = Check("render keeps your place in the list")
+
+    render = _method("render")
+    first = render.body[0]
+    c.ok(isinstance(first, ast.Expr) and isinstance(first.value, ast.Call)
+         and getattr(first.value.func, "attr", None) == "_hold_scroll",
+         "render holds the scroll before it touches anything")
+
+    hold = _method("_hold_scroll")
+    src = ast.dump(hold)
+
+    # Both lists that scroll, which is the pair _edge_scroll walks.
+    c.ok("verticalScrollBar" in src, "it reads the scrollbars")
+    for attr in ("scroll", "rail"):
+        c.ok(f"'{attr}'" in src, f"it covers self.{attr}")
+
+    # A drag owns the scrollbar; putting it back mid-drag fights _edge_scroll.
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "dragging"
+             for n in ast.walk(hold)),
+         "and leaves the scrollbars alone while a card is in the air")
+
+    # The restore has to wait for the layout, and clamp: a board that just got
+    # shorter has a smaller maximum than the value we took off it.
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "singleShot"
+             for n in ast.walk(hold)),
+         "it puts them back after the layout settles, not during")
+    c.ok(any(isinstance(n, ast.Name) and n.id == "min" for n in ast.walk(hold)),
+         "clamped to the new maximum, so a shorter board doesn't overshoot")
+
+    return c.report()
+
+
 CHECKS = (check_free_board, check_editor_holds, check_drag_still_holds,
-          check_other_hold_reparks, check_stale_hold_dropped)
+          check_other_hold_reparks, check_stale_hold_dropped,
+          check_render_keeps_your_place)

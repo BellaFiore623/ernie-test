@@ -3083,7 +3083,38 @@ class Bert(QMainWindow):
 
     # -- rendering ---------------------------------------------------------
 
+    def _hold_scroll(self):
+        """Put both lists back where they were looking after a rebuild.
+
+        render() tears every card down and builds it again whenever the data
+        changes, so the scrollbar loses its place. Ticking one work bubble off
+        a card halfway down a fifty-ticket board threw the view somewhere else
+        entirely -- the same thing the activity feed did after an undo, and
+        fixed the same way.
+
+        Bands have no scroll area of their own; the two lists that scroll are
+        the board column and the rail, which is the pair _edge_scroll walks
+        for the same reason.
+        """
+        if self.dragging:
+            # _edge_scroll owns the scrollbars while a card is in the air, and
+            # putting them back mid-drag fights it.
+            return
+        kept = [(bar, bar.value()) for bar in
+                (self.scroll.verticalScrollBar(),
+                 self.rail.scroll.verticalScrollBar())]
+
+        def put_back():
+            for bar, was in kept:
+                # A board that got shorter -- the last bubble ticked off a
+                # card, say -- has a smaller maximum than the value we took.
+                bar.setValue(min(was, bar.maximum()))
+
+        # Not yet: the layout hasn't settled, so maximum() is still the old one.
+        QTimer.singleShot(0, put_back)
+
     def render(self):
+        self._hold_scroll()
         term = self.search.text().strip().lower()
 
         def keep(c):
