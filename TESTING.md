@@ -90,9 +90,12 @@ that name is what keeps it out of git.
 
 Two lines matter more than the rest:
 
-- **`ALLOW_DISCORD_WRITES` must be exactly the same number as
-  `DISCORD_GUILD_ID`.** If it isn't, nothing you do will ever reach the other
-  person — your board will look fine and they'll never see a thing.
+- **`ALLOW_DISCORD_WRITES` is not a separate number.** Paste the same value
+  you just put in `DISCORD_GUILD_ID`, character for character. If the two
+  don't match, nothing you do will ever reach the other person — your board
+  will look fine and they'll never see a thing. Step 5 stops you first, with
+  `Writes are off. ALLOW_DISCORD_WRITES must equal <the guild id>`; that
+  message is telling you the value to paste in.
 - **`STATE_CHANNEL_ID`** is what makes the two boards one board. Without it
   you get a private board of your own.
 
