@@ -71,8 +71,8 @@ No Git? Open [the repository](https://github.com/BellaFiore623/ernie-test),
 green **Code** button, **Download ZIP**, and extract it somewhere you'll find
 again. Extract it properly — running from inside the ZIP won't work.
 
-If GitHub says the page doesn't exist, the repository is private. Ask to be
-added.
+If GitHub asks you to sign in, you don't need an account to read it — the
+repository is public. You only need one to push changes back.
 
 ## 3. Put the env file in place
 
