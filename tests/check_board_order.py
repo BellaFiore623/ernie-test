@@ -11,8 +11,11 @@ neighbours. The rank is the real one now, so there is nothing left to
 disagree.
 """
 
+import ast
+import pathlib
 from support import Board, Check, iso
 
+import bert
 import ernie_api as api
 import ernie_extract as ex
 import ernie_load as load
@@ -230,6 +233,59 @@ def check_a_reorder_that_moves_nothing_says_nothing() -> bool:
     return c.report()
 
 
+def check_the_rail_clips_to_its_width() -> bool:
+    """
+    The running order can be dragged, so its text has to follow.
+
+    Both lines were cut at a fixed number of characters -- 24 and 28 -- which
+    is a count and not a measurement, so widening the rail gave the text more
+    room and not one more letter of it. The obvious replacement, characters
+    per pixel, is a guess about a proportional font; QFontMetrics.elidedText
+    knows exactly, and cannot overflow the row it was measured for.
+    """
+    c = Check("the running order clips to the width it has")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def method(cls_name, fn):
+        cls = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.ClassDef) and n.name == cls_name)
+        return next(n for n in cls.body
+                    if isinstance(n, ast.FunctionDef) and n.name == fn)
+
+    row = method("RailRow", "__init__")
+    elides = [n for n in ast.walk(row)
+              if isinstance(n, ast.Call)
+              and getattr(n.func, "attr", None) == "elidedText"]
+    c.equal(len(elides), 2, "both lines are elided against their own font")
+    c.ok(not any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "clip"
+                 for n in ast.walk(row)),
+         "and neither is cut at a character count any more")
+
+    # The width has to be part of what a row is, or a drag would not redraw it.
+    setc = method("Rail", "set_cards")
+    c.ok(any(isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "row_width"
+             for n in ast.walk(setc)),
+         "the rail measures itself before building rows")
+    sig = next((n for n in ast.walk(setc) if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", None) == "sig" for t in n.targets)), None)
+    c.ok(sig is not None, "there is still a signature guarding the rebuild")
+    c.ok(sig is not None and any(getattr(n, "id", None) == "room"
+                                 for n in ast.walk(sig)),
+         "and the width is in it, so a drag counts as a change")
+
+    # Thirty rows rebuilt on every pixel of a drag is a stutter.
+    init = method("Bert", "__init__")
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "rail_redraw"
+             for n in ast.walk(init)),
+         "the redraw waits for the handle to settle rather than chasing it")
+
+    return c.report()
+
+
 CHECKS = (check_predicate, check_new_cards_rank, check_one_order,
           check_a_reorder_says_where_it_went,
-          check_a_reorder_that_moves_nothing_says_nothing)
+          check_a_reorder_that_moves_nothing_says_nothing,
+          check_the_rail_clips_to_its_width)

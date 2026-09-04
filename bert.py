@@ -74,6 +74,10 @@ EDGE_SCROLL_MS = 16
 RAIL_WIDTH = 208           # what it opens at, not what it stays
 RAIL_MIN_W = 120           # narrower than this and a client name is gone
 RAIL_MAX_W = 460           # wider is a second board, not a running order
+# Margins, border and the queue stripe, taken off before working out how
+# much of a line fits across the rest of a row.
+RAIL_ROW_CHROME = 26
+RAIL_REDRAW_MS = 140       # after the handle settles, not during
 BOARD_PAD = 16              
 BOARD_MAX = 800             
                            
@@ -1837,7 +1841,7 @@ class RailRow(QFrame):
     is all there is to say about it.
     """
 
-    def __init__(self, data, board):
+    def __init__(self, data, board, room=180):
         super().__init__()
         self.data = data
         self.board = board
@@ -1859,10 +1863,10 @@ class RailRow(QFrame):
 
         who = (data.get("client_override") or data.get("client_raw")
                or data.get("name") or "\u2014")
-        name = QLabel(clip(who, 24))
         f = QFont()
         f.setPointSize(9)
         f.setWeight(QFont.DemiBold)
+        name = QLabel(QFontMetrics(f).elidedText(who, Qt.ElideRight, room))
         name.setFont(f)
         name.setStyleSheet(f"color:{T.INK}; background:transparent;")
         lay.addWidget(name)
@@ -1876,9 +1880,10 @@ class RailRow(QFrame):
         named = bool(data.get("client_override") or data.get("client_raw"))
         detail = (data.get("summary") or "").strip() if named else ""
         if detail:
-            sub = QLabel(clip(detail, 28))
             sf = QFont()
             sf.setPointSize(8)
+            sub = QLabel(
+                QFontMetrics(sf).elidedText(detail, Qt.ElideRight, room))
             sub.setFont(sf)
             sub.setStyleSheet(f"color:{T.MUTED}; background:transparent;")
             lay.addWidget(sub)
@@ -2063,9 +2068,25 @@ class Rail(QWidget):
             lay.removeItem(self._spacer)
             self._spacer = None
 
+    def row_width(self):
+        """The pixels a row has for its text, at the width the rail is now.
+
+        Pixels rather than a character count. The two lines were clipped at
+        24 and 28 characters, which is a count and not a measurement, so
+        dragging the rail wider gave the text more room and not one more
+        letter of it -- and any per-character estimate to replace it is a
+        guess about a proportional font. QFontMetrics.elidedText knows
+        exactly, so the row asks it.
+        """
+        return max(self.width() - RAIL_ROW_CHROME, 40)
+
     def set_cards(self, cards):
         # Same signature check the bands use.
-        sig = json.dumps([cards, self.board.dragging], sort_keys=True, default=str)
+        # The clip widths are part of what a row draws, so a rail that has been
+        # dragged is a different picture of the same cards and has to be rebuilt.
+        room = self.row_width()
+        sig = json.dumps([cards, self.board.dragging, room],
+                         sort_keys=True, default=str)
         if sig == self._sig:
             self.cards = cards
             return
@@ -2097,7 +2118,7 @@ class Rail(QWidget):
                 self.lay.addWidget(line)
             first = False
             for c in group:
-                self.lay.addWidget(RailRow(c, self.board))
+                self.lay.addWidget(RailRow(c, self.board, room))
             if not group:
                 self.lay.addWidget(RailZone(band))
         self.lay.addStretch()
@@ -2345,6 +2366,14 @@ class Bert(QMainWindow):
         self.rail_split.setStretchFactor(0, 0)  # the board takes the slack
         self.rail_split.setStretchFactor(1, 1)
         self.rail_split.splitterMoved.connect(self._remember_rail_width)
+        # Rebuilding thirty rows on every pixel of a drag is a stutter, so the
+        # re-clip waits for the handle to settle. render() is cheap for the
+        # bands either side of it: their signature has not changed.
+        self.rail_redraw = QTimer(self)
+        self.rail_redraw.setSingleShot(True)
+        self.rail_redraw.setInterval(RAIL_REDRAW_MS)
+        self.rail_redraw.timeout.connect(self.render)
+        self.rail_split.splitterMoved.connect(lambda *_: self.rail_redraw.start())
         top = self.rail_split
         top.setMinimumHeight(BOARD_MIN_H)
 

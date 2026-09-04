@@ -148,7 +148,13 @@ activity feed, undo, and the outbox.
   unfolding clears `_rail_sized` so the width comes back rather than whatever
   the fold left. Kept in `settings.rail_width`. There is slack to take: the
   rail plus a full-width board is 1040px, so on anything wider the rail grows
-  into empty space rather than out of the board.
+  into empty space rather than out of the board. Both lines in a row are cut
+  with `QFontMetrics.elidedText` against the font they draw in, not at a
+  character count -- a count does not follow a rail that can be dragged, and
+  characters-per-pixel is a guess about a proportional font. The measured width
+  is part of `Rail.set_cards`' signature, so a drag counts as a change and the
+  rows rebuild; the rebuild is held behind `RAIL_REDRAW_MS` rather than run on
+  every pixel of the drag.
 - **The board and the feed are the two halves of a `QSplitter`**, so the
   height between them can be traded off -- some days the history is the thing
   being read. Neither half may carry a fixed height, or the handle has nothing
