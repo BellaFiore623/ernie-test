@@ -84,6 +84,10 @@ FEED_MAX_ROWS = 8
 UNCAPPED = 16777215
 FEED_TIME_W = 60           # the timestamp column
 FEED_MORE_W = 14           # the chevron, in its own column so it survives
+# Between the last column and the scrollbar. The Undo button sat hard
+# against it, which reads as the row having been cut off rather than
+# ending.
+FEED_GUTTER = 10
 # What a closed row is clipped to at the narrowest. The widths at each
 # site (46 for the thread, 44 for the detail, 40 for a new name) are
 # scaled up together from here, so their proportions survive.
@@ -2385,7 +2389,7 @@ class Bert(QMainWindow):
         inner = QWidget()
         inner.setStyleSheet("background:transparent;")
         self.feed_lay = QVBoxLayout(inner)
-        self.feed_lay.setContentsMargins(0, 0, 0, 0)
+        self.feed_lay.setContentsMargins(0, 0, FEED_GUTTER, 0)
         self.feed_lay.setSpacing(3)
         self.feed_scroll.setWidget(inner)
         body.addWidget(self.feed_scroll)
@@ -2426,7 +2430,7 @@ class Bert(QMainWindow):
         gaps = 4 * max(self.feed_lay.spacing(), 0)
         room = (self.feed_scroll.viewport().width()
                 - FEED_TIME_W - FEED_MORE_W - FEED_STATUS_W
-                - FEED_UNDO_W - gaps)
+                - FEED_UNDO_W - FEED_GUTTER - gaps)
         room = min(room, self.width() // 2)
         return max(1.0, room / per / FEED_BASE_CHARS)
 
