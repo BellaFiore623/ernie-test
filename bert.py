@@ -1544,6 +1544,14 @@ class Card(QFrame):
 
     @staticmethod
     def _ago(ts):
+        """How long since a person last said anything in the thread.
+
+        Nothing at all for today. Most of the board is today most of the time,
+        so "today" was a word on almost every card that told you what you
+        would have assumed anyway -- and it read as information, which cost it
+        a glance each time. The number is worth having exactly when it is not
+        today.
+        """
         if not ts:
             return ""
         try:
@@ -1551,7 +1559,7 @@ class Card(QFrame):
         except ValueError:
             return ""
         d = (datetime.now(timezone.utc) - then).days
-        return "today" if d == 0 else "1d" if d == 1 else f"{d}d"
+        return "" if d == 0 else "1d" if d == 1 else f"{d}d"
 
 
 class Band(QWidget):
