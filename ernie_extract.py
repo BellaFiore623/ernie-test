@@ -79,6 +79,21 @@ def ordinal(n: int) -> str:
     return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(abs(n) % 10, 'th') }"
 
 
+def reorder_spot(value) -> tuple:
+    """A reordered event's stored place: "high:5" -> ("high", 5).
+
+    Rows written before the band was recorded hold a bare number, which is
+    still a position and simply has no band to go with it -- ("", 5). Anything
+    that is not a place at all gives (). The band never contains a colon; the
+    five of them are words.
+    """
+    text = (value or "").strip()
+    band, _, pos = text.rpartition(":")
+    if not pos.isdigit():
+        return ()
+    return band, int(pos)
+
+
 def parse_date(token: str) -> Optional[date]:
     """Parse the date forms actually observed in thread titles."""
     token = token.strip()

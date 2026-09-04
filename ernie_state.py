@@ -674,7 +674,8 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
         now = sum(1 for r in others if r < p["rank"]) + 1
         if was != now:
             log_event(con, thread_id=tid, verb="reordered", actor=actor,
-                      old=str(was), new=str(now), at=at)
+                      old=f"{p['priority']}:{was}",
+                      new=f"{p['priority']}:{now}", at=at)
     if row["priority"] != p["priority"] or row["rank"] != p["rank"]:
         con.execute("UPDATE cards SET priority=?, rank=?, updated_at=? "
                     "WHERE thread_id=?",

@@ -113,9 +113,13 @@ activity feed, undo, and the outbox.
 - Priority moves are silent except in or out of `critical`, which posts. Every
   other band change, and every reorder within a band, is board housekeeping:
   posting each nudge between high and medium is noise in a customer thread.
-- A **`reordered`** event carries the card's position in its band before and
-  after, as plain numbers in `old_value` / `new_value`. Not the rank: that is a
-  fraction and "1000 -> 1500" tells a reader only that something moved. The
+- A **`reordered`** event carries the band and the card's position in it,
+  before and after, as `band:position` in `old_value` / `new_value` --
+  `high:5` -> `high:3`, which reads as "High 5th -> 3rd". Not the rank: that is
+  a fraction and "1000 -> 1500" tells a reader only that something moved. Both
+  values carry the band, though a reorder never leaves one, so either is
+  readable on its own; `ex.reorder_spot()` parses them and returns a bare
+  position for the rows written before the band was recorded. The
   positions have to be worked out where the move happens, against the ranks it
   is ordered among, because afterwards those ranks have moved on and it is no
   longer derivable. Rows written before this carry nothing and are shown

@@ -3444,13 +3444,21 @@ class Bert(QMainWindow):
                     f"<span style='color:{T.LINE}'> &middot; </span>"
                     f"<b>{item}</b>")
 
-        if (e["verb"] == "reordered"
-                and (old or "").isdigit() and (new or "").isdigit()):
-            return (f"<b>{who}</b> reordered {thread}"
-                    f"<span style='color:{T.LINE}'> &middot; </span>"
-                    f"<b>{ex.ordinal(old)}</b> "
-                    f"<span style='color:{T.MUTED}'>&#8594;</span> "
-                    f"<b>{ex.ordinal(new)}</b>")
+        if e["verb"] == "reordered":
+            was, now = ex.reorder_spot(old), ex.reorder_spot(new)
+            if was and now:
+                # Rows from before the band was recorded still have both
+                # places; they just can't say which band, so they don't.
+                band = now[0] or was[0]
+                lead = ""
+                if band in BANDS:
+                    lead = (f"<b style='color:{T.BAND_TEXT[band]}'>"
+                            f"{BAND_LABEL[band]}</b> ")
+                return (f"<b>{who}</b> reordered {thread}"
+                        f"<span style='color:{T.LINE}'> &middot; </span>"
+                        f"{lead}<b>{ex.ordinal(was[1])}</b> "
+                        f"<span style='color:{T.MUTED}'>&#8594;</span> "
+                        f"<b>{ex.ordinal(now[1])}</b>")
 
         if e["verb"] == "undo_correction":
             return f"<b>{who}</b> retracted an update to {thread}"

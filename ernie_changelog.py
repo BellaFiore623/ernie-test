@@ -91,9 +91,12 @@ def describe(e) -> str:
     if verb == "reordered":
         # Older rows carry no positions; they were written before the move was
         # recorded and there is nothing to work them out from now.
-        if (old or "").isdigit() and (new or "").isdigit():
-            return (f"reordered {where} "
-                    f"— {ex.ordinal(old)} → {ex.ordinal(new)}")
+        was, now = ex.reorder_spot(old), ex.reorder_spot(new)
+        if was and now:
+            band = now[0] or was[0]
+            lead = f"{band.capitalize()} " if band else ""
+            return (f"reordered {where} — "
+                    f"{lead}{ex.ordinal(was[1])} → {ex.ordinal(now[1])}")
         return f"reordered {where}"
     if verb == "completed":
         return f"completed {where}"

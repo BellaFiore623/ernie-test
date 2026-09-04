@@ -434,15 +434,24 @@ def check_reordered_says_where_it_went() -> bool:
     """
     c = Check("a reorder says where it went")
 
-    line = text(ev("reordered", "5", "2"))
+    line = text(ev("reordered", "high:5", "high:2"))
     c.ok("reordered" in line, "it still says reordered")
     c.ok("5th" in line and "2nd" in line, "and the two places it moved between")
+    c.ok("High" in line, "and the band, so the places mean something")
     c.ok("Penn Hills" in line, "and which ticket")
 
+    c.ok("Unassigned" in text(ev("reordered", "unassigned:3", "unassigned:1")),
+         "every band names itself the same way")
+
     # The ones a naive ordinal rule gets wrong.
-    teens = text(ev("reordered", "13", "11"))
+    teens = text(ev("reordered", "high:13", "high:11"))
     c.ok("13th" in teens and "11th" in teens, "11th and 13th, not 13rd and 11st")
-    c.ok("21st" in text(ev("reordered", "22", "21")), "and 21st after them")
+    c.ok("21st" in text(ev("reordered", "low:22", "low:21")), "and 21st after them")
+
+    # Written in the hour between recording the place and recording the band.
+    no_band = text(ev("reordered", "5", "2"))
+    c.ok("5th" in no_band and "2nd" in no_band, "a bare place still reads")
+    c.ok("High" not in no_band, "and no band is invented for it")
 
     # Every reorder written before this existed carries nothing, and there is
     # no way to work it out now -- the ranks it was measured against are gone.

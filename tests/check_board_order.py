@@ -171,13 +171,18 @@ def check_a_reorder_says_where_it_went() -> bool:
         api.move_card(ids[4], api.MoveBody(priority="high", before_id=ids[0],
                                       actor="Tester"))
         c.equal(positions(ids[4]), 1, "it really is first now")
-        c.equal(last_reorder(), ("5", "1"), "and the event says 5th to 1st")
+        c.equal(last_reorder(), ("high:5", "high:1"),
+                "and the event says 5th to 1st, in High")
 
         # And back down between two others.
         api.move_card(ids[4], api.MoveBody(priority="high", after_id=ids[1],
                                       actor="Tester"))
-        c.equal(last_reorder(), ("1", str(positions(ids[4]))),
+        c.equal(last_reorder(), ("high:1", f"high:{positions(ids[4])}"),
                 "the next move starts from where the last one left it")
+
+        # The band travels with the place, so a row can be read on its own.
+        c.equal(ex.reorder_spot(last_reorder()[0])[0], "high",
+                "and names the band it happened in")
 
         return_ = b.con.execute(
             "SELECT COUNT(*) FROM events WHERE verb='reordered'").fetchone()[0]

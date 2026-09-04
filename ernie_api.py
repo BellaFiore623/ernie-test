@@ -670,8 +670,12 @@ def move_card(thread_id: str, body: MoveBody):
             # anybody needs a line about. It still writes the new rank, so the
             # boards agree; it just doesn't announce a move that didn't happen.
             if was != now:
+                # Band and place together, so the row says "High 5th" rather
+                # than a bare number the reader has to place themselves. A
+                # reorder never leaves its band, so both carry the same one.
                 log_event(con, thread_id=thread_id, verb="reordered",
-                          actor=actor, old=str(was), new=str(now))
+                          actor=actor, old=f"{body.priority}:{was}",
+                          new=f"{body.priority}:{now}")
 
         # Renormalise if the gap is collapsing toward float precision limits.
         if lo is not None and hi is not None and abs(hi - lo) < 0.001:
