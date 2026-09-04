@@ -483,13 +483,24 @@ def check_a_narrow_window_keeps_the_controls() -> bool:
 
     render = _method("_render_feed")
 
-    policies = [n for n in ast.walk(render)
-                if isinstance(n, ast.Call)
-                and getattr(n.func, "attr", None) == "setSizePolicy"]
-    c.equal(len(policies), 1, "one widget in the row is allowed to be squeezed")
-    c.ok(any(getattr(a, "attr", None) == "Ignored" for n in policies
-             for a in ast.walk(n)),
-         "and it is the text, told to ignore its own width")
+    # The line is a FeedLine, whose whole reason for existing is that it
+    # reports no minimum width and so can be squeezed.
+    c.ok(any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "FeedLine"
+             for n in ast.walk(render)),
+         "the line is the widget that can be squeezed")
+
+    tree = ast.parse(_bert_src())
+    cls = next((n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "FeedLine"), None)
+    c.ok(cls is not None, "FeedLine exists")
+    if cls:
+        m = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "minimumSizeHint"), None)
+        c.ok(m is not None, "and overrides minimumSizeHint")
+        if m:
+            c.ok(any(isinstance(n, ast.Constant) and n.value == 0
+                     for n in ast.walk(m)),
+                 "reporting no minimum width, so the layout may squeeze it")
 
     # The chevron cannot ride along in the text: clipping the line would take
     # away the only sign that there is more of it.

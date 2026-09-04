@@ -923,6 +923,21 @@ class Bubble(QFrame):
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
 
 
+class FeedLine(QLabel):
+    """One activity row's text.
+
+    It claims the width of the line it holds, so the chevron after it sits
+    against the end of the text rather than across the row -- but reports no
+    minimum, so the layout can squeeze it when the window is narrow. An
+    ordinary QLabel cannot be made narrower than its text, which pushed the
+    row's controls off the edge; QSizePolicy.Ignored fixes that but discards
+    the width it wants as well, leaving the label nothing at all.
+    """
+
+    def minimumSizeHint(self):
+        return QSize(0, super().minimumSizeHint().height())
+
+
 class TagEdit(QLineEdit):
     """The box new work items get typed into.
 
@@ -3336,7 +3351,7 @@ class Bert(QMainWindow):
             when.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
             h.addWidget(when, 0, Qt.AlignTop)
 
-            txt = QLabel(whole if opened else short)
+            txt = FeedLine(whole if opened else short)
             # Wrapping only when open. A closed row is a one-line summary and
             # has to stay exactly one line tall, because _fit_feed takes the
             # height every row is held to from these -- and a wrapped QLabel
@@ -3346,19 +3361,20 @@ class Bert(QMainWindow):
             # the panel grew to fit it, and _feed_row_h only ever grows, so
             # every redraw ratcheted it further.
             txt.setWordWrap(opened)
-            # The label is what gives way when the window is narrow. Without
-            # this its minimum is the whole line -- an unwrapped QLabel cannot
-            # be smaller than its text -- so the row grew wider than the
-            # viewport and, with the horizontal scrollbar off, the fixed
-            # columns past it were simply cut away. The Undo button vanished
-            # and nothing said why.
-            txt.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             # Given the spare width rather than a stretch beside it: the label
             # used to take its one-line size hint and get cut off by whatever
             # was left over.
             txt.setStyleSheet(
                 f"color:{T.INK}; font-size:{FEED_FONT_PX}px;")
-            h.addWidget(txt, 1, Qt.AlignTop)
+            if opened:
+                # Wrapped, so it wants the width to wrap into.
+                h.addWidget(txt, 1, Qt.AlignTop)
+            else:
+                # Its natural width, so the chevron sits against the end of
+                # the text; FeedLine is what lets it be squeezed below that
+                # when the window is narrow, which keeps the controls on
+                # screen.
+                h.addWidget(txt, 0, Qt.AlignTop)
 
             # Its own column, so a narrow window clipping the text cannot also
             # take away the only sign that there is more of it to read.
@@ -3370,6 +3386,9 @@ class Bert(QMainWindow):
             chevron.setFixedWidth(FEED_MORE_W)
             chevron.setStyleSheet(f"color:{T.MUTED}; font-size:{FEED_FONT_PX}px;")
             h.addWidget(chevron, 0, Qt.AlignTop)
+            # Everything left over goes here, between the line and the
+            # controls, rather than between the line and its own chevron.
+            h.addStretch(1)
 
             row.text_label = txt
             row.expanded = opened
