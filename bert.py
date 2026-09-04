@@ -1226,8 +1226,19 @@ class Card(QFrame):
             head.addWidget(chip("edited", T.CHIP_BG, T.MUTED))
         head.addStretch()
 
-        if d.get("ticket_count"):
-            head.addWidget(chip(f"{d['ticket_count']} tickets", T.CHIP_BG, T.MUTED))
+        # PIP tickets raised in the thread -- the build and return requests the
+        # interface bot posts -- not Bert's own tickets, which is what a card
+        # already is. "1 tickets" on a ticket read as nonsense twice over: the
+        # count was always plural, and the noun collided with the card itself.
+        #
+        # Shown only past one. A thread usually exists because somebody raised
+        # a PIP, so one is the case you would assume; two or more is the thing
+        # worth a glance. Production runs 83 threads on one and 111 on two, so
+        # this is a real distinction there -- and in the sandbox, where every
+        # thread has exactly one, it correctly says nothing at all.
+        pips = d.get("ticket_count") or 0
+        if pips > 1:
+            head.addWidget(chip(f"{pips} PIPs", T.CHIP_BG, T.MUTED))
         ago = QLabel(self._ago(d.get("last_human_at")))
         ago.setStyleSheet(f"color:{T.MUTED}; font-size:11px; background:transparent;")
         head.addWidget(ago)
