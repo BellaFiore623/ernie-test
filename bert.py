@@ -2280,6 +2280,16 @@ class Bert(QMainWindow):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search client, equipment, summary")
         self.search.setFixedWidth(230)
+        # The same frame as the client and title boxes. It had no styling at
+        # all, so it fell back to Qt's own, which against a dark toolbar is
+        # near enough invisible to look like there is no box there.
+        self.search.setStyleSheet(field())
+        # Qt's placeholder grey is faint for the same reason the work item
+        # entry sets this: the ordinary muted text colour is legible.
+        pal = self.search.palette()
+        pal.setColor(QPalette.PlaceholderText, QColor(T.MUTED))
+        self.search.setPalette(pal)
+        self.search.setCursor(Qt.IBeamCursor)
         self.search.textChanged.connect(self.render)
         lay.addWidget(self.search)
 
