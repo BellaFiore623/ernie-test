@@ -679,6 +679,20 @@ def check_the_feed_can_be_resized() -> bool:
              for n in ast.walk(toggle)),
          "and unfolding restores it rather than keeping what the fold left")
 
+    # The running order is the same trade along the other axis.
+    c.ok(src.count("QSplitter(") == 2, "the rail is on a splitter too")
+    place = _method("_place_rail")
+    c.ok(any(isinstance(n, ast.Constant) and n.value == "rail_width"
+             for n in ast.walk(place)),
+         "its width is remembered as well")
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "folded"
+             for n in ast.walk(place)),
+         "and a folded rail is left to the button, not the handle")
+
+    # Bounded: too narrow loses the client, too wide is a second board.
+    c.ok("RAIL_MIN_W" in src and "RAIL_MAX_W" in src,
+         "with a floor and a ceiling on how far it goes")
+
     return c.report()
 
 

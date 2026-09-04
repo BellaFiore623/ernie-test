@@ -142,6 +142,13 @@ activity feed, undo, and the outbox.
   everything. Which rows are open is held on the window by `event_id`, not on
   the widgets: `_render_feed` throws every row away and builds it again on each
   poll, so a row opened to read would shut again within five seconds.
+- **The running order is on a splitter too**, along the other axis, and the
+  same rules apply: `RAIL_MIN_W`/`RAIL_MAX_W` rather than a fixed width,
+  `set_folded()` fixes it because folding is the button's business, and
+  unfolding clears `_rail_sized` so the width comes back rather than whatever
+  the fold left. Kept in `settings.rail_width`. There is slack to take: the
+  rail plus a full-width board is 1040px, so on anything wider the rail grows
+  into empty space rather than out of the board.
 - **The board and the feed are the two halves of a `QSplitter`**, so the
   height between them can be traded off -- some days the history is the thing
   being read. Neither half may carry a fixed height, or the handle has nothing

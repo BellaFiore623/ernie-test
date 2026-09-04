@@ -71,7 +71,9 @@ RANK_STEP = 1000.0
 EDGE_SCROLL_ZONE = 64
 EDGE_SCROLL_MAX = 22
 EDGE_SCROLL_MS = 16
-RAIL_WIDTH = 208
+RAIL_WIDTH = 208           # what it opens at, not what it stays
+RAIL_MIN_W = 120           # narrower than this and a client name is gone
+RAIL_MAX_W = 460           # wider is a second board, not a running order
 BOARD_PAD = 16              
 BOARD_MAX = 800             
                            
@@ -1966,7 +1968,12 @@ class Rail(QWidget):
         self.folded = False
         self._spacer = None
         self.setAcceptDrops(True)
-        self.setFixedWidth(RAIL_WIDTH)
+        # A range, not a fixed width -- a fixed child gives the splitter
+        # handle nothing to move. set_folded() fixes it, because folded is
+        # the button's business rather than the handle's.
+        self.setMinimumWidth(RAIL_MIN_W)
+        self.setMaximumWidth(RAIL_MAX_W)
+        self.resize(RAIL_WIDTH, self.height())
         self.setStyleSheet(f"background:{T.CANVAS};")
 
         outer = QVBoxLayout(self)
@@ -2033,7 +2040,13 @@ class Rail(QWidget):
         self.head.setVisible(not yes)
         self.scroll.setVisible(not yes)
         self.hint.setVisible(not yes)
-        self.setFixedWidth(30 if yes else RAIL_WIDTH)
+        if yes:
+            self.setFixedWidth(30)
+        else:
+            # Handed back to the splitter, which puts it where it was.
+            self.setMinimumWidth(RAIL_MIN_W)
+            self.setMaximumWidth(RAIL_MAX_W)
+            self.board._rail_sized = False
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (10, 10, 4, 8)))
         self.fold_btn.setText("\u00bb" if yes else "\u00ab")
@@ -2320,13 +2333,19 @@ class Bert(QMainWindow):
         self.scroll.setWidget(board)
 
         self.rail = Rail(self)
-        middle = QHBoxLayout()
-        middle.setContentsMargins(0, 0, 0, 0)
-        middle.setSpacing(0)
-        middle.addWidget(self.rail)
-        middle.addWidget(self.scroll, 1)
-        top = QWidget()
-        top.setLayout(middle)
+        # Same trade as the feed, along the other axis: a title clipped in
+        # the running order can be read by widening it, and somebody who
+        # wants the board can take the width back. The fold button is still
+        # there for getting it out of the way entirely.
+        self.rail_split = QSplitter(Qt.Horizontal)
+        self.rail_split.setChildrenCollapsible(False)
+        self.rail_split.setHandleWidth(SPLIT_GRIP)
+        self.rail_split.addWidget(self.rail)
+        self.rail_split.addWidget(self.scroll)
+        self.rail_split.setStretchFactor(0, 0)  # the board takes the slack
+        self.rail_split.setStretchFactor(1, 1)
+        self.rail_split.splitterMoved.connect(self._remember_rail_width)
+        top = self.rail_split
         top.setMinimumHeight(BOARD_MIN_H)
 
         # The feed used to be a fixed height nobody could argue with.
@@ -2465,6 +2484,7 @@ class Bert(QMainWindow):
         self._feed_row_h = 0
         self._feed_wants = 0        # what it would choose for itself
         self._feed_sized = False    # whether the handle has been placed
+        self._rail_sized = False    # and the same for the rail
         w = QWidget()
         w.setObjectName("feedPanel")
         # Scoped, so the caption and the rows don't each paint their own block
@@ -2556,6 +2576,31 @@ class Bert(QMainWindow):
         self.feed_head.setToolTip("Show the activity feed" if self.feed_folded
                                   else "Hide the activity feed")
         self._fit_feed()
+
+    def _remember_rail_width(self, *_):
+        """Kept the way the feed height is, and for the same reason: a
+        layout somebody chose should survive the next launch."""
+        if self.rail.folded:
+            return
+        w = self.rail.width()
+        if w and w != self.settings.get("rail_width"):
+            self.settings["rail_width"] = w
+            try:
+                SETTINGS.write_text(json.dumps(self.settings, indent=2))
+            except OSError:
+                pass    # a layout is not worth an error box
+
+    def _place_rail(self):
+        """Put the handle where it was left, once per unfold."""
+        if self._rail_sized or self.rail.folded:
+            return
+        want = max(RAIL_MIN_W,
+                   min(self.settings.get("rail_width") or RAIL_WIDTH,
+                       RAIL_MAX_W))
+        total = self.rail_split.width()
+        if total > want:
+            self.rail_split.setSizes([want, total - want])
+            self._rail_sized = True
 
     def _panel_height(self, view):
         """The panel that holds a feed viewport this tall."""
@@ -2697,6 +2742,7 @@ class Bert(QMainWindow):
         # Placed once, from whatever was dragged last time or the default, and
         # then left alone -- re-applying it on every poll would drag the handle
         # back under the person moving it.
+        self._place_rail()
         if not self._feed_sized and self._feed_wants:
             want = self.settings.get("feed_height") or self._feed_wants
             total = self.split.height()
