@@ -2411,16 +2411,16 @@ class Bert(QMainWindow):
         # click would have left every row four lines deep for the session.
         shut = [r for r in rows if not getattr(r, "expanded", False)]
         tallest = max((r.sizeHint().height() for r in shut), default=0)
-        # Remembered only across a feed with nothing in it -- a fresh database,
-        # or every row undone -- so the panel doesn't collapse and bounce the
-        # board. It used to be a running maximum that never came down, which
-        # meant one bad measurement set the row height for the rest of the
-        # session and every redraw could only make it worse. When there are
-        # rows to measure, believe them.
-        if shut:
-            self._feed_row_h = tallest
-        else:
-            self._feed_row_h = getattr(self, "_feed_row_h", 0)
+        # Held steady, and only ever upward. A row carrying an Undo button is
+        # taller than one that has lost it, so a height measured fresh every render
+        # drops the moment the last undoable row ages out of its window -- and
+        # the whole list slides up a few pixels while somebody is reading it.
+        #
+        # This is the number that ran away when closed rows were allowed to
+        # wrap, and it only could because a wrapped label reported eight lines.
+        # Closed rows are one line now and check_feed holds them to it, so
+        # every value going in here is bounded by one line plus a button.
+        self._feed_row_h = max(getattr(self, "_feed_row_h", 0), tallest)
 
         # Closed rows are all one height. A row that loses its Undo button is
         # shorter than one that has it, so without this every undo shifts
@@ -2436,10 +2436,17 @@ class Bert(QMainWindow):
                     # needs at the width it actually has, and let the row take
                     # its height from that.
                     lab = getattr(r, "text_label", None)
+                    need = 0
                     if lab is not None:
-                        lab.setMinimumHeight(
-                            lab.heightForWidth(max(lab.width(), 1)))
-                    r.setMinimumHeight(0)
+                        need = lab.heightForWidth(max(lab.width(), 1))
+                        lab.setMinimumHeight(need)
+                    # Never shorter than it was closed. A row with no Undo
+                    # button is smaller than the height they are all held to,
+                    # so letting it take its natural size pulled everything
+                    # below it upward -- opening a line to read four more
+                    # characters moved the list under the pointer. Opening
+                    # either changes nothing or adds the lines it needs.
+                    r.setMinimumHeight(max(self._feed_row_h, need))
                     r.setMaximumHeight(UNCAPPED)
                 else:
                     r.setFixedHeight(self._feed_row_h)

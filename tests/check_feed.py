@@ -272,7 +272,7 @@ def check_an_open_row_does_not_stretch_the_others() -> bool:
 
 def check_a_closed_row_stays_one_line() -> bool:
     """
-    A closed row must not word-wrap, and the height must be able to come down.
+    A closed row must not word-wrap.
 
     _fit_feed takes the height every row is held to from the closed rows'
     sizeHint, and a wrapped QLabel reports its hint at a heuristic width of its
@@ -282,10 +282,10 @@ def check_a_closed_row_stays_one_line() -> bool:
     was a running maximum that never came down, every redraw ratcheted it
     further: clicking anything made the feed swallow the window.
 
-    So two invariants, and the second is what would have made the first
-    survivable.
+    Holding that height steady is safe only because of this: every value going
+    into it is one line plus, at most, an Undo button.
     """
-    c = Check("a closed row is one line, and the height can come back down")
+    c = Check("a closed row is one line")
 
     render = _method("_render_feed")
     wraps = [n for n in ast.walk(render)
@@ -303,12 +303,45 @@ def check_a_closed_row_stays_one_line() -> bool:
                if isinstance(n, ast.Assign)
                and any(getattr(t, "attr", None) == "_feed_row_h" for t in n.targets)]
     c.ok(assigns, "the fit still sets a row height")
-    c.ok(not any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "max"
-                 and any(isinstance(a, ast.Call)
-                         and getattr(a.func, "id", None) == "getattr"
-                         for a in n.args)
-                 for a2 in assigns for n in ast.walk(a2)),
-         "but not as a running maximum of itself, which can only ever grow")
+
+    # The wrap guard above is what keeps the value going in here bounded, and
+    # is why it is safe for it to be held steady rather than re-measured.
+    c.ok(any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "max"
+             for a in assigns for n in ast.walk(a)),
+         "and holds it steady rather than letting it drop between renders")
+
+    return c.report()
+
+
+def check_opening_a_row_never_shortens_it() -> bool:
+    """
+    Opening a row must not move the ones below it upward.
+
+    Rows are all held to one height, and that height is the tallest of them --
+    a row carrying an Undo button, which is 20px against 12 for the text alone.
+    An opened row is let out of that so it can grow, and a row with no Undo
+    button then collapsed to its own smaller size: opening a line to read four
+    more characters pulled the whole list up under the pointer.
+
+    So the height a row is held to is the floor for an open one too. Opening
+    either changes nothing, or adds exactly the lines the text needs.
+    """
+    c = Check("opening a row never makes it shorter")
+
+    fit = _method("_fit_feed")
+    setmins = [n for n in ast.walk(fit)
+               if isinstance(n, ast.Call)
+               and getattr(n.func, "attr", None) == "setMinimumHeight"
+               and getattr(getattr(n.func, "value", None), "id", None) == "r"]
+    c.equal(len(setmins), 1, "the open row gets one minimum height")
+
+    arg = setmins[0].args[0]
+    c.ok(isinstance(arg, ast.Call) and getattr(arg.func, "id", None) == "max",
+         "and it is the larger of two things, not the natural size")
+    c.ok(any(getattr(n, "attr", None) == "_feed_row_h" for n in ast.walk(arg)),
+         "one of which is the height the closed rows are held to")
+    c.ok(not (isinstance(arg, ast.Constant) and arg.value == 0),
+         "never a bare zero, which is what let it collapse")
 
     return c.report()
 
@@ -322,4 +355,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_only_rows_with_something_behind_them_open,
           check_an_open_row_survives_a_poll,
           check_an_open_row_does_not_stretch_the_others,
-          check_a_closed_row_stays_one_line)
+          check_a_closed_row_stays_one_line,
+          check_opening_a_row_never_shortens_it)

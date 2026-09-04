@@ -134,11 +134,20 @@ activity feed, undo, and the outbox.
   layout will give it -- 112px against 14 for the same line. Wrapping them all
   put that into `_feed_row_h`, the panel grew to fit eight-line rows, and since
   that height was a running maximum it could only ever get worse: clicking
-  anything made the feed swallow the window. It is measured fresh whenever
-  there are rows, and only remembered across a feed with nothing in it. An open
-  row wraps and takes its height from the label's `heightForWidth`, because
-  `sizeHint()` under-reports the other way there and clips the text the row was
-  opened to show.
+  anything made the feed swallow the window. An open row wraps and takes its
+  height from the label's `heightForWidth`, because `sizeHint()` under-reports
+  the other way there and clips the text the row was opened to show.
+- **Nothing in the feed moves vertically unless the text needs the room.** The
+  height rows are held to is the tallest of them -- a row carrying an Undo
+  button, 20px against 12 for the text alone -- and it is held steady rather
+  than re-measured, or it would drop the moment the last undoable row aged out
+  and slide the list up while somebody was reading it. That same height is the
+  *floor* for an open row: released to its natural size, a row with no Undo
+  button collapsed to the smaller one, so opening a line to read four more
+  characters pulled everything below it upward. Opening a row now either
+  changes nothing or adds exactly the lines the text needs. Holding the height
+  steady is only safe because closed rows never wrap, which is the invariant
+  above.
 - Writes take an idempotency `key`; retries return the original result.
 - A thread opening in Discord writes a **`started`** event, so the feed can
   say where a card came from -- the one thing on it that nobody did in Bert.
