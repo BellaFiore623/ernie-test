@@ -84,7 +84,7 @@ if "%TARGET:~-1%"=="/" set "TARGET=%TARGET:~0,-1%"
 where python >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo   Python isn't on PATH. Install Python 3.13, ticking
+    echo   Python isn't on PATH. Install Python 3.11 or newer, ticking
     echo   "Add python.exe to PATH", then run this again.
     pause
     exit /b 1

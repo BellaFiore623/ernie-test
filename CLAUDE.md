@@ -28,6 +28,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `tools/bashrc-snippet.sh` | Optional shell shortcuts. Nothing depends on it. |
 | `assets/bert_logo.png` | Bert's mark. `bert.py` resolves it relative to itself. |
 | `requirements.txt` | httpx, fastapi, uvicorn, pydantic; PySide6 for Bert only. |
+| `ernie-test.env.example` | The env file's shape, with no values. Copied, not edited. |
 | `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
 | `tests/` | `python tests/run.py`. Standard library, no network, no database of yours -- the fixture builds one from `schema.sql` in a temp directory. |
 | `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |

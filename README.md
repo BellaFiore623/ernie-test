@@ -32,9 +32,10 @@ Four processes, one database:
 
 On Windows without Git Bash, `stack.cmd` does the same thing by double-click.
 
-Configuration lives in `ernie.env` / `ernie-test.env` — both gitignored, and
-neither is in this repository. You need a Discord bot token, a guild id and
-the channel ids; ask whoever set it up.
+Configuration lives in `ernie.env` / `ernie-test.env`, both gitignored and
+neither in this repository. `ernie-test.env.example` is the template:
+copy it, drop the `.example`, and fill in the token, the guild id and the
+channel ids from whoever set it up.
 
 ```bash
 pip install -r requirements.txt
@@ -43,6 +44,13 @@ pip install -r requirements.txt
 Python 3.11+, SQLite in WAL mode. `schema.sql` is applied on every connect and
 is all `CREATE ... IF NOT EXISTS`, so there is no migration step for a new
 database.
+
+```bash
+python tests/run.py
+```
+
+Standard library, no network, and no database of yours — the fixture builds
+one from `schema.sql` in a temp directory.
 
 ## Testing with two people
 
@@ -114,6 +122,7 @@ wrong place.
 | `run.sh` · `stack.cmd` · `bert.cmd` | Launchers. |
 | `seed_test_server.py` · `wipe_test.py` | Build and tear down the sandbox. Test guild only. |
 | `tools/` | Things you reach for occasionally: `q.py` for ad-hoc SQL, `ernie_backup.py`, `dump_threads.py` for raw API JSON, shell shortcuts. |
+| `tests/` | `python tests/run.py`. No network, no database of yours. |
 | `migrations/` | One-off scripts already applied. Kept as a record. |
 | `assets/` | Bert's logo. |
 

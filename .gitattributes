@@ -1,0 +1,18 @@
+# Line endings are decided here, not by whoever cloned.
+#
+# Git for Windows installs with core.autocrlf=true by default, so without
+# this file the checkout depends on a setting nobody thinks to check. Two
+# ways that bites: run.sh arriving with CRLF fails in Git Bash before its
+# first line ("bad interpreter: /bin/bash^M"), and a .cmd full of goto
+# labels is happier with the CRLF cmd.exe expects.
+
+* text=auto eol=lf
+
+*.cmd  text eol=crlf
+*.sh   text eol=lf
+*.py   text eol=lf
+*.sql  text eol=lf
+*.md   text eol=lf
+
+*.png binary
+*.db  binary

@@ -34,9 +34,10 @@ board.
 
 You need three things from whoever set this up:
 
-1. **The bot token** and the sandbox guild's ids. They will send you an
-   `ernie-test.env` file, or its contents.
-2. **The `#ernie-state` channel id.**
+1. **The bot token**, the sandbox guild id, and the channel ids. Step 3 has
+   a template with every line in it, so they only need to send the values.
+2. **The `#ernie-state` channel id**, which is one of them and the one that
+   makes your board and theirs the same board.
 3. **An invite to the sandbox Discord server**, if you're not in it.
 
 The token is a password for the bot. Don't put it in a chat that isn't the
@@ -75,17 +76,17 @@ added.
 
 ## 3. Put the env file in place
 
-Save what they sent you as `ernie-test.env`, in the folder with `bert.py` in
-it. It looks like this:
+The repository ships a template with every line already in it and the values
+left blank. Copy it, then paste in the numbers they sent you:
 
 ```
-DISCORD_TOKEN=...
-DISCORD_GUILD_ID=...
-ALLOW_DISCORD_WRITES=...
-TEST_CHANNEL_ID=...
-CARD_CHANNEL_IDS=...
-STATE_CHANNEL_ID=...
+copy ernie-test.env.example ernie-test.env
 ```
+
+(`cp ernie-test.env.example ernie-test.env` in Git Bash.) Open the copy in
+Notepad and fill in the values after each `=`. It has to sit in the folder
+with `bert.py` in it, and it has to be called exactly `ernie-test.env` --
+that name is what keeps it out of git.
 
 Two lines matter more than the rest:
 
@@ -94,6 +95,13 @@ Two lines matter more than the rest:
   person — your board will look fine and they'll never see a thing.
 - **`STATE_CHANNEL_ID`** is what makes the two boards one board. Without it
   you get a private board of your own.
+
+Leave `CHANGELOG_CHANNEL_ID` empty. Only one machine should set it, and that
+is theirs — both boards hold the whole history, so two loggers would write
+every line twice.
+
+The token is a password for the bot. Don't put it in a chat that isn't the
+two of you.
 
 ## 4. Check your clock
 
