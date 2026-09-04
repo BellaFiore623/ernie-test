@@ -88,6 +88,12 @@ FEED_MORE_W = 14           # the chevron, in its own column so it survives
 # against it, which reads as the row having been cut off rather than
 # ending.
 FEED_GUTTER = 10
+# How wide a row may get. The controls are right-aligned in fixed
+# columns, so on a full-screen board they drifted a thousand pixels
+# from the line they belong to and it stopped being obvious which
+# button went with which entry. Capped, the gap cannot grow past
+# what the eye can carry, and the columns stay a column.
+FEED_ROW_MAX_W = 1300
 # What a closed row is clipped to at the narrowest. The widths at each
 # site (46 for the thread, 44 for the detail, 40 for a new name) are
 # scaled up together from here, so their proportions survive.
@@ -2410,10 +2416,18 @@ class Bert(QMainWindow):
         self.feed_scroll.setWidgetResizable(True)
         self.feed_scroll.setFrameShape(QFrame.NoFrame)
         self.feed_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Left, so the feed lines up with the board above it rather than
+        # floating in the middle of a wide window.
+        self.feed_scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.feed_scroll.setStyleSheet("background:transparent;")
         self.feed_scroll.viewport().setStyleSheet("background:transparent;")
         inner = QWidget()
         inner.setStyleSheet("background:transparent;")
+        # Capped here rather than on each row: a row limited on its own takes
+        # the width of its own text, so the Undo buttons landed at a different
+        # x on every line -- measured at 761 and 845 for two rows of the same
+        # feed. Every row fills this instead, so the columns stay a column.
+        inner.setMaximumWidth(FEED_ROW_MAX_W)
         self.feed_lay = QVBoxLayout(inner)
         self.feed_lay.setContentsMargins(0, 0, FEED_GUTTER, 0)
         self.feed_lay.setSpacing(3)
@@ -2454,8 +2468,11 @@ class Bert(QMainWindow):
         fm = QFontMetrics(f)
         per = max(fm.horizontalAdvance(FEED_SAMPLE) / len(FEED_SAMPLE), 1.0)
         gaps = 4 * max(self.feed_lay.spacing(), 0)
-        room = (self.feed_scroll.viewport().width()
-                - FEED_TIME_W - FEED_MORE_W - FEED_STATUS_W
+        # Against the row's own width, which is capped, rather than the
+        # viewport -- otherwise on a wide screen the line would be sized for
+        # room the row is never given.
+        across = min(self.feed_scroll.viewport().width(), FEED_ROW_MAX_W)
+        room = (across - FEED_TIME_W - FEED_MORE_W - FEED_STATUS_W
                 - FEED_UNDO_W - FEED_GUTTER - gaps)
         room = min(room, self.width() // 2)
         return max(1.0, room / per / FEED_BASE_CHARS)

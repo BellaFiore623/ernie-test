@@ -142,6 +142,15 @@ activity feed, undo, and the outbox.
   everything. Which rows are open is held on the window by `event_id`, not on
   the widgets: `_render_feed` throws every row away and builds it again on each
   poll, so a row opened to read would shut again within five seconds.
+- **A feed row stops growing at `FEED_ROW_MAX_W`.** The status chip and Undo
+  are right-aligned in fixed columns, which is what makes them a column you can
+  run down and click -- but unbounded, a full-screen board put them a thousand
+  pixels from the line they belong to and it stopped being clear which button
+  went with which entry. The cap goes on the panel the rows fill, **not on the
+  rows**: a row capped on its own takes the width of its own text, so the
+  buttons land at a different x on every line (measured at 761 and 845 for two
+  rows of one feed). `_feed_scale()` measures against the capped width too, or
+  the line would be sized for room the row is never given.
 - **In a feed row the text is what gives way, never the controls.** An
   unwrapped `QLabel` cannot be made narrower than its text, so the row's
   minimum width was the whole line plus every fixed column -- 1644px inside a

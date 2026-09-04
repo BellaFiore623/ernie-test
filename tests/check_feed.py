@@ -563,6 +563,53 @@ def check_the_chevron_is_a_character() -> bool:
     return c.report()
 
 
+def check_the_controls_stay_near_their_line() -> bool:
+    """
+    On a full-screen board the buttons drifted away from the entry.
+
+    The status chip and Undo are right-aligned in fixed columns, which is what
+    keeps them a column you can run down and click. Unbounded, that put them a
+    thousand pixels from the line they belong to and it stopped being obvious
+    which button went with which entry.
+
+    The row is capped instead. Capping each row on its own does not work --
+    a row limited by itself takes the width of its own text, so the buttons
+    land at a different x on every line, measured at 761 and 845 for two rows
+    of one feed. The cap goes on the panel the rows fill, so every row is one
+    width and the column stays a column.
+    """
+    c = Check("the controls stay near the line they belong to")
+
+    panel = _method("_feed_panel")
+    caps = [n for n in ast.walk(panel)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", None) == "setMaximumWidth"]
+    c.ok(caps, "the feed has a maximum width")
+    c.ok(any(getattr(a, "id", None) == "FEED_ROW_MAX_W"
+             for n in caps for a in ast.walk(n)),
+         "and it is the row cap")
+
+    # On the container, not on each row: that is the part that keeps the
+    # buttons in line with each other.
+    render = _method("_render_feed")
+    c.ok(not any(isinstance(n, ast.Call)
+                 and getattr(n.func, "attr", None) == "setMaximumWidth"
+                 for n in ast.walk(render)),
+         "the rows themselves are not capped one by one")
+
+    c.ok(any(isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "setAlignment"
+             for n in ast.walk(panel)),
+         "and the feed is aligned rather than left to float")
+
+    # The line has to be sized for the room the row actually gets.
+    scale = _method("_feed_scale")
+    c.ok(any(getattr(n, "id", None) == "FEED_ROW_MAX_W" for n in ast.walk(scale)),
+         "the line is measured against the capped width, not the window")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -580,4 +627,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_reordered_says_where_it_went,
           check_a_narrow_window_keeps_the_controls,
           check_the_window_has_a_floor,
-          check_the_chevron_is_a_character)
+          check_the_chevron_is_a_character,
+          check_the_controls_stay_near_their_line)
