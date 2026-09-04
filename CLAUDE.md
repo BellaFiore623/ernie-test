@@ -198,6 +198,21 @@ activity feed, undo, and the outbox.
   out so a wide board clips at the narrow width anyway. The scale never falls
   below 1, so a narrow board reads exactly as it did.
 - Writes take an idempotency `key`; retries return the original result.
+- **Bert's close warning owes two different debts, and must count both.**
+  `queued` is events waiting out their undo window before Ernie posts them to
+  the customer thread; `sharing.waiting_to_send` is cards that have moved since
+  the shared board was last published. A reorder, and every band move that is
+  not in or out of `critical`, is silent -- no `dispatch_after` at all -- so it
+  appears only in the second. Counting the first alone meant reordering the
+  board and closing straight away asked nothing, and the running order never
+  left the machine. `Bert._owed()` reads both.
+- **`/health` counts as owed only what the outbox will still try.**
+  `OUTBOX_MAX_ATTEMPTS` matches `ernie_outbox.MAX_ATTEMPTS` and the
+  `attempts < 5` in `v_outbox_due`; without it a row nothing would ever pick up
+  again was reported as pending for ever, so Bert warned about unsent changes
+  on a board nobody had touched for ten minutes -- and the warning's advice,
+  leave the stack running another minute, was the one thing that could not
+  help. Given up is not hidden, it is reported separately as `stuck`.
 - A thread opening in Discord writes a **`started`** event, so the feed can
   say where a card came from -- the one thing on it that nobody did in Bert.
   `dispatch_after` is NULL, because it happened in Discord already, and undo

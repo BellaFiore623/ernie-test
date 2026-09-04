@@ -12,12 +12,16 @@ published, because one machine's write time is all it can honestly know.
 
 import dataclasses
 import json
+import pathlib
 
 NL = chr(10)
 import sqlite3
 
 from support import Board, Check, FakeDiscord, iso
 
+import bert
+import ernie_api as api
+import ernie_outbox as outbox
 import ernie_state as S
 
 
@@ -370,7 +374,98 @@ def check_publish_still_sends_our_own_changes() -> bool:
     return c.report()
 
 
+def check_a_given_up_change_is_not_pending_for_ever() -> bool:
+    """
+    Bert warned about unsent changes on a board nobody had touched.
+
+    The outbox stops trying after MAX_ATTEMPTS and says so; v_outbox_due
+    carries the same limit. /health did not, so a row nothing would ever pick
+    up again was counted as owed for ever -- and the warning's advice, leave
+    the stack running another minute, was the one thing that could not help.
+
+    It is not hidden either. Given up is a different state from waiting, and
+    worth knowing, so it is reported on its own.
+    """
+    c = Check("a change the outbox gave up on stops being 'about to send'")
+
+    with Board() as b:
+        api.DB = b.path
+        tid = b.card("PROD: Penn Hills - 02Sep26 - EReel-1220 fiber respool")
+
+        eid = b.event(tid, verb="edited", actor="Bella Fiore")
+        b.con.execute("UPDATE events SET dispatch_after=?, attempts=0 "
+                      "WHERE event_id=?", (iso(-30), eid))
+        b.con.commit()
+        h = api.health()
+        c.equal(h["queued"]["count"], 1, "a change still being tried is owed")
+        c.equal(h["stuck"]["count"], 0, "and nothing has been given up on")
+
+        # It fails its way to the limit.
+        b.con.execute("UPDATE events SET attempts=? WHERE event_id=?",
+                      (api.OUTBOX_MAX_ATTEMPTS, eid))
+        b.con.commit()
+        h = api.health()
+        c.equal(h["queued"]["count"], 0,
+                "past the limit it is no longer about to go out")
+        c.equal(h["stuck"]["count"], 1, "but it is reported as stuck")
+
+        # One under the limit is still going to be tried.
+        b.con.execute("UPDATE events SET attempts=? WHERE event_id=?",
+                      (api.OUTBOX_MAX_ATTEMPTS - 1, eid))
+        b.con.commit()
+        c.equal(api.health()["queued"]["count"], 1, "one try left still counts")
+
+    return c.report()
+
+
+def check_the_attempt_limit_is_one_number() -> bool:
+    """Three places know when the outbox gives up, and they have to agree."""
+    c = Check("the attempt limit agrees everywhere")
+
+    c.equal(api.OUTBOX_MAX_ATTEMPTS, outbox.MAX_ATTEMPTS,
+            "the API and the outbox use the same limit")
+
+    schema = pathlib.Path(
+        pathlib.Path(api.__file__).with_name("schema.sql")).read_text(
+            encoding="utf-8")
+    view = schema[schema.index("v_outbox_due"):]
+    view = view[:view.index(";")]
+    c.ok(f"attempts < {api.OUTBOX_MAX_ATTEMPTS}" in view,
+         f"and so does v_outbox_due ({api.OUTBOX_MAX_ATTEMPTS})")
+
+    return c.report()
+
+
+def check_closing_knows_about_the_shared_board() -> bool:
+    """
+    Reordering and closing straight away asked nothing.
+
+    The warning counted only what was queued for the customer thread, and a
+    reorder is silent by design -- no dispatch_after, so nothing to queue. But
+    it still has to reach the other board, and closing the stack on top of it
+    strands it exactly the same way.
+    """
+    c = Check("closing counts what the shared board is still owed")
+
+    owed = bert.Bert._owed
+    c.equal(owed({}), (0, 0), "a board with no health owes nothing")
+    c.equal(owed({"queued": {"count": 2}}), (2, 0), "queued changes are owed")
+    c.equal(owed({"sharing": {"waiting_to_send": 3}}), (0, 3),
+            "and so are cards the shared board has not seen")
+    c.equal(owed({"queued": {"count": 1}, "sharing": {"waiting_to_send": 2}}),
+            (1, 2), "both at once, counted apart")
+
+    # A solo board has no sharing at all and must not start warning.
+    c.equal(owed({"queued": {"count": 0}, "sharing": None}), (0, 0),
+            "a board nobody is sharing owes nothing to nobody")
+
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
+          check_a_given_up_change_is_not_pending_for_ever,
+          check_the_attempt_limit_is_one_number,
+          check_closing_knows_about_the_shared_board,
           check_publish_leaves_a_card_the_channel_moved,
           check_publish_still_sends_our_own_changes,
           check_a_long_board_keeps_every_row,

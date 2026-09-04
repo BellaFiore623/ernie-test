@@ -31,6 +31,12 @@ DB = "ernie.db"
 UNDO_WINDOW_S = 60      # how long before Ernie posts to the thread
 RANK_STEP = 1000.0
 PRIORITY_ORDER = ("unassigned", "critical", "high", "medium", "low")
+
+# The outbox stops trying after this many failures, and v_outbox_due says
+# the same number. /health has to agree with both or it reports work as
+# pending that nothing will ever pick up. tests/check_state.py holds the
+# three together.
+OUTBOX_MAX_ATTEMPTS = 5
 WORK_ITEM_MAX = 200     # a bubble, not a paragraph -- it has to fit on a card
 
 app = FastAPI(title="Ernie", version="0.1")
@@ -373,10 +379,25 @@ def health():
     # Still owed to Discord: queued behind the undo window, or being retried.
     # Bert asks so it can say so before somebody shuts the stack down on top
     # of a change that hasn't gone out.
+    #
+    # attempts < OUTBOX_MAX_ATTEMPTS, matching v_outbox_due. Without it a row
+    # the outbox has given up on was counted here for ever, so Bert warned
+    # about unsent changes on a board nobody had touched for ten minutes and
+    # waiting made no difference -- which is the one thing the warning is
+    # supposed to tell you to do.
     owed = con.execute(
         """SELECT COUNT(*) AS n, MIN(dispatch_after) AS soonest FROM events
            WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
-             AND undone_at IS NULL""").fetchone()
+             AND undone_at IS NULL AND attempts < ?""",
+        (OUTBOX_MAX_ATTEMPTS,)).fetchone()
+    # Given up on, and reported separately: leaving the stack running will not
+    # send these, so a warning that says "wait a minute" would be wrong about
+    # them -- but they must not be silently dropped either.
+    stuck = con.execute(
+        """SELECT COUNT(*) AS n FROM events
+           WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+             AND undone_at IS NULL AND attempts >= ?""",
+        (OUTBOX_MAX_ATTEMPTS,)).fetchone()
     con.close()
 
     stale = None
@@ -395,6 +416,7 @@ def health():
         "board_size": board,
         "sharing": sharing,
         "queued": {"count": owed["n"], "due_at": owed["soonest"]},
+        "stuck": {"count": stuck["n"]},
     }
 
 

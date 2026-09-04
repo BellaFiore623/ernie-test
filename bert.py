@@ -2856,6 +2856,23 @@ class Bert(QMainWindow):
         self.completing.clear()
         self.toast.hide()
 
+    @staticmethod
+    def _owed(health):
+        """What closing on top of the stack would strand, as (thread, board).
+
+        Two different debts. `queued` is events waiting out their undo window
+        before Ernie posts them to the customer thread. `waiting_to_send` is
+        cards that have moved since the shared board was last published --
+        and a reorder, or any band move that is not in or out of critical,
+        only ever appears in the second: they are silent by design and carry
+        no dispatch_after at all. Counting the first alone meant reordering
+        the board and closing straight away asked nothing, and the running
+        order never left the machine.
+        """
+        q = health.get("queued") or {}
+        share = health.get("sharing") or {}
+        return (q.get("count") or 0), (share.get("waiting_to_send") or 0)
+
     def closeEvent(self, ev):
         """
         Closing Bert doesn't lose a change -- the outbox is a separate process
@@ -2863,13 +2880,13 @@ class Bert(QMainWindow):
         catch is closing Bert and then shutting the whole stack down on top of
         something that hasn't gone out yet.
         """
-        q = self.health.get("queued") or {}
-        n = q.get("count") or 0
+        n, unshared = self._owed(self.health)
         # A theme swap closes this window and opens another one. Nothing is
         # being shut down, so there is nothing to warn about.
-        if self._swapping_theme or not n or not self.connected:
+        if self._swapping_theme or not self.connected or not (n or unshared):
             return super().closeEvent(ev)
 
+        q = self.health.get("queued") or {}
         due = ""
         if q.get("due_at"):
             try:
@@ -2880,10 +2897,18 @@ class Bert(QMainWindow):
             except (ValueError, TypeError):
                 pass
 
-        thing = "change hasn't" if n == 1 else f"{n} changes haven't"
+        lines = []
+        if n:
+            thing = "change hasn't" if n == 1 else f"{n} changes haven't"
+            lines.append(
+                f"{thing.capitalize()} been posted to the thread yet.{due}")
+        if unshared:
+            card = "card has" if unshared == 1 else "cards have"
+            lines.append(f"{unshared} {card} moved since the shared board was"
+                         f" last published.")
         ask = QMessageBox.question(
             self, "Not everything has reached Discord",
-            f"{thing.capitalize()} been posted to the thread yet.{due}\n\n"
+            "\n".join(lines) + f"\n\n"
             f"Closing Bert is fine on its own — Ernie posts them whether Bert "
             f"is open or not. But if you're shutting everything down, leave "
             f"the rest running another minute or they won't go out at all.\n\n"
