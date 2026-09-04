@@ -1823,7 +1823,16 @@ class Band(QWidget):
 
 
 class RailRow(QFrame):
-    """One line in the side rail: who it's for, in the colour of its band.
+    """One row in the side rail: who it's for, and what the job is.
+
+    The client alone was enough to find a card by while a client had one
+    open, and stopped being enough the moment one had two. The summary goes
+    underneath in the muted ink, smaller, because it answers "which one"
+    rather than "whose".
+
+    A thread whose title cannot be read has no summary to show and simply
+    gets no second line -- its raw title is already on the first one, which
+    is all there is to say about it.
     """
 
     def __init__(self, data, board):
@@ -1848,7 +1857,7 @@ class RailRow(QFrame):
 
         who = (data.get("client_override") or data.get("client_raw")
                or data.get("name") or "\u2014")
-        name = QLabel(who[:24])
+        name = QLabel(clip(who, 24))
         f = QFont()
         f.setPointSize(9)
         f.setWeight(QFont.DemiBold)
@@ -1856,8 +1865,26 @@ class RailRow(QFrame):
         name.setStyleSheet(f"color:{T.INK}; background:transparent;")
         lay.addWidget(name)
 
-        # The band in words, and the untruncated name, one hover away.
-        self.setToolTip(f"{who}\n{BAND_LABEL[data['priority']]}")
+        # Only when the first line is actually a client. Without one it is
+        # already showing the raw title, and the summary is a slice of that
+        # same string -- "OPS: outdated escalatio..." over "outdated
+        # escalation list" is one fact taking two lines. The second line is
+        # here to answer "which job for this client", so with no client
+        # there is no question for it to answer.
+        named = bool(data.get("client_override") or data.get("client_raw"))
+        detail = (data.get("summary") or "").strip() if named else ""
+        if detail:
+            sub = QLabel(clip(detail, 28))
+            sf = QFont()
+            sf.setPointSize(8)
+            sub.setFont(sf)
+            sub.setStyleSheet(f"color:{T.MUTED}; background:transparent;")
+            lay.addWidget(sub)
+
+        # The band in words, and both lines untruncated, one hover away.
+        tip = [who] + ([detail] if detail else [])
+        tip.append(BAND_LABEL[data["priority"]])
+        self.setToolTip("\n".join(tip))
 
     # A press that travels becomes a drag; one that doesn't is a click.
     def mousePressEvent(self, e):
