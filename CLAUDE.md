@@ -116,7 +116,12 @@ activity feed, undo, and the outbox.
 - Undo inside the window deletes nothing from Discord because nothing was
   ever sent. Undo after it posts a correction message instead.
 - Edits are **batched**: saving four fields writes one event and posts one
-  message. Do not split this into per-field events.
+  message. Do not split this into per-field events. The feed still says which
+  it was: `old_value` is the previous value of everything that moved plus a
+  `__work__` entry naming the bubbles added and removed, so Bert reads the
+  shape off it -- bubbles only, fields only, or both -- and `new_value` is the
+  prose it shows. A row whose `old_value` won't parse falls back to "edited"
+  rather than being dropped.
 - Writes take an idempotency `key`; retries return the original result.
 - A thread opening in Discord writes a **`started`** event, so the feed can
   say where a card came from -- the one thing on it that nobody did in Bert.

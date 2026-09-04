@@ -398,6 +398,21 @@ def field() -> str:
             f" border-radius:3px; padding:4px 6px; color:{T.INK};")
 
 
+def clip(text, width):
+    """Shorten to width, ending on an ellipsis rather than mid-word rubbish."""
+    text = (text or "").strip()
+    return text if len(text) <= width else text[:width - 1].rstrip() + "…"
+
+
+def strip_lead(text, lead):
+    """Drop a leading word the line has already said, so it isn't said twice.
+
+    The feed line says "added a work item to X"; new_value says
+    'added "the thing"'. Without this the row reads "added ... added".
+    """
+    return text[len(lead):].lstrip() if text.startswith(lead) else text
+
+
 def show_value(v):
     return VALUE_LABEL.get(v or "", v)
 
@@ -3295,9 +3310,7 @@ class Bert(QMainWindow):
 
         if e["verb"] == "work_done" and (new or "").strip():
             # Which item, not just which thread.
-            item = new.strip()
-            if len(item) > 44:
-                item = item[:43].rstrip() + "…"
+            item = clip(new, 44)
             return (f"<b>{who}</b> finished {thread}"
                     f"<span style='color:{T.LINE}'> &middot; </span>"
                     f"<b>{item}</b>")
@@ -3305,7 +3318,59 @@ class Bert(QMainWindow):
         if e["verb"] == "undo_correction":
             return f"<b>{who}</b> retracted an update to {thread}"
 
+        if e["verb"] == "renamed" and (new or "").strip():
+            return (f"<b>{who}</b> renamed {thread}"
+                    f"<span style='color:{T.LINE}'> &middot; </span>"
+                    f"<b>{clip(new.strip(), 40)}</b>")
+
+        if e["verb"] == "edited":
+            # An edit is batched -- four fields and three bubbles are one
+            # event -- so "edited" was all the feed could say about any of it.
+            # old_value carries the shape (which fields, how many bubbles) and
+            # new_value the prose, so the line can say which of the two it was.
+            added, removed, fields = Bert._edit_shape(e.get("old_value"))
+            detail = (new or "").strip()
+            if added and not removed and not fields:
+                head = ("added a work item to" if added == 1
+                        else f"added {added} work items to")
+                detail = strip_lead(detail, "added ")
+            elif removed and not added and not fields:
+                head = ("removed a work item from" if removed == 1
+                        else f"removed {removed} work items from")
+                detail = strip_lead(detail, "removed ")
+            elif (added or removed) and not fields:
+                head = "changed the work on"
+            else:
+                head = "edited"
+            if not detail:
+                return f"<b>{who}</b> {head} {thread}"
+            return (f"<b>{who}</b> {head} {thread}"
+                    f"<span style='color:{T.LINE}'> &middot; </span>"
+                    f"<b>{clip(detail, 44)}</b>")
+
         return f"<b>{who}</b> {e['verb'].replace('_', ' ')} {thread}"
+
+    @staticmethod
+    def _edit_shape(old):
+        """What an edited event actually changed: bubbles, fields, or both.
+
+        Read off old_value, which is the previous values of whatever moved,
+        plus a __work__ entry naming the bubbles added and removed. Anything
+        unreadable counts as nothing, so the line falls back to "edited"
+        rather than the feed failing over a row it can't parse.
+        """
+        try:
+            d = json.loads(old) if old else {}
+        except (TypeError, ValueError):
+            return 0, 0, 0
+        if not isinstance(d, dict):
+            return 0, 0, 0
+        work = d.get("__work__") or {}
+        if not isinstance(work, dict):
+            work = {}
+        return (len(work.get("added") or []),
+                len(work.get("removed") or []),
+                len([k for k in d if k != "__work__"]))
 
     @staticmethod
     def _clock(ts):
