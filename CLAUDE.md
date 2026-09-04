@@ -122,6 +122,17 @@ activity feed, undo, and the outbox.
   shape off it -- bubbles only, fields only, or both -- and `new_value` is the
   prose it shows. A row whose `old_value` won't parse falls back to "edited"
   rather than being dropped.
+- **A feed row opens only when clipping actually hid something.** The line is
+  rendered twice, clipped and whole, and the two being different is the test --
+  no layout measuring, and no affordance on the rows that already say
+  everything. Which rows are open is held on the window by `event_id`, not on
+  the widgets: `_render_feed` throws every row away and builds it again on each
+  poll, so a row opened to read would shut again within five seconds. `_fit_feed`
+  holds *closed* rows to one height, because a row that loses its Undo button
+  is shorter than one that has it and every undo would shift the list; an open
+  row is let out of that, and takes its height from the label's
+  `heightForWidth` rather than the row's `sizeHint()`, which under-reports a
+  wrapped label and clips the very text the row was opened to show.
 - Writes take an idempotency `key`; retries return the original result.
 - A thread opening in Discord writes a **`started`** event, so the feed can
   say where a card came from -- the one thing on it that nobody did in Bert.

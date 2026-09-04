@@ -79,6 +79,9 @@ FEED_HEIGHT = 160
 FEED_FOLDED = 30           
 FEED_ROWS = 4              
 FEED_MAX_ROWS = 8          
+# Qt's QWIDGETSIZE_MAX, which PySide6 does not export. Undoes a
+# setFixedHeight, which sets minimum and maximum together.
+UNCAPPED = 16777215
 FEED_STATUS_W = 118        
 FEED_UNDO_W = 88           
 FEED_LIMIT = 200           
@@ -2132,6 +2135,10 @@ class Bert(QMainWindow):
         self.filters = {q: True for q in T.QUEUE}
         self.cards = []
         self.feed = []
+        # Which rows are open, by event_id. The feed is rebuilt from
+        # scratch on every poll, so this has to live outside the widgets
+        # or an opened row would shut again on the next one.
+        self.feed_open = set()
         self.completing = set()     # closed here, still drawn on the board
 
         self.setWindowTitle("Bert")
@@ -2372,6 +2379,12 @@ class Bert(QMainWindow):
                                   else "Hide the activity feed")
         self._fit_feed()
 
+    def _toggle_feed_row(self, eid):
+        """Open or close one row. Kept by event_id, not on the widget, because
+        the next poll throws every widget away and builds them again."""
+        self.feed_open.symmetric_difference_update({eid})
+        self._render_feed()
+
     def _fit_feed(self):
         """Give the panel the height its rows actually need.
 
@@ -2393,17 +2406,36 @@ class Bert(QMainWindow):
         rows = [self.feed_lay.itemAt(i).widget()
                 for i in range(self.feed_lay.count())]
         rows = [r for r in rows if r is not None]
-        tallest = max((r.sizeHint().height() for r in rows), default=0)
+        # An opened row is meant to be taller, so it must not set the height
+        # everything else is held to -- and _feed_row_h only ever grows, so one
+        # click would have left every row four lines deep for the session.
+        shut = [r for r in rows if not getattr(r, "expanded", False)]
+        tallest = max((r.sizeHint().height() for r in shut), default=0)
         # Remembered, so a moment with an empty feed -- a fresh database, or
         # every row undone -- doesn't collapse the panel and bounce the board.
         self._feed_row_h = max(getattr(self, "_feed_row_h", 0), tallest)
 
-        # All one height. A row that loses its Undo button is shorter than one
-        # that has it, so without this every undo shifts everything below it
-        # up by a few pixels while you are still looking at it.
+        # Closed rows are all one height. A row that loses its Undo button is
+        # shorter than one that has it, so without this every undo shifts
+        # everything below it up by a few pixels while you are still looking
+        # at it. An opened row takes whatever its text needs.
         if self._feed_row_h:
             for r in rows:
-                r.setFixedHeight(self._feed_row_h)
+                if getattr(r, "expanded", False):
+                    # sizeHint() under-reports a wrapped label -- it does not
+                    # know the width the layout is about to give it, so an
+                    # open row measured that way comes out short and clips the
+                    # very text it was opened to show. Ask the label what it
+                    # needs at the width it actually has, and let the row take
+                    # its height from that.
+                    lab = getattr(r, "text_label", None)
+                    if lab is not None:
+                        lab.setMinimumHeight(
+                            lab.heightForWidth(max(lab.width(), 1)))
+                    r.setMinimumHeight(0)
+                    r.setMaximumHeight(UNCAPPED)
+                else:
+                    r.setFixedHeight(self._feed_row_h)
 
         gap = self.feed_lay.spacing()
 
@@ -3202,7 +3234,15 @@ class Bert(QMainWindow):
                     if e["verb"] == "undo_correction" and not e.get("posted_at")}
 
         for e in self.feed:
-            row = QWidget()
+            eid = e["event_id"]
+            opened = eid in self.feed_open
+            short, whole = self._feed_text(e), self._feed_text(e, full=True)
+            # Only a row with something behind it is worth a click. Most are
+            # short enough to say everything already, and giving those an
+            # affordance teaches people to click rows that never change.
+            more = short != whole
+
+            row = ClickableWidget() if more else QWidget()
             h = QHBoxLayout(row)
             h.setContentsMargins(0, 0, 0, 0)
             h.setSpacing(8)
@@ -3210,12 +3250,28 @@ class Bert(QMainWindow):
             when = QLabel(self._clock(e["occurred_at"]))
             when.setFixedWidth(60)
             when.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
-            h.addWidget(when)
+            h.addWidget(when, 0, Qt.AlignTop)
 
-            txt = QLabel(self._feed_text(e))
+            body = whole if opened else short
+            if more:
+                body += (f"<span style='color:{T.MUTED}'>&nbsp;"
+                         f"{'&#9662;' if opened else '&#9656;'}</span>")
+            txt = QLabel(body)
+            # Wrapped, and given the spare width rather than a stretch beside
+            # it: the label used to take its one-line size hint and get cut off
+            # by whatever was left.
+            txt.setWordWrap(True)
             txt.setStyleSheet(f"color:{T.INK}; font-size:12px;")
-            h.addWidget(txt)
-            h.addStretch()
+            h.addWidget(txt, 1, Qt.AlignTop)
+
+            row.text_label = txt
+            row.expanded = opened
+            if more:
+                row.setCursor(Qt.PointingHandCursor)
+                row.setToolTip("Click to close" if opened
+                               else "Click to read the whole line")
+                row.clicked.connect(
+                    lambda k=eid: self._toggle_feed_row(k))
 
             # Its own column, right-aligned and always the same width.
             status = self._feed_status(e, e["event_id"] in revoking)
@@ -3226,14 +3282,14 @@ class Bert(QMainWindow):
             if status:
                 sc.addWidget(chip(*status))
             status_col.setFixedWidth(FEED_STATUS_W)
-            h.addWidget(status_col)
+            h.addWidget(status_col, 0, Qt.AlignTop)
 
             undo_col = QWidget()
             uc = QHBoxLayout(undo_col)
             uc.setContentsMargins(0, 0, 0, 0)
             uc.addStretch()
             undo_col.setFixedWidth(FEED_UNDO_W)
-            h.addWidget(undo_col)
+            h.addWidget(undo_col, 0, Qt.AlignTop)
 
             undoable = e["verb"] in ("completed", "priority_changed", "edited",
                                      "work_done")
@@ -3289,11 +3345,17 @@ class Bert(QMainWindow):
         return None
 
     @staticmethod
-    def _feed_text(e):
+    def _feed_text(e, full=False):
         """One line of the activity feed.
+
+        `full` returns it with nothing cut out, which is what an opened row
+        shows. Comparing the two is also how a row knows whether it has
+        anything worth opening for -- clipping is exactly what hides content,
+        so if the two are equal there is nothing behind the row.
         """
         who = e.get("actor_name") or "Ernie"
-        what = (e.get("thread_name") or "")[:46]
+        cut = (lambda t, w: (t or "").strip()) if full else clip
+        what = cut(e.get("thread_name") or "", 46)
         thread = f"<span style='color:{T.MUTED}'>{what}</span>"
 
         old, new = e.get("old_value"), e.get("new_value")
@@ -3310,7 +3372,7 @@ class Bert(QMainWindow):
 
         if e["verb"] == "work_done" and (new or "").strip():
             # Which item, not just which thread.
-            item = clip(new, 44)
+            item = cut(new, 44)
             return (f"<b>{who}</b> finished {thread}"
                     f"<span style='color:{T.LINE}'> &middot; </span>"
                     f"<b>{item}</b>")
@@ -3321,7 +3383,7 @@ class Bert(QMainWindow):
         if e["verb"] == "renamed" and (new or "").strip():
             return (f"<b>{who}</b> renamed {thread}"
                     f"<span style='color:{T.LINE}'> &middot; </span>"
-                    f"<b>{clip(new.strip(), 40)}</b>")
+                    f"<b>{cut(new, 40)}</b>")
 
         if e["verb"] == "edited":
             # An edit is batched -- four fields and three bubbles are one
@@ -3346,7 +3408,7 @@ class Bert(QMainWindow):
                 return f"<b>{who}</b> {head} {thread}"
             return (f"<b>{who}</b> {head} {thread}"
                     f"<span style='color:{T.LINE}'> &middot; </span>"
-                    f"<b>{clip(detail, 44)}</b>")
+                    f"<b>{cut(detail, 44)}</b>")
 
         return f"<b>{who}</b> {e['verb'].replace('_', ' ')} {thread}"
 

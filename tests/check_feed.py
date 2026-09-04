@@ -14,7 +14,9 @@ gets a line, because a feed that drops history it can't classify is worse than
 one that says "edited".
 """
 
+import ast
 import json
+import pathlib
 import re
 
 from support import Check
@@ -109,8 +111,9 @@ def check_it_survives_a_row_it_cannot_read() -> bool:
 
     # And with no prose either, it is still a sentence.
     bare = text(ev("edited", None, None))
-    c.ok(bare.strip().endswith(THREAD[:46].strip()),
+    c.ok("·" not in bare,
          "no detail means no trailing separator left dangling")
+    c.ok("Penn Hills" in bare, "and the thread is still named")
 
     return c.report()
 
@@ -159,9 +162,120 @@ def check_long_text_is_clipped() -> bool:
     return c.report()
 
 
+def full(e):
+    return re.sub("<[^>]+>", "", bert.Bert._feed_text(e, full=True))
+
+
+def _bert_src():
+    return pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+
+
+def _method(name):
+    tree = ast.parse(_bert_src())
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+    return next(n for n in cls.body
+                if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def check_only_rows_with_something_behind_them_open() -> bool:
+    """
+    A row is worth a click only when clipping actually hid something.
+
+    Comparing the clipped line with the whole one is the test, and it needs no
+    layout: clipping is the only thing that removes content. Giving every row
+    an affordance would teach people to click rows that never change.
+    """
+    c = Check("which rows can be opened")
+
+    # Short on both counts: nothing for the clip to take.
+    short = ev("work_done", None, "Return bot", name="OPS: Trekk - 04Aug26")
+    c.equal(bert.Bert._feed_text(short),
+            bert.Bert._feed_text(short, full=True),
+            "a line that already fits has nothing behind it")
+
+    long_one = ev("edited", work(added=1),
+                  'added "' + "a work item far longer than the row allows" * 3 + '"')
+    c.ok(text(long_one) != full(long_one), "a clipped line does")
+    c.ok(len(full(long_one)) > len(text(long_one)),
+         "and opening it shows strictly more")
+    c.ok("…" not in full(long_one), "with nothing left cut off")
+
+    # The thread name is clipped too, so a long title alone is enough.
+    titled = ev("completed", name="PROD: " + "Some Very Long Client Name " * 3)
+    c.ok(text(titled) != full(titled), "a long thread name is reason enough")
+
+    return c.report()
+
+
+def check_an_open_row_survives_a_poll() -> bool:
+    """
+    The feed rebuilds every row every five seconds.
+
+    So which rows are open cannot live on the widgets -- they are all thrown
+    away and made again on each poll, and a row opened to read would shut
+    under you before you finished. It is kept by event_id on the window.
+    """
+    c = Check("an open row stays open")
+
+    src = _bert_src()
+    c.ok("self.feed_open = set()" in src,
+         "the set is made once on the window, not per render")
+
+    toggle = _method("_toggle_feed_row")
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "feed_open"
+             for n in ast.walk(toggle)),
+         "the toggle writes to it")
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "_render_feed"
+             for n in ast.walk(toggle)),
+         "and redraws, so the click shows immediately")
+
+    render = _method("_render_feed")
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "feed_open"
+             for n in ast.walk(render)),
+         "and the render reads it back rather than starting closed")
+
+    # The toggle is a plain set operation, so it can be checked outright.
+    class Bare:
+        _render_feed = lambda self: None
+        _toggle_feed_row = bert.Bert._toggle_feed_row
+
+    b = Bare()
+    b.feed_open = set()
+    b._toggle_feed_row("e1")
+    c.equal(b.feed_open, {"e1"}, "clicking opens it")
+    b._toggle_feed_row("e2")
+    c.equal(b.feed_open, {"e1", "e2"}, "two can be open at once")
+    b._toggle_feed_row("e1")
+    c.equal(b.feed_open, {"e2"}, "and clicking again closes that one only")
+
+    return c.report()
+
+
+def check_an_open_row_does_not_stretch_the_others() -> bool:
+    """
+    Rows are held to one height so an undo doesn't shift the list under you,
+    and that height only ever grows. Measuring an opened row into it would
+    leave every row four lines deep for the rest of the session.
+    """
+    c = Check("opening one row leaves the rest alone")
+
+    fit = _method("_fit_feed")
+    src = ast.dump(fit)
+    c.ok("expanded" in src, "the fit knows which rows are open")
+    c.ok("setMinimumHeight" in src or "setMaximumHeight" in src,
+         "an open row is let out of the fixed height")
+    c.ok("setFixedHeight" in src, "while the closed ones are still held to it")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
           check_renamed_says_the_new_name,
           check_the_lines_that_already_worked,
-          check_long_text_is_clipped)
+          check_long_text_is_clipped,
+          check_only_rows_with_something_behind_them_open,
+          check_an_open_row_survives_a_poll,
+          check_an_open_row_does_not_stretch_the_others)
