@@ -148,6 +148,16 @@ activity feed, undo, and the outbox.
   changes nothing or adds exactly the lines the text needs. Holding the height
   steady is only safe because closed rows never wrap, which is the invariant
   above.
+- **The clip scales with the window, capped at half of it.** A closed row is
+  cut to 46 characters of thread and 44 of detail at the narrowest, and those
+  widths are scaled up together by `_feed_scale()` so a full-screen board is
+  not clipping lines with half the row still empty. Half the window, not the
+  space available: a line run the full width of a wide screen is further than
+  the eye tracks, and the whole of it is one click away. It measures
+  `FEED_FONT_PX`, the size the row actually draws at -- `self.fontMetrics()` is
+  the window's font, reports a wider character, and cancels the calculation
+  out so a wide board clips at the narrow width anyway. The scale never falls
+  below 1, so a narrow board reads exactly as it did.
 - Writes take an idempotency `key`; retries return the original result.
 - A thread opening in Discord writes a **`started`** event, so the feed can
   say where a card came from -- the one thing on it that nobody did in Bert.

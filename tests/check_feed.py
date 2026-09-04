@@ -346,6 +346,84 @@ def check_opening_a_row_never_shortens_it() -> bool:
     return c.report()
 
 
+def check_a_wide_window_shows_more() -> bool:
+    """
+    The clip was a fixed number of characters whatever the window was doing.
+
+    On a full-screen board that threw the room away: lines were cut with half
+    the row still empty, and rows offered themselves to be opened when there
+    was nothing stopping them being read where they sat. The widths scale with
+    the space instead -- capped near halfway across the window, because a line
+    run the full width of a wide screen is further than the eye tracks, and the
+    whole of it is one click away regardless.
+    """
+    c = Check("a wider window shows more of the line")
+
+    long_thread = "PROD: Steel City Water - 30Aug26 - SSD0311 firmware rollback"
+    e = ev("edited", work(added=1),
+           'added "Return the equipment to the depot before Friday"',
+           name=long_thread)
+
+    narrow = bert.Bert._feed_text(e, scale=1.0)
+    wide = bert.Bert._feed_text(e, scale=2.0)
+    whole = bert.Bert._feed_text(e, full=True)
+
+    c.ok(len(wide) > len(narrow), "a wider window shows more")
+    c.ok(len(whole) >= len(wide), "but never more than there is")
+    c.ok("Steel City Water" in wide, "the thread name gets its share")
+    c.ok("depot" in wide, "and so does the detail")
+
+    # The point of it: at some width the row stops needing to be opened.
+    c.equal(bert.Bert._feed_text(e, scale=4.0), whole,
+            "given room enough, the closed row is already the whole line")
+
+    return c.report()
+
+
+def check_the_scale_never_shrinks_a_narrow_board() -> bool:
+    c = Check("a narrow board reads as it always did")
+
+    e = ev("edited", work(added=1), 'added "Return bot"')
+    base = bert.Bert._feed_text(e, scale=1.0)
+
+    # Anything at or below 1 has to give exactly what it gave before, or a
+    # small window would start clipping more than it used to.
+    for sc in (1.0, 0.9, 0.5, 0.0):
+        c.equal(bert.Bert._feed_text(e, scale=sc), base,
+                f"scale {sc} is not allowed to clip further")
+
+    # full ignores it entirely -- an opened row is the whole line at any width.
+    whole = bert.Bert._feed_text(e, full=True)
+    for sc in (0.5, 1.0, 3.0):
+        c.equal(bert.Bert._feed_text(e, full=True, scale=sc), whole,
+                f"an open row is unaffected at scale {sc}")
+
+    return c.report()
+
+
+def check_the_scale_is_capped_at_half_the_window() -> bool:
+    c = Check("the cap on how far a line may run")
+
+    scale = _method("_feed_scale")
+    src = ast.dump(scale)
+    c.ok("width" in src, "it reads the window width")
+    c.ok(any(isinstance(n, ast.Constant) and n.value == 2 for n in ast.walk(scale)),
+         "and stops at half of it rather than the whole row")
+    c.ok(any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "min"
+             for n in ast.walk(scale)),
+         "taking the smaller of the room and that cap")
+    c.ok(any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "max"
+             for n in ast.walk(scale)),
+         "and never returning less than 1")
+
+    # It must measure the feed's own font, not the window's -- the window's is
+    # wider, which cancelled the calculation out and left a full-screen board
+    # clipping at the narrow width anyway.
+    c.ok("FEED_FONT_PX" in src, "measured at the size the feed actually draws")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -356,4 +434,7 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_open_row_survives_a_poll,
           check_an_open_row_does_not_stretch_the_others,
           check_a_closed_row_stays_one_line,
-          check_opening_a_row_never_shortens_it)
+          check_opening_a_row_never_shortens_it,
+          check_a_wide_window_shows_more,
+          check_the_scale_never_shrinks_a_narrow_board,
+          check_the_scale_is_capped_at_half_the_window)

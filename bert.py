@@ -82,6 +82,16 @@ FEED_MAX_ROWS = 8
 # Qt's QWIDGETSIZE_MAX, which PySide6 does not export. Undoes a
 # setFixedHeight, which sets minimum and maximum together.
 UNCAPPED = 16777215
+FEED_TIME_W = 60           # the timestamp column
+# What a closed row is clipped to at the narrowest. The widths at each
+# site (46 for the thread, 44 for the detail, 40 for a new name) are
+# scaled up together from here, so their proportions survive.
+FEED_BASE_CHARS = 46 + 44
+FEED_FONT_PX = 12          # the feed line, set in the row's stylesheet
+# Measured rather than guessed at: averageCharWidth() is a crude number
+# that ignores which glyphs actually turn up. A real line does not.
+FEED_SAMPLE = ("Bella Fiore edited PROD: Steel City Water - 30Aug26 - "
+               "SSD0311 firmware rollback")
 FEED_STATUS_W = 118        
 FEED_UNDO_W = 88           
 FEED_LIMIT = 200           
@@ -2379,6 +2389,32 @@ class Bert(QMainWindow):
                                   else "Hide the activity feed")
         self._fit_feed()
 
+    def _feed_scale(self):
+        """How much more of a line a closed row may show at this width.
+
+        The clip was a fixed number of characters, written for a window that
+        might be narrow, so a full-screen board threw away most of the room it
+        had and clipped lines with half the row still empty.
+
+        Capped at halfway across the window rather than at the space available:
+        a single line run the whole width of a wide screen is further than the
+        eye tracks comfortably, and the row is a summary -- the whole of it is
+        one click away. Never below 1, so a narrow board is untouched.
+        """
+        # The feed line is 12px, set on the row; self.fontMetrics() is the
+        # window's font and reports a wider character, which cancelled the
+        # whole calculation out and left a full-screen board clipping at the
+        # narrow width anyway.
+        f = QFont(self.font())
+        f.setPixelSize(FEED_FONT_PX)
+        fm = QFontMetrics(f)
+        per = max(fm.horizontalAdvance(FEED_SAMPLE) / len(FEED_SAMPLE), 1.0)
+        gaps = 3 * max(self.feed_lay.spacing(), 0)
+        room = (self.feed_scroll.viewport().width()
+                - FEED_TIME_W - FEED_STATUS_W - FEED_UNDO_W - gaps)
+        room = min(room, self.width() // 2)
+        return max(1.0, room / per / FEED_BASE_CHARS)
+
     def _toggle_feed_row(self, eid):
         """Open or close one row. Kept by event_id, not on the widget, because
         the next poll throws every widget away and builds them again."""
@@ -3247,10 +3283,14 @@ class Bert(QMainWindow):
         revoking = {e.get("new_value") for e in self.feed
                     if e["verb"] == "undo_correction" and not e.get("posted_at")}
 
+        # Once for the whole feed, not per row: it is a property of the window.
+        scale = self._feed_scale()
+
         for e in self.feed:
             eid = e["event_id"]
             opened = eid in self.feed_open
-            short, whole = self._feed_text(e), self._feed_text(e, full=True)
+            short = self._feed_text(e, scale=scale)
+            whole = self._feed_text(e, full=True)
             # Only a row with something behind it is worth a click. Most are
             # short enough to say everything already, and giving those an
             # affordance teaches people to click rows that never change.
@@ -3262,7 +3302,7 @@ class Bert(QMainWindow):
             h.setSpacing(8)
 
             when = QLabel(self._clock(e["occurred_at"]))
-            when.setFixedWidth(60)
+            when.setFixedWidth(FEED_TIME_W)
             when.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
             h.addWidget(when, 0, Qt.AlignTop)
 
@@ -3283,7 +3323,8 @@ class Bert(QMainWindow):
             # Given the spare width rather than a stretch beside it: the label
             # used to take its one-line size hint and get cut off by whatever
             # was left over.
-            txt.setStyleSheet(f"color:{T.INK}; font-size:12px;")
+            txt.setStyleSheet(
+                f"color:{T.INK}; font-size:{FEED_FONT_PX}px;")
             h.addWidget(txt, 1, Qt.AlignTop)
 
             row.text_label = txt
@@ -3367,7 +3408,7 @@ class Bert(QMainWindow):
         return None
 
     @staticmethod
-    def _feed_text(e, full=False):
+    def _feed_text(e, full=False, scale=1.0):
         """One line of the activity feed.
 
         `full` returns it with nothing cut out, which is what an opened row
@@ -3376,7 +3417,11 @@ class Bert(QMainWindow):
         so if the two are equal there is nothing behind the row.
         """
         who = e.get("actor_name") or "Ernie"
-        cut = (lambda t, w: (t or "").strip()) if full else clip
+        # scale > 1 on a wide window: the same line, allowed more of itself
+        # before it is cut. Never below the width it was written for, so a
+        # narrow board reads exactly as it did.
+        cut = ((lambda t, w: (t or "").strip()) if full
+               else (lambda t, w: clip(t, max(int(w * scale), w))))
         what = cut(e.get("thread_name") or "", 46)
         thread = f"<span style='color:{T.MUTED}'>{what}</span>"
 
