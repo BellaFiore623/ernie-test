@@ -109,6 +109,11 @@ FEED_LIMIT = 200
 
 BANDS = ["unassigned", "critical", "high", "medium", "low"]
 BAND_LABEL = {b: b.capitalize() for b in BANDS}
+# Not "Unassigned", which described the data rather than the ask. These
+# are the tickets nobody has picked up, and that is the one thing on the
+# board wanting a person rather than reporting a state.
+BAND_LABEL["unassigned"] = "Needs Attention"
+CAUTION = "⚠"          # the same sign warning_row() uses
 
 # Build state, return state and equipment direction were replaced by work
 # items; nothing edits them any more. These stay so the activity feed and the
@@ -163,7 +168,7 @@ LIGHT = {
     # ramp on purpose: it is not a priority, it is the absence of one, and
     # wearing a near-critical red said the opposite of that across the room.
     "band_tint": {
-        "unassigned": "#E8EBEF", "critical": "#F6E4E4", "high": "#FBF1DF",
+        "unassigned": "#F6E4E4", "critical": "#F6E4E4", "high": "#FBF1DF",
         "medium": "#EAF1FA", "low": "#EFF1F2",
     },
     # The card, a shade deeper than its wash -- except unassigned, which is
@@ -171,13 +176,13 @@ LIGHT = {
     # nobody has picked up, and it leaves red to mean one thing on this
     # board: a card that needs a person. Those keep their outline over it.
     "band_card": {
-        "unassigned": ("#FFFFFF", "#C6CCD3"), "critical": ("#F7DCDC", "#D14343"),
+        "unassigned": ("#FBEBEB", "#D14343"), "critical": ("#F7DCDC", "#D14343"),
         "high": ("#FCEBD1", "#E0A03C"), "medium": ("#E3EDF9", "#7FA8D8"),
         "low": ("#EDEFF1", "#C2C7CC"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
-        "unassigned": "#57616B", "critical": "#9B2C2C", "high": "#8A5A08",
+        "unassigned": "#9B2C2C", "critical": "#9B2C2C", "high": "#8A5A08",
         "medium": "#2B6CB0", "low": "#555B60",
     },
 }
@@ -209,16 +214,16 @@ DARK = {
         "CS":   ("#B08BD4", "#2A2334", "#D3BCE8"),
     },
     "band_tint": {
-        "unassigned": "#232A32", "critical": "#2E1E1D", "high": "#2C2318",
+        "unassigned": "#2E1E1D", "critical": "#2E1E1D", "high": "#2C2318",
         "medium": "#1F2833", "low": "#212730",
     },
     "band_card": {
-        "unassigned": ("#1B2027", "#3E4753"), "critical": ("#3A2422", "#E08078"),
+        "unassigned": ("#301D1C", "#E08078"), "critical": ("#3A2422", "#E08078"),
         "high": ("#382C18", "#D9A441"), "medium": ("#24303E", "#5A82B0"),
         "low": ("#262D36", "#3E4753"),
     },
     "band_text": {
-        "unassigned": "#9AA6B3", "critical": "#F5AAA2", "high": "#EFC15E",
+        "unassigned": "#F5AAA2", "critical": "#F5AAA2", "high": "#EFC15E",
         "medium": "#A3C8F0", "low": "#A8B2BD",
     },
 }
@@ -360,16 +365,25 @@ BLOCKING = {"title_none", "title_unparseable", "title_prefix_only",
 def card_skin(data, editing=False):
     """Fill and outline for one ticket, wherever it is drawn.
 
-    An unreadable thread is outlined, not filled: it keeps its band's colour,
-    so an unassigned one still reads as unassigned and the red says only that
-    a person is needed. 2px, so it reads as outlined next to a critical card
-    that is merely red.
+    A ticket wears its **tag** -- PROD, OPS, ENG, CS -- not its priority. The
+    tag is what the ticket is; the priority is where it currently sits, which
+    the band it is in already says, and saying it twice spent the board's
+    whole colour budget on the half nobody was reading.
+
+    Needs attention is the exception, and outranks the tag: red, because it is
+    the one state that is asking for somebody rather than describing the work.
+
+    An unreadable thread keeps whatever fill it has and is outlined at 2px, so
+    it reads as outlined rather than merely coloured.
 
     The card and its row in the side rail have to agree about this, and used
     to say it separately -- which is how they came to fill it red in two
     places at once.
     """
-    tint, edge = T.BAND_CARD.get(data.get("priority") or "", T.BAND_CARD["low"])
+    stripe, tint, _ = T.QUEUE.get(data.get("queue") or "", T.NEUTRAL)
+    edge = stripe
+    if (data.get("priority") or "") == "unassigned":
+        tint, edge = T.BAND_CARD["unassigned"]
     if needs_triage(data):
         return tint, T.RED_EDGE, 2
     if editing:
@@ -1571,6 +1585,14 @@ class Band(QWidget):
         # which is the window colour.
         self.caret.setStyleSheet(
             f"color:{accent}; font-size:11px; background:transparent;")
+        # On the one band that is asking for something. In the header rather
+        # than in BAND_LABEL, because the label is also read out in the
+        # activity feed, where a warning sign on a reorder would be shouting.
+        if priority == "unassigned":
+            sign = QLabel(CAUTION)
+            sign.setStyleSheet(
+                f"color:{accent}; font-size:12px; background:transparent;")
+            h.addWidget(sign)
         self.title = QLabel(BAND_LABEL[priority])
         self.count = QLabel("0")
 

@@ -131,32 +131,80 @@ def check_each_palette_is_the_right_end() -> bool:
     return c.report()
 
 
-def a_card(priority="unassigned", *, unreadable=False, override=None):
-    return {"priority": priority,
+def a_card(priority="unassigned", *, queue="PROD", unreadable=False,
+           override=None):
+    return {"priority": priority, "queue": queue,
             "issues": ["title_none"] if unreadable else [],
             "client_override": override}
 
 
-def check_unassigned_is_neutral() -> bool:
-    c = Check("unassigned is not an alarm")
+def check_a_ticket_wears_its_tag() -> bool:
+    """
+    The colour on a ticket is what it is, not where it sits.
+
+    It used to be the priority band, which the band it is sitting in already
+    says -- so the board spent its whole colour budget saying the same thing
+    twice, and the tag, which is the part that tells you what the work
+    actually is, got a chip and a hairline.
+    """
+    c = Check("a ticket wears its tag")
 
     def body():
-        card, edge = bert.T.BAND_CARD["unassigned"]
-        # The plain surface, whichever theme that is -- white on light, the
-        # card colour on dark. Not a hardcoded white, which was the old bug
-        # in a new costume.
-        c.equal(card.upper(), bert.T.SURFACE.upper(),
-                f"{bert.T.name}: the ticket is the plain surface")
-        crit, _ = bert.T.BAND_CARD["critical"]
-        c.ok(hue_spread(crit) > hue_spread(card),
-             f"{bert.T.name}: critical is the one wearing a hue")
-        c.ok(hue_spread(bert.T.BAND_TINT["unassigned"])
-             < hue_spread(bert.T.BAND_TINT["critical"]),
-             f"{bert.T.name}: and its wash is the quieter of the two")
-        c.ok(bert.T.BAND_TEXT["unassigned"] != bert.T.RED_FG,
-             f"{bert.T.name}: its heading is not red ink")
-        c.ok(edge != bert.T.RED_EDGE,
-             f"{bert.T.name}: nor is its edge")
+        for q in bert.T.QUEUE:
+            stripe, tint, _ = bert.T.QUEUE[q]
+            fill, edge, px = bert.card_skin(a_card("high", queue=q))
+            c.equal(fill, tint, f"{bert.T.name}: {q} is filled with its own colour")
+            c.equal(edge, stripe, f"{bert.T.name}: {q} is edged with it too")
+            c.equal(px, 1, f"{bert.T.name}: {q} at an ordinary weight")
+
+        # The same ticket in another band is the same colour: the band is
+        # where it sits, and the band says that itself.
+        for band in ("critical", "high", "medium", "low"):
+            c.equal(bert.card_skin(a_card(band, queue="OPS")),
+                    bert.card_skin(a_card("high", queue="OPS")),
+                    f"{bert.T.name}: OPS reads the same in {band}")
+
+        # A tag with no colour -- retired, or from a later build -- is neutral
+        # rather than a crash.
+        fill, edge, _ = bert.card_skin(a_card("high", queue="DATA"))
+        c.equal((fill, edge), (bert.T.NEUTRAL[1], bert.T.NEUTRAL[0]),
+                f"{bert.T.name}: an unknown tag falls back to neutral")
+        return True
+
+    in_theme("light", body)
+    in_theme("dark", body)
+    return c.report()
+
+
+def check_needs_attention_is_the_alarm() -> bool:
+    """
+    The one band that is asking for something rather than describing one.
+
+    Unassigned was deliberately neutral while critical wore the red, because
+    two red bands at the top of a board is an emergency that isn't one. Now
+    that a ticket's colour is its tag, red is free to mean one thing: nobody
+    has picked this up.
+    """
+    c = Check("needs attention is the alarm")
+
+    c.equal(bert.BAND_LABEL["unassigned"], "Needs Attention",
+            "the band says what it wants, not what it lacks")
+    c.ok(bert.CAUTION, "and there is a sign to put beside it")
+
+    def body():
+        fill, edge, px = bert.card_skin(a_card("unassigned"))
+        card, rim = bert.T.BAND_CARD["unassigned"]
+        c.equal((fill, edge, px), (card, rim, 1),
+                f"{bert.T.name}: it takes the band's colour, not its tag's")
+        c.equal(edge, bert.T.RED_EDGE, f"{bert.T.name}: which is the red edge")
+        c.equal(bert.T.BAND_TEXT["unassigned"], bert.T.RED_FG,
+                f"{bert.T.name}: and the heading is red ink to match")
+
+        # It outranks the tag, or a PROD ticket nobody has picked up would
+        # read as ordinary PROD work.
+        for q in bert.T.QUEUE:
+            c.equal(bert.card_skin(a_card("unassigned", queue=q))[0], card,
+                    f"{bert.T.name}: {q} is still red while it sits here")
         return True
 
     in_theme("light", body)
@@ -165,25 +213,20 @@ def check_unassigned_is_neutral() -> bool:
 
 
 def check_triage_is_outlined_not_filled() -> bool:
-    c = Check("an unreadable card keeps its band's fill")
+    c = Check("an unreadable card is outlined, whatever it is filled with")
 
     def body():
-        fill, edge, px = bert.card_skin(a_card(unreadable=True))
-        c.equal(fill, bert.T.SURFACE,
-                f"{bert.T.name}: an unassigned one keeps the plain surface")
-        c.equal(edge, bert.T.RED_EDGE, f"{bert.T.name}: red outline")
-        c.equal(px, 2, f"{bert.T.name}: drawn thicker than an ordinary edge")
-        c.ok(fill.upper() != bert.T.RED_BG.upper(),
-             f"{bert.T.name}: the fill is not the red wash")
-
-        # Every band, so a triage card dragged out of unassigned still says
-        # which band it landed in.
         for band in bert.BANDS:
-            f, e, _ = bert.card_skin(a_card(band, unreadable=True))
-            c.equal(f, bert.T.BAND_CARD[band][0],
-                    f"{bert.T.name}: {band} keeps its own fill")
-            c.equal(e, bert.T.RED_EDGE,
-                    f"{bert.T.name}: {band} still gets the outline")
+            for q in ("PROD", "CS"):
+                plain, _, _ = bert.card_skin(a_card(band, queue=q))
+                fill, edge, px = bert.card_skin(
+                    a_card(band, queue=q, unreadable=True))
+                c.equal(fill, plain,
+                        f"{bert.T.name}: {band}/{q} keeps the fill it had")
+                c.equal(edge, bert.T.RED_EDGE,
+                        f"{bert.T.name}: {band}/{q} gets the outline")
+                c.equal(px, 2,
+                        f"{bert.T.name}: {band}/{q} drawn thicker than ordinary")
         return True
 
     in_theme("light", body)
@@ -195,28 +238,30 @@ def check_the_other_skins() -> bool:
     c = Check("what card_skin says the rest of the time")
 
     def body():
-        surface, neutral = bert.T.BAND_CARD["unassigned"]
-        c.equal(bert.card_skin(a_card()), (surface, neutral, 1),
+        stripe, tint, _ = bert.T.QUEUE["PROD"]
+        c.equal(bert.card_skin(a_card("high")), (tint, stripe, 1),
                 f"{bert.T.name}: an ordinary card")
-        c.equal(bert.card_skin(a_card(), editing=True),
-                (surface, bert.T.ACCENT, 1),
+        c.equal(bert.card_skin(a_card("high"), editing=True),
+                (tint, bert.T.ACCENT, 1),
                 f"{bert.T.name}: one with its editor open")
 
         # Triage outranks the editor: a card nobody can read is still that.
-        _, edge, px = bert.card_skin(a_card(unreadable=True), editing=True)
+        _, edge, px = bert.card_skin(a_card("high", unreadable=True),
+                                     editing=True)
         c.equal((edge, px), (bert.T.RED_EDGE, 2),
                 f"{bert.T.name}: triage wins over both")
 
         # A client typed in by hand is the acknowledgement, so the red clears.
-        _, edge, _ = bert.card_skin(a_card(unreadable=True, override="Penn"))
+        _, edge, _ = bert.card_skin(
+            a_card("high", unreadable=True, override="Penn"))
         c.ok(edge != bert.T.RED_EDGE,
              f"{bert.T.name}: a hand-typed client clears the outline")
 
-        # .get with a fallback here, unlike Band's -- a card arriving with a
-        # priority this build has never heard of must still draw.
+        # A band this build has never heard of must still draw, and it is no
+        # longer the band that decides the colour anyway.
         c.equal(bert.card_skin(a_card("something-new")),
                 bert.card_skin(a_card("low")),
-                f"{bert.T.name}: an unknown band falls back to low")
+                f"{bert.T.name}: an unknown band draws like any other")
         return True
 
     in_theme("light", body)
@@ -418,6 +463,7 @@ def check_the_queues_the_board_can_draw() -> bool:
 
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
-          check_unassigned_is_neutral, check_triage_is_outlined_not_filled,
+          check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
+          check_triage_is_outlined_not_filled,
           check_the_other_skins, check_choosing_a_theme,
           check_the_queues_the_board_can_draw)

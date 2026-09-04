@@ -396,6 +396,17 @@ Match what's there: standard library first, `httpx` for HTTP, dataclasses for
 records, plain functions over classes unless state demands it. Comments
 explain *why*, not *what*. No new dependencies without a reason.
 
+**A ticket wears its tag, not its priority.** `card_skin()` fills a card from
+`T.QUEUE[queue]` -- PROD, OPS, ENG, CS. The priority is where a card is
+sitting, which the band around it already says, and saying it twice spent the
+board's whole colour budget on the half nobody was reading. The one exception
+is **needs attention** (the `unassigned` band, `BAND_LABEL` renames it and its
+header carries `CAUTION`), which outranks the tag and is red: it is the only
+state asking for a person rather than describing the work. That is why red is
+free to mean one thing again -- it used to be shared with critical, and two
+red bands at the top of a board is an emergency that isn't one. Triage stays a
+2px outline over whatever fill the card has.
+
 **No colour literals in Bert.** Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 both `LIGHT` and `DARK`. A hex typed into a stylesheet works in one theme and

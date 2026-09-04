@@ -440,8 +440,11 @@ def check_reordered_says_where_it_went() -> bool:
     c.ok("High" in line, "and the band, so the places mean something")
     c.ok("Penn Hills" in line, "and which ticket")
 
-    c.ok("Unassigned" in text(ev("reordered", "unassigned:3", "unassigned:1")),
-         "every band names itself the same way")
+    # Whatever the band is called on the board, which is not always its
+    # stored name -- unassigned reads as "Needs Attention" there.
+    c.ok(bert.BAND_LABEL["unassigned"]
+         in text(ev("reordered", "unassigned:3", "unassigned:1")),
+         "every band names itself the way the board names it")
 
     # The ones a naive ordinal rule gets wrong.
     teens = text(ev("reordered", "high:13", "high:11"))
