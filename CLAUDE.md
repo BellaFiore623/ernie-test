@@ -185,9 +185,15 @@ other's API. Priority, rank, work items and completion live in
   including the two quiet outcomes, and is what `/health` and Bert's
   indicator report. NULL means published but never yet reconciled, which Bert
   shows as `no contact yet` rather than folding into "in step". The publish
-  must never write it. The summary message says **last published**, not "last
-  checked", for the same reason: it is one machine's write time, not an
-  agreement between two.
+  must never write it. **`no contact` is about this machine, not the other
+  one.** `reconcile()` stamps every card it compares against the messages in
+  the channel, and those sit in Discord whether or not the other laptop is on,
+  so the clock advances on our own cycle regardless of anyone else's activity.
+  The only thing that stalls it is our own sync stopping or losing Discord.
+  Documentation that read it as "their stack is down" had it backwards, and
+  sent the reader to ask the other person about a window on their own machine.
+  The summary message says **last published**, not "last checked", for the same
+  reason: it is one machine's write time, not an agreement between two.
 - Applying a remote change writes an event with **`dispatch_after` NULL**.
   The machine that made the change already queued its own message; giving
   the replay a dispatch would post the same update twice, once per board.

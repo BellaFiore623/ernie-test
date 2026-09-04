@@ -165,9 +165,10 @@ Top right, next to the refresh button, is the shared-board indicator:
 - **`shared board · up to date`** — your board and theirs agree.
 - **`shared board · 2 to send`** — you've changed something they haven't been
   told about. It goes out on the next cycle. Normal for up to a minute.
-- **`shared board · no contact for 5m`** — nothing has been exchanged in a
-  while. Usually their stack isn't running, or yours has stopped. Check the
-  terminal you started it in.
+- **`shared board · no contact for 5m`** — **your own** stack has stopped
+  reading the channel. Check the three minimised windows on your machine. It
+  does not mean the other person is offline: the shared board lives in
+  Discord, so their laptop being shut makes no difference to yours.
 
 Hover any of them for the longer version. The "shared board" is one message
 per card in the `#ernie-state` channel: it is the copy both machines read and
@@ -214,8 +215,9 @@ than fighting it.
 terminal you started it in. Nothing you do is lost — Bert reconnects on its
 own.
 
-**`shared board · no contact` that doesn't clear.** Their stack is down, or your
-sync has died. Check with them, then check your own terminal.
+**`shared board · no contact` that doesn't clear.** Your own sync has died, or
+can't reach Discord. Check the "Ernie sync" window on your machine — this one
+is not about the other person, and messaging them won't move it.
 
 **Nothing you do reaches them.** Run the check, which looks for exactly
 this:
