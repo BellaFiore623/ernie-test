@@ -2423,15 +2423,26 @@ class Bert(QMainWindow):
         self.feed_scroll.viewport().setStyleSheet("background:transparent;")
         inner = QWidget()
         inner.setStyleSheet("background:transparent;")
-        # Capped here rather than on each row: a row limited on its own takes
-        # the width of its own text, so the Undo buttons landed at a different
-        # x on every line -- measured at 761 and 845 for two rows of the same
-        # feed. Every row fills this instead, so the columns stay a column.
-        inner.setMaximumWidth(FEED_ROW_MAX_W)
         self.feed_lay = QVBoxLayout(inner)
         self.feed_lay.setContentsMargins(0, 0, FEED_GUTTER, 0)
         self.feed_lay.setSpacing(3)
         self.feed_scroll.setWidget(inner)
+        # The cap lives on the scroll area, not on the rows and not on the
+        # widget inside it. Two things follow, and both are the point:
+        #
+        # Every row fills one viewport, so they are all a single width and the
+        # Undo buttons stay in a column. A row capped on its own takes the
+        # width of its own text instead, and they landed at 761 and 845 for
+        # two rows of the same feed.
+        #
+        # And the scrollbar belongs to the scroll area, so it comes to the cap
+        # with it and closes the feed off, rather than sitting out at the
+        # window edge with a field of nothing between it and the last button.
+        self.feed_scroll.setMaximumWidth(FEED_ROW_MAX_W)
+        # No alignment flag: aligning it makes it take its own sizeHint, which
+        # for a scroll area is small -- measured at 432px, cap or no cap. Left
+        # to fill, it takes the width it is given up to the cap and sits at the
+        # left of it anyway.
         body.addWidget(self.feed_scroll)
         lay.addWidget(self.feed_body)
 

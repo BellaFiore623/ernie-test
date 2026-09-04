@@ -597,10 +597,23 @@ def check_the_controls_stay_near_their_line() -> bool:
                  for n in ast.walk(render)),
          "the rows themselves are not capped one by one")
 
+    # The cap belongs to the scroll area, so its scrollbar comes to the cap
+    # with it and closes the feed off instead of sitting at the window edge.
     c.ok(any(isinstance(n, ast.Call)
-             and getattr(n.func, "attr", None) == "setAlignment"
+             and getattr(n.func, "attr", None) == "setMaximumWidth"
+             and getattr(getattr(n.func, "value", None), "attr", None) == "feed_scroll"
              for n in ast.walk(panel)),
-         "and the feed is aligned rather than left to float")
+         "and it is the scroll area that carries it, so the scrollbar does too")
+
+    # Adding it with an alignment flag makes it take its own sizeHint, which
+    # for a scroll area is small -- 432px, cap or no cap.
+    adds = [n for n in ast.walk(panel)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", None) == "addWidget"
+            and any(getattr(a, "attr", None) == "feed_scroll" for a in n.args)]
+    c.ok(adds, "the scroll area is added to the panel")
+    c.ok(all(len(n.args) == 1 for n in adds),
+         "with no alignment flag, or it would shrink to its own size hint")
 
     # The line has to be sized for the room the row actually gets.
     scale = _method("_feed_scale")

@@ -149,8 +149,13 @@ activity feed, undo, and the outbox.
   went with which entry. The cap goes on the panel the rows fill, **not on the
   rows**: a row capped on its own takes the width of its own text, so the
   buttons land at a different x on every line (measured at 761 and 845 for two
-  rows of one feed). `_feed_scale()` measures against the capped width too, or
-  the line would be sized for room the row is never given.
+  rows of one feed). It goes on the **scroll area** specifically, so its
+  scrollbar comes to the cap with it and closes the feed off, rather than
+  sitting out at the window edge with a field of nothing between it and the
+  last button. It is added with no alignment flag: aligning a scroll area makes
+  it take its own `sizeHint`, which is small -- 432px, cap or no cap.
+  `_feed_scale()` measures against the capped width too, or the line would be
+  sized for room the row is never given.
 - **In a feed row the text is what gives way, never the controls.** An
   unwrapped `QLabel` cannot be made narrower than its text, so the row's
   minimum width was the whole line plus every fixed column -- 1644px inside a
