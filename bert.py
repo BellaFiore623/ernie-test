@@ -2411,9 +2411,16 @@ class Bert(QMainWindow):
         # click would have left every row four lines deep for the session.
         shut = [r for r in rows if not getattr(r, "expanded", False)]
         tallest = max((r.sizeHint().height() for r in shut), default=0)
-        # Remembered, so a moment with an empty feed -- a fresh database, or
-        # every row undone -- doesn't collapse the panel and bounce the board.
-        self._feed_row_h = max(getattr(self, "_feed_row_h", 0), tallest)
+        # Remembered only across a feed with nothing in it -- a fresh database,
+        # or every row undone -- so the panel doesn't collapse and bounce the
+        # board. It used to be a running maximum that never came down, which
+        # meant one bad measurement set the row height for the rest of the
+        # session and every redraw could only make it worse. When there are
+        # rows to measure, believe them.
+        if shut:
+            self._feed_row_h = tallest
+        else:
+            self._feed_row_h = getattr(self, "_feed_row_h", 0)
 
         # Closed rows are all one height. A row that loses its Undo button is
         # shorter than one that has it, so without this every undo shifts
@@ -3257,10 +3264,18 @@ class Bert(QMainWindow):
                 body += (f"<span style='color:{T.MUTED}'>&nbsp;"
                          f"{'&#9662;' if opened else '&#9656;'}</span>")
             txt = QLabel(body)
-            # Wrapped, and given the spare width rather than a stretch beside
-            # it: the label used to take its one-line size hint and get cut off
-            # by whatever was left.
-            txt.setWordWrap(True)
+            # Wrapping only when open. A closed row is a one-line summary and
+            # has to stay exactly one line tall, because _fit_feed takes the
+            # height every row is held to from these -- and a wrapped QLabel
+            # reports its sizeHint at a heuristic width of its own, not the
+            # width the layout will give it. Measured: 112px against 14 for
+            # the same line. That became the row height for the whole feed,
+            # the panel grew to fit it, and _feed_row_h only ever grows, so
+            # every redraw ratcheted it further.
+            txt.setWordWrap(opened)
+            # Given the spare width rather than a stretch beside it: the label
+            # used to take its one-line size hint and get cut off by whatever
+            # was left over.
             txt.setStyleSheet(f"color:{T.INK}; font-size:12px;")
             h.addWidget(txt, 1, Qt.AlignTop)
 

@@ -270,6 +270,49 @@ def check_an_open_row_does_not_stretch_the_others() -> bool:
     return c.report()
 
 
+def check_a_closed_row_stays_one_line() -> bool:
+    """
+    A closed row must not word-wrap, and the height must be able to come down.
+
+    _fit_feed takes the height every row is held to from the closed rows'
+    sizeHint, and a wrapped QLabel reports its hint at a heuristic width of its
+    own rather than the width the layout will give it -- 112px against 14 for
+    the same line, measured. Wrapping the closed rows put that number into
+    _feed_row_h, the panel grew to fit eight-line rows, and because the height
+    was a running maximum that never came down, every redraw ratcheted it
+    further: clicking anything made the feed swallow the window.
+
+    So two invariants, and the second is what would have made the first
+    survivable.
+    """
+    c = Check("a closed row is one line, and the height can come back down")
+
+    render = _method("_render_feed")
+    wraps = [n for n in ast.walk(render)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "setWordWrap"]
+    c.equal(len(wraps), 1, "the feed sets word wrap in one place")
+    arg = wraps[0].args[0]
+    c.ok(not (isinstance(arg, ast.Constant) and arg.value is True),
+         "and not unconditionally on -- a closed row has to stay one line")
+    c.ok(isinstance(arg, ast.Name) and arg.id == "opened",
+         "it wraps exactly when the row is open")
+
+    fit = _method("_fit_feed")
+    assigns = [n for n in ast.walk(fit)
+               if isinstance(n, ast.Assign)
+               and any(getattr(t, "attr", None) == "_feed_row_h" for t in n.targets)]
+    c.ok(assigns, "the fit still sets a row height")
+    c.ok(not any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "max"
+                 and any(isinstance(a, ast.Call)
+                         and getattr(a.func, "id", None) == "getattr"
+                         for a in n.args)
+                 for a2 in assigns for n in ast.walk(a2)),
+         "but not as a running maximum of itself, which can only ever grow")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -278,4 +321,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_long_text_is_clipped,
           check_only_rows_with_something_behind_them_open,
           check_an_open_row_survives_a_poll,
-          check_an_open_row_does_not_stretch_the_others)
+          check_an_open_row_does_not_stretch_the_others,
+          check_a_closed_row_stays_one_line)

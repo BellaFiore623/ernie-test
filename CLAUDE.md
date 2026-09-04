@@ -127,12 +127,18 @@ activity feed, undo, and the outbox.
   no layout measuring, and no affordance on the rows that already say
   everything. Which rows are open is held on the window by `event_id`, not on
   the widgets: `_render_feed` throws every row away and builds it again on each
-  poll, so a row opened to read would shut again within five seconds. `_fit_feed`
-  holds *closed* rows to one height, because a row that loses its Undo button
-  is shorter than one that has it and every undo would shift the list; an open
-  row is let out of that, and takes its height from the label's
-  `heightForWidth` rather than the row's `sizeHint()`, which under-reports a
-  wrapped label and clips the very text the row was opened to show.
+  poll, so a row opened to read would shut again within five seconds.
+- **A closed feed row never word-wraps.** `_fit_feed` takes the height every
+  row is held to from the closed rows' `sizeHint()`, and a wrapped `QLabel`
+  reports its hint at a heuristic width of its own rather than the width the
+  layout will give it -- 112px against 14 for the same line. Wrapping them all
+  put that into `_feed_row_h`, the panel grew to fit eight-line rows, and since
+  that height was a running maximum it could only ever get worse: clicking
+  anything made the feed swallow the window. It is measured fresh whenever
+  there are rows, and only remembered across a feed with nothing in it. An open
+  row wraps and takes its height from the label's `heightForWidth`, because
+  `sizeHint()` under-reports the other way there and clips the text the row was
+  opened to show.
 - Writes take an idempotency `key`; retries return the original result.
 - A thread opening in Discord writes a **`started`** event, so the feed can
   say where a card came from -- the one thing on it that nobody did in Bert.
