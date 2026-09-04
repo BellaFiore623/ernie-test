@@ -43,6 +43,9 @@ FORMAT_VERSION = 1
 CONTENT_MAX = 2000          # Discord's cap on message content
 SKEW_WARN_S = 120           # clock difference worth saying out loud
 SUMMARY_MARK = "**Board**"  # first characters of the human summary message
+# Later pages of the same summary. Starts with SUMMARY_MARK, so everything
+# that finds or clears the summary finds these too without being taught to.
+SUMMARY_CONT = "**Board** _(continued)_"
 SUMMARY_HEARTBEAT_S = 600   # how stale "last checked" may get before a rewrite
 # The order Bert shows the bands in. The summary reads the same way round
 # as the board it describes, or comparing the two is needless work.
@@ -284,35 +287,44 @@ def clear(d: Discord, cid: str) -> int:
     return gone
 
 
-def render_summary(cards: list[Card]) -> str:
+def render_summary(cards: list[Card]) -> list[str]:
     """
-    The whole running order in one message, for people rather than for Ernie.
+    The whole running order, for people rather than for Ernie.
 
     Card messages are the state and are scattered up the channel in whatever
     order they were first posted; this is the only place the board can be read
     top to bottom, which is what you want when checking two boards agree.
+
+    Returns one string per message. It used to return one, and dropped rows
+    off the tail until what was left fit Discord's 2000 character cap -- so a
+    board that grew past about thirty cards quietly stopped showing its last
+    few, which are the lowest ranked ones nobody was looking at anyway, right
+    up until somebody went looking for one. The channel already refuses to put
+    everything in one message for the cards themselves; the summary had no
+    better claim to it.
     """
     live = [c for c in cards if not c.completed]
     pos = positions(cards)
     # Discord's own timestamp markup: the reader's client renders these in
     # their timezone and keeps the "ago" current by itself, so the message
     # doesn't have to be rewritten for the clock to stay right.
-    lines = [f"{SUMMARY_MARK} — {len(live)} open, {len(cards) - len(live)} closed",
-             "_the running order both boards should agree on_"]
+    head = [f"{SUMMARY_MARK} — {len(live)} open, {len(cards) - len(live)} closed",
+            "_the running order both boards should agree on_"]
     # "last checked" read as "the two boards were compared and agree", which
     # this message cannot say: it is written by whichever machine published,
     # from its own copy, and a board whose sync has stopped goes on stamping a
     # confident clock over a stale order. When it was written is what it
     # honestly knows. Whether contact is live is Bert's indicator, off agreed_at.
-    lines.append(f"last published {discord_time(now_iso())}")
+    head.append(f"last published {discord_time(now_iso())}")
 
+    body = []
     for band in BAND_ORDER:
         in_band = sorted((c for c in live if c.priority == band),
                          key=lambda c: c.rank)
         if not in_band:
             continue
-        lines.append("")
-        lines.append(f"**{band.title()}**")
+        body.append("")
+        body.append(f"**{band.title()}**")
         for c in in_band:
             name = c.name if len(c.name) <= 52 else c.name[:51] + "…"
             row = f"`{pos[c.thread_id]}.` {name}"
@@ -320,14 +332,40 @@ def render_summary(cards: list[Card]) -> str:
                 row += f"  ·  {sum(1 for i in c.items if i.done)}/{len(c.items)}"
             if c.actor:
                 row += f"  ·  {c.actor}"
-            lines.append(row)
+            body.append(row)
 
-    # A long board has to lose its tail rather than the message being refused.
-    out = "\n".join(lines)
-    while len(out) > CONTENT_MAX - 40 and len(lines) > 3:
-        lines.pop()
-        out = "\n".join(lines) + "\n_…truncated_"
-    return out
+    return _paginate(head, body)
+
+
+def _paginate(head: list[str], body: list[str]) -> list[str]:
+    """Pack head + body into as few messages as fit under the content cap.
+
+    Splits between rows, never inside one, and never leaves a band heading
+    stranded as the last thing on a message with its cards on the next.
+    """
+    NL = chr(10)
+    budget = CONTENT_MAX - 40      # room for the marker and a stray wide glyph
+    parts, cur, cur_head = [], list(head), list(head)
+
+    def close():
+        # A trailing blank line, or a band heading with nothing under it, goes
+        # forward with the rows it belongs to rather than dangling here.
+        held = []
+        while cur and (cur[-1] == "" or (cur[-1].startswith("**")
+                                         and cur[-1].endswith("**"))):
+            held.insert(0, cur.pop())
+        parts.append(NL.join(cur))
+        return held
+
+    for line in body:
+        if len(NL.join(cur + [line])) > budget and len(cur) > len(cur_head):
+            held = close()
+            cur_head = [SUMMARY_CONT]
+            cur = cur_head + held + [line]
+        else:
+            cur.append(line)
+    parts.append(NL.join(cur))
+    return parts
 
 
 CHECKED = re.compile(r"last (?:published|checked) <t:(\d+):")
@@ -345,39 +383,77 @@ def without_stamp(content: str) -> str:
 
 
 def publish_summary(d: Discord, cid: str, cards: list[Card],
-                    existing: dict | None) -> str:
+                    existing: list[dict]) -> str:
     """
-    Post or edit the summary. Returns what happened, for the caller's count.
+    Post or edit the summary pages. Returns what happened, for the caller.
 
     The stamp is what tells a reader whether to trust what they are looking
     at, so it has to keep moving -- but rewriting the message every cycle just
     to advance a clock is noise. So: rewrite whenever the board itself
     changed, and otherwise only once the stamp has gone stale.
+
+    Only the first page carries the stamp, so only it gets the heartbeat; a
+    later page is unchanged when it is byte-identical, or it would be rewritten
+    every cycle for nothing. Pages the board has outgrown are deleted, so a
+    board that shrinks doesn't leave a stale tail behind it saying otherwise.
+
+    Pages have no identity of their own, unlike card messages, so two boards
+    crossing the same page boundary in the same cycle can both post a new last
+    page. That heals on the next pass -- whichever publishes next sees three
+    pages, wants two, and deletes the spare -- and it is only ever the summary,
+    which holds no state and is skipped by parse(). Giving each page a name to
+    claim would buy nothing but a second thing to keep in step.
     """
-    content = render_summary(cards)
-    if existing is None:
-        d.write("POST", f"/channels/{cid}/messages", content=content)
-        return "posted"
-    old = existing.get("content") or ""
-    if without_stamp(old) == without_stamp(content):
-        seen = CHECKED.search(old)
-        if seen and time.time() - int(seen.group(1)) < SUMMARY_HEARTBEAT_S:
-            return "unchanged"
-    d.write("PATCH", f"/channels/{cid}/messages/{existing['id']}",
-            content=content)
-    return "edited"
+    parts = render_summary(cards)
+    counts = {"posted": 0, "edited": 0, "unchanged": 0, "removed": 0}
+
+    for i, content in enumerate(parts):
+        if i >= len(existing):
+            d.write("POST", f"/channels/{cid}/messages", content=content)
+            counts["posted"] += 1
+            continue
+        m = existing[i]
+        old = m.get("content") or ""
+        if i == 0:
+            settled = without_stamp(old) == without_stamp(content)
+            if settled:
+                seen = CHECKED.search(old)
+                if seen and time.time() - int(seen.group(1)) < SUMMARY_HEARTBEAT_S:
+                    counts["unchanged"] += 1
+                    continue
+        elif old == content:
+            counts["unchanged"] += 1
+            continue
+        d.write("PATCH", f"/channels/{cid}/messages/{m['id']}", content=content)
+        counts["edited"] += 1
+
+    for m in existing[len(parts):]:
+        d.write("DELETE", f"/channels/{cid}/messages/{m['id']}")
+        counts["removed"] += 1
+
+    # How many pages it took is an implementation detail: when they all did
+    # the same thing, say the thing. Only a mixed pass needs the arithmetic.
+    did = {k: v for k, v in counts.items() if v}
+    if len(did) == 1:
+        return next(iter(did))
+    return ", ".join(f"{v} {k}" for k, v in did.items()) if did else "unchanged"
 
 
-def fetch_channel(d: Discord, cid: str) -> tuple[dict[str, dict], dict | None]:
-    """Everything of ours in the channel: the cards, and the summary message."""
-    cards, summary, before = {}, None, None
+def fetch_channel(d: Discord, cid: str) -> tuple[dict[str, dict], list[dict]]:
+    """Everything of ours in the channel: the cards, and the summary pages.
+
+    The summary comes back oldest first, which is the order it was written in
+    and so the order its pages read in. Snowflake ids sort chronologically,
+    which is the only ordering Discord gives us and the only one we need.
+    """
+    cards, summary, before = {}, [], None
     while True:
         params = {"limit": 100}
         if before:
             params["before"] = before
         page = d.get(f"/channels/{cid}/messages", **params)
         if not page:
-            return cards, summary
+            break
         for m in page:
             content = m.get("content", "")
             p = parse(content)
@@ -386,11 +462,13 @@ def fetch_channel(d: Discord, cid: str) -> tuple[dict[str, dict], dict | None]:
             if p and p["thread"] not in cards:
                 cards[p["thread"]] = {"message_id": m["id"], "payload": p,
                                       "content": content}
-            elif p is None and content.startswith(SUMMARY_MARK) and summary is None:
-                summary = m
+            elif p is None and content.startswith(SUMMARY_MARK):
+                summary.append(m)
         if len(page) < 100:
-            return cards, summary
+            break
         before = page[-1]["id"]
+    summary.sort(key=lambda m: int(m["id"]))
+    return cards, summary
 
 
 def fetch_state(d: Discord, cid: str) -> dict[str, dict]:

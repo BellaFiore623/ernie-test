@@ -151,10 +151,17 @@ other's API. Priority, rank, work items and completion live in
   the prose in Discord cannot corrupt the board -- which is what lets it be
   chatty enough to read: band and position, the bubbles with ticked ones
   struck through, and who last touched it.
-- One extra message carries a **`**Board**` summary** -- the whole running
-  order, in the same band order Bert shows, so the channel can be read top to
-  bottom when checking two boards agree. It holds no state and is skipped by
-  `parse()`. Its only clock is the **last published** line, kept out of the
+- One or more extra messages carry a **`**Board**` summary** -- the whole
+  running order, in the same band order Bert shows, so the channel can be read
+  top to bottom when checking two boards agree. It holds no state and is
+  skipped by `parse()`. It **spans as many messages as it needs**: it used to
+  be one, dropping rows off the bottom until the rest fit the 2000-character
+  cap, so a board past about thirty cards silently stopped showing its lowest
+  ranked few. Later pages start with `SUMMARY_MARK` too, so everything that
+  finds or clears the summary finds them without being taught to, and only the
+  first carries the stamp. Two boards crossing a page boundary in the same
+  cycle can both post a last page; the next publish sees one too many and
+  deletes it. Its only clock is the **last published** line, kept out of the
   comparison by `without_stamp()` and refreshed on its own heartbeat --
   otherwise it would differ on every publish and rewrite the message every
   cycle for nothing.

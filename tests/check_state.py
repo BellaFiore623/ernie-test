@@ -11,6 +11,8 @@ published, because one machine's write time is all it can honestly know.
 """
 
 import dataclasses
+
+NL = chr(10)
 import sqlite3
 
 from support import Board, Check, FakeDiscord, iso
@@ -116,7 +118,9 @@ def check_summary_stamp() -> bool:
 
     with Board() as b:
         cards = a_board(b)
-        content = S.render_summary(cards)
+        parts = S.render_summary(cards)
+        c.equal(len(parts), 1, "a small board is one message")
+        content = parts[0]
 
         c.ok("last published " in content, "the summary says when it was published")
         c.ok("last checked" not in content, "and no longer claims to have checked")
@@ -132,7 +136,7 @@ def check_summary_stamp() -> bool:
             body = [l for l in content.splitlines()
                     if not l.startswith("last published ")]
             body.insert(2, stamp)
-            return {"id": "msg1", "content": "\n".join(body)}
+            return [{"id": "msg1", "content": NL.join(body)}]
 
         fresh = S.discord_time(S.now_iso())
         stale = int(S.datetime.now(S.timezone.utc).timestamp()) - S.SUMMARY_HEARTBEAT_S - 60
@@ -146,7 +150,7 @@ def check_summary_stamp() -> bool:
         c.equal(S.publish_summary(FakeDiscord(), "c", cards,
                                   existing(f"last published <t:{stale}:R>")),
                 "edited", "a stale stamp is refreshed on the heartbeat")
-        c.equal(S.publish_summary(FakeDiscord(), "c", cards, None),
+        c.equal(S.publish_summary(FakeDiscord(), "c", cards, []),
                 "posted", "an empty channel gets the summary posted")
 
         moved = list(cards)
@@ -160,4 +164,84 @@ def check_summary_stamp() -> bool:
     return c.report()
 
 
-CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp)
+def check_a_long_board_keeps_every_row() -> bool:
+    """
+    A board bigger than one message used to lose its tail.
+
+    render_summary packed everything into one message and then dropped lines
+    off the bottom until what was left fit Discord's 2000 character cap. The
+    cards it dropped were the lowest ranked ones, so nothing looked wrong --
+    the summary just quietly stopped being the whole running order at about
+    thirty cards, which is a size a real board reaches in a fortnight.
+
+    The channel already refuses to put every card in one message. The summary
+    has no better claim to it.
+    """
+    c = Check("a board too big for one message")
+
+    with Board() as b:
+        bands = ("critical", "high", "medium", "low", "unassigned")
+        for i in range(60):
+            b.card(f"PROD: Client {i:02d} - 02Sep26 - Equipment item number {i}",
+                   bands[i % len(bands)], 1000.0 + i)
+        cards = S.load_board(b.path)
+        live = [x for x in cards if not x.completed]
+
+        parts = S.render_summary(cards)
+        c.ok(len(parts) > 1, "it takes more than one message")
+        c.ok(all(len(x) <= S.CONTENT_MAX for x in parts),
+             "and every one of them fits the cap")
+
+        rows = sum(1 for x in parts for l in x.splitlines() if l.startswith("`"))
+        c.equal(rows, len(live), "every open card is listed, none dropped")
+        c.ok(not any("truncated" in x for x in parts),
+             "so nothing has to apologise for a missing tail")
+
+        # Whatever finds or clears the summary has to find the later pages
+        # too, and none of them may look like a card to the pull.
+        c.ok(all(x.startswith(S.SUMMARY_MARK) for x in parts),
+             "every page is found by the same marker")
+        c.ok(all(S.parse(x) is None for x in parts),
+             "and none of them parses as state")
+
+        # A heading is no use as the last thing on a page.
+        for i, x in enumerate(parts):
+            last = x.splitlines()[-1]
+            c.ok(not (last.startswith("**") and last.endswith("**")),
+                 f"page {i + 1} does not end on a stranded band heading")
+
+    return c.report()
+
+
+def check_the_pages_follow_the_board() -> bool:
+    """Pages are posted, edited and removed as the board changes size."""
+    c = Check("summary pages follow the board")
+
+    with Board() as b:
+        for i in range(60):
+            b.card(f"PROD: Client {i:02d} - 02Sep26 - Equipment item {i}",
+                   "medium", 1000.0 + i)
+        big = S.load_board(b.path)
+        pages = S.render_summary(big)
+
+        c.equal(S.publish_summary(FakeDiscord(), "c", big, []),
+                "posted", "an empty channel gets every page posted")
+
+        # The same board again, already published: nothing to say.
+        settled = [{"id": str(i), "content": x} for i, x in enumerate(pages)]
+        settled[0]["content"] = pages[0]      # page 1 keeps its fresh stamp
+        c.equal(S.publish_summary(FakeDiscord(), "c", big, settled),
+                "unchanged", "and is left alone on the next pass")
+
+        # A board that shrinks below a page boundary must not leave the old
+        # tail sitting there claiming cards that have gone.
+        small = big[:6]
+        out = S.publish_summary(FakeDiscord(), "c", small, settled)
+        c.ok("removed" in out, f"a shrunken board removes its spare pages ({out})")
+
+    return c.report()
+
+
+CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
+          check_a_long_board_keeps_every_row,
+          check_the_pages_follow_the_board)
