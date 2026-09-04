@@ -626,6 +626,62 @@ def check_the_controls_stay_near_their_line() -> bool:
     return c.report()
 
 
+def check_the_feed_can_be_resized() -> bool:
+    """
+    The feed was a fixed height nobody could argue with.
+
+    Some days the history is the thing you are reading and the board can wait;
+    other days the reverse. A splitter lets the two be traded off, which means
+    neither half may carry a fixed height -- a fixed widget gives the handle
+    nothing to move -- and _fit_feed has to stop dictating one, or the next
+    poll would drag the handle back out from under whoever was moving it.
+    """
+    c = Check("the feed can be dragged bigger and smaller")
+
+    src = _bert_src()
+    init = _method("__init__")
+    c.ok(any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "QSplitter"
+             for n in ast.walk(init)),
+         "the board and the feed are the two halves of a splitter")
+    c.ok("setChildrenCollapsible(False)" in src,
+         "and neither can be collapsed away to nothing by dragging")
+
+    fit = _method("_fit_feed")
+    # Rows are still held to one height -- that is a different question, and
+    # what stops an undo shifting the list. It is the panel that must not be.
+    fixed = [n for n in ast.walk(fit)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "setFixedHeight"
+             and getattr(getattr(n.func, "value", None), "attr", None) == "feed_panel"]
+    c.equal(len(fixed), 1, "the panel is given a fixed height exactly once")
+    c.ok(any(getattr(a, "id", None) == "FEED_FOLDED"
+             for n in fixed for a in ast.walk(n)),
+         "and only when folded, which the caret owns rather than the handle")
+
+    c.ok(any(isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "setMaximumHeight"
+             for n in ast.walk(fit)),
+         "an unfolded panel is uncapped, so the handle can pull it open")
+
+    # Placed once. Re-applying it every poll is the bug this shape invites.
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "_feed_sized"
+             for n in ast.walk(fit)),
+         "the handle is placed once, not on every poll")
+
+    # And kept, or it has to be found again on every launch.
+    remember = _method("_remember_feed_height")
+    c.ok(any(isinstance(n, ast.Constant) and n.value == "feed_height"
+             for n in ast.walk(remember)),
+         "where it was dragged to is remembered")
+
+    toggle = _method("toggle_feed")
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "_feed_sized"
+             for n in ast.walk(toggle)),
+         "and unfolding restores it rather than keeping what the fold left")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -644,4 +700,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_a_narrow_window_keeps_the_controls,
           check_the_window_has_a_floor,
           check_the_chevron_is_a_character,
-          check_the_controls_stay_near_their_line)
+          check_the_controls_stay_near_their_line,
+          check_the_feed_can_be_resized)

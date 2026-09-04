@@ -37,7 +37,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
-    QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout,
+    QWidget,
 )
 
 SETTINGS = pathlib.Path.home() / ".bert.json"
@@ -79,6 +80,8 @@ FEED_HEIGHT = 160
 FEED_FOLDED = 30           
 FEED_ROWS = 4              
 FEED_MAX_ROWS = 8          
+BOARD_MIN_H = 180          # the board never drags away to nothing
+SPLIT_GRIP = 6             # the handle between the board and the feed
 # Qt's QWIDGETSIZE_MAX, which PySide6 does not export. Undoes a
 # setFixedHeight, which sets minimum and maximum together.
 UNCAPPED = 16777215
@@ -2276,8 +2279,24 @@ class Bert(QMainWindow):
         middle.setSpacing(0)
         middle.addWidget(self.rail)
         middle.addWidget(self.scroll, 1)
-        outer.addLayout(middle, 1)
-        outer.addWidget(self._feed_panel())
+        top = QWidget()
+        top.setLayout(middle)
+        top.setMinimumHeight(BOARD_MIN_H)
+
+        # The feed used to be a fixed height nobody could argue with.
+        # A splitter, so the board and the history can be traded off
+        # against each other -- some days the feed is the thing you are
+        # reading. Neither half may carry a fixed height or the handle
+        # has nothing to move.
+        self.split = QSplitter(Qt.Vertical)
+        self.split.setChildrenCollapsible(False)
+        self.split.setHandleWidth(SPLIT_GRIP)
+        self.split.addWidget(top)
+        self.split.addWidget(self._feed_panel())
+        self.split.setStretchFactor(0, 1)   # the board takes the slack
+        self.split.setStretchFactor(1, 0)
+        self.split.splitterMoved.connect(self._remember_feed_height)
+        outer.addWidget(self.split, 1)
 
         self.edge_timer = QTimer(self)
         self.edge_timer.setInterval(EDGE_SCROLL_MS)
@@ -2398,13 +2417,16 @@ class Bert(QMainWindow):
     def _feed_panel(self):
         self.feed_folded = False
         self._feed_row_h = 0
+        self._feed_wants = 0        # what it would choose for itself
+        self._feed_sized = False    # whether the handle has been placed
         w = QWidget()
         w.setObjectName("feedPanel")
         # Scoped, so the caption and the rows don't each paint their own block
         # of it the way a bare selector would.
         w.setStyleSheet(f"#feedPanel {{ background:{T.SURFACE};"
                         f" border-top:1px solid {T.LINE}; }}")
-        w.setFixedHeight(FEED_HEIGHT)
+        # No fixed height: the splitter owns it. A minimum only, so the
+        # handle cannot be dragged down over the caption.
         lay = QVBoxLayout(w)
         lay.setContentsMargins(16, 6, 16, 8)
         lay.setSpacing(4)
@@ -2479,11 +2501,35 @@ class Bert(QMainWindow):
     def toggle_feed(self):
         """Fold the feed down to its caption, giving the board the height."""
         self.feed_folded = not self.feed_folded
+        # Unfolding restores the height rather than whatever the fold left
+        # behind, so folding and unfolding is not a way to lose your layout.
+        if not self.feed_folded:
+            self._feed_sized = False
         self.feed_body.setVisible(not self.feed_folded)
         self.feed_caret.setText("\u25b8" if self.feed_folded else "\u25be")
         self.feed_head.setToolTip("Show the activity feed" if self.feed_folded
                                   else "Hide the activity feed")
         self._fit_feed()
+
+    def _panel_height(self, view):
+        """The panel that holds a feed viewport this tall."""
+        m = self.feed_panel.layout().contentsMargins()
+        return (m.top() + m.bottom() + self.feed_panel.layout().spacing()
+                + self.feed_head.sizeHint().height() + view)
+
+    def _remember_feed_height(self, *_):
+        """Kept, so the handle does not have to be found again every
+        time Bert opens. Written on the drag rather than on close,
+        because a crash should not cost somebody their layout."""
+        if self.feed_folded:
+            return
+        h = self.feed_panel.height()
+        if h and h != self.settings.get("feed_height"):
+            self.settings["feed_height"] = h
+            try:
+                SETTINGS.write_text(json.dumps(self.settings, indent=2))
+            except OSError:
+                pass    # a layout is not worth an error box
 
     def _feed_scale(self):
         """How much more of a line a closed row may show at this width.
@@ -2532,6 +2578,8 @@ class Bert(QMainWindow):
         carries an Undo button, so it is measured, not predicted.
         """
         if self.feed_folded:
+            # Fixed on purpose: a folded feed is not something to drag open,
+            # the caret does that.
             self.feed_panel.setFixedHeight(FEED_FOLDED)
             return
         # The rows went in a moment ago and the layout has not recomputed yet,
@@ -2592,17 +2640,23 @@ class Bert(QMainWindow):
         def stack(n):
             return n * self._feed_row_h + max(0, n - 1) * gap
 
-        # Hold FEED_ROWS open even when fewer have come in, so the panel and
-        # the board above it don't jump as rows arrive, and stop growing at
-        # FEED_MAX_ROWS
+        # How tall the panel wants to be if nobody has said otherwise. The
+        # height itself belongs to the splitter now -- setting it here would
+        # take it back off whoever dragged the handle, on the next poll.
         shown = min(max(len(rows), FEED_ROWS), FEED_MAX_ROWS)
-        view = stack(shown) if self._feed_row_h else 0
-        self.feed_scroll.setFixedHeight(view)
+        self._feed_wants = self._panel_height(stack(shown)) if self._feed_row_h else 0
+        self.feed_panel.setMinimumHeight(self._panel_height(stack(1)))
+        self.feed_panel.setMaximumHeight(UNCAPPED)
 
-        m = self.feed_panel.layout().contentsMargins()
-        self.feed_panel.setFixedHeight(
-            m.top() + m.bottom() + self.feed_panel.layout().spacing()
-            + self.feed_head.sizeHint().height() + view)
+        # Placed once, from whatever was dragged last time or the default, and
+        # then left alone -- re-applying it on every poll would drag the handle
+        # back under the person moving it.
+        if not self._feed_sized and self._feed_wants:
+            want = self.settings.get("feed_height") or self._feed_wants
+            total = self.split.height()
+            if total > want + BOARD_MIN_H:
+                self.split.setSizes([total - want, want])
+                self._feed_sized = True
 
     # -- identity ----------------------------------------------------------
 

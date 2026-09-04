@@ -142,6 +142,16 @@ activity feed, undo, and the outbox.
   everything. Which rows are open is held on the window by `event_id`, not on
   the widgets: `_render_feed` throws every row away and builds it again on each
   poll, so a row opened to read would shut again within five seconds.
+- **The board and the feed are the two halves of a `QSplitter`**, so the
+  height between them can be traded off -- some days the history is the thing
+  being read. Neither half may carry a fixed height, or the handle has nothing
+  to move: `_fit_feed()` sets a *minimum* on the panel and leaves the height to
+  the splitter, and fixes it only when folded, which the caret owns rather than
+  the handle. The handle is placed once per unfold, from `settings.feed_height`
+  or the row-count default -- re-applying it on every poll would drag it back
+  out from under whoever was moving it. Rows are still held to one height;
+  that is a different question and the thing that stops an undo shifting the
+  list.
 - **A feed row stops growing at `FEED_ROW_MAX_W`.** The status chip and Undo
   are right-aligned in fixed columns, which is what makes them a column you can
   run down and click -- but unbounded, a full-screen board put them a thousand
