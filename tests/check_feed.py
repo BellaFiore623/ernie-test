@@ -525,6 +525,33 @@ def check_the_window_has_a_floor() -> bool:
     return c.report()
 
 
+def check_the_chevron_is_a_character() -> bool:
+    """
+    It was written as an HTML entity and drawn as one.
+
+    The line itself is rich text -- it carries <b> tags, so Qt reads it as
+    HTML and "&#9656;" comes out as an arrow. The chevron moved into a label
+    of its own with nothing but the entity in it, and a QLabel only reads rich
+    text when it can see a tag: with none, "&#9656;" is just seven characters.
+    They were 84px of them in a 14px column, so what showed was "&#".
+    """
+    c = Check("the chevron is a character, not an entity")
+
+    src = _bert_src()
+    line = next((l for l in src.splitlines() if "chevron = QLabel(" in l), "")
+    c.ok(line, "the chevron label is still built in one place")
+    c.ok("&#" not in line, "and not out of an HTML entity")
+    c.ok(chr(0x25b8) in line or "u25b8" in line, "but the character itself")
+
+    # Anything drawn in a label of its own has the same problem, so no entity
+    # may appear in a QLabel that holds nothing else.
+    bare = [l.strip() for l in src.splitlines()
+            if "QLabel(" in l and "&#" in l and "<" not in l]
+    c.equal(bare, [], "and no other bare label is built from one")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -541,4 +568,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_the_scale_is_capped_at_half_the_window,
           check_reordered_says_where_it_went,
           check_a_narrow_window_keeps_the_controls,
-          check_the_window_has_a_floor)
+          check_the_window_has_a_floor,
+          check_the_chevron_is_a_character)

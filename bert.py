@@ -2287,7 +2287,12 @@ class Bert(QMainWindow):
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search client, equipment, summary")
-        self.search.setFixedWidth(230)
+        # A range, not a fixed width. The toolbar asks for more than a
+        # narrow window has, so something must give: less of the search
+        # placeholder showing costs nothing, the filters being sat on top
+        # of costs the filters.
+        self.search.setMinimumWidth(140)
+        self.search.setMaximumWidth(230)
         # The same frame as the client and title boxes. It had no styling at
         # all, so it fell back to Qt's own, which against a dark toolbar is
         # near enough invisible to look like there is no box there.
@@ -2301,6 +2306,8 @@ class Bert(QMainWindow):
         self.search.textChanged.connect(self.render)
         lay.addWidget(self.search)
 
+        # So the first filter can never end up against the box before it.
+        lay.addSpacing(8)
         for q in T.QUEUE:
             cb = QueueBox(q)
             cb.setChecked(True)
@@ -2323,14 +2330,18 @@ class Bert(QMainWindow):
         lay.addSpacing(10)
         lay.addWidget(self.shared)
 
+        # Before the two buttons rather than between them. It is empty for
+        # anybody who has set their name, so all it did there was hold the
+        # refresh button and the gear apart for no visible reason.
+        self.who = QLabel("")
+        lay.addWidget(self.who)
+
         self.refresh_btn = chrome_button(REFRESH_GLYPH, "Refresh")
         # Through a lambda: clicked passes its checked flag as the first
         # argument, which would arrive as manual=False and undo the point.
         self.refresh_btn.clicked.connect(lambda: self.refresh(manual=True))
         lay.addWidget(self.refresh_btn)
 
-        self.who = QLabel("")
-        lay.addWidget(self.who)
         gear = chrome_button("\u2699", "Settings")
         gear.clicked.connect(self.open_settings)
         lay.addWidget(gear)
@@ -3351,7 +3362,11 @@ class Bert(QMainWindow):
 
             # Its own column, so a narrow window clipping the text cannot also
             # take away the only sign that there is more of it to read.
-            chevron = QLabel("&#9662;" if opened else "&#9656;" if more else "")
+            # The characters themselves, not HTML entities: a QLabel only
+            # reads rich text when it can see a tag, so "&#9656;" with
+            # nothing around it was drawn literally -- and then clipped
+            # to "&#" by the width of its column.
+            chevron = QLabel("\u25be" if opened else "\u25b8" if more else "")
             chevron.setFixedWidth(FEED_MORE_W)
             chevron.setStyleSheet(f"color:{T.MUTED}; font-size:{FEED_FONT_PX}px;")
             h.addWidget(chevron, 0, Qt.AlignTop)
