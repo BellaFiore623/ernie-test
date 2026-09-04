@@ -26,7 +26,20 @@ from typing import Any, Iterator, Optional
 # Title parsing
 # --------------------------------------------------------------------------
 
+# Every queue a title may legitimately start with, including retired ones.
+# This drives _PREFIX and therefore all three parse tiers, so a queue may
+# never be dropped from here just because it is no longer used: the titles
+# already in the mirror would stop matching, fall to UNREADABLE_CONFIDENCE,
+# and be ranked to the *top* of unassigned as cards nobody can read.
 QUEUES = ("OPS", "PROD", "ENG", "CS", "DATA")
+
+# What Bert offers in the editor. Retired queues are parsed, never chosen --
+# the same shape as the retired card columns: the read path keeps working and
+# the write path stops offering it. DATA was retired 2026-09; one thread in
+# the sandbox and one in production still carry it.
+QUEUES_OFFERED = ("OPS", "PROD", "ENG", "CS")
+
+RETIRED_QUEUES = tuple(q for q in QUEUES if q not in QUEUES_OFFERED)
 
 MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,

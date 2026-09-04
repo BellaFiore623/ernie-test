@@ -22,6 +22,7 @@ import pathlib
 from support import Check
 
 import bert
+import ernie_extract as ex
 
 
 def rgb(h):
@@ -370,7 +371,53 @@ def check_the_desktop_changing_underneath() -> bool:
     return c.report()
 
 
+def check_the_queues_the_board_can_draw() -> bool:
+    """
+    The editor offered five tags and the palette had four colours for them.
+
+    A DATA card came out neutral grey with no filter checkbox of its own,
+    because the filters are built by walking the palette. Neither end was
+    wrong on its own; they had simply drifted, and nothing held them together.
+
+    DATA is retired now, so the fix is the four-colour palette and an editor
+    that offers four -- but the parser still has to know all five, or the one
+    DATA thread left in the mirror stops matching, falls to UNREADABLE, and is
+    ranked to the top of unassigned as a card nobody can read.
+    """
+    c = Check("the queues the board can draw")
+
+    # Membership, not order: the palette's order is the order the filter
+    # chips sit in, and QUEUES_OFFERED's is the order of the dropdown. Each
+    # is entitled to its own; having the same members is the invariant.
+    for name in ("light", "dark"):
+        bert.T.use(name)
+        c.equal(set(bert.T.QUEUE), set(ex.QUEUES_OFFERED),
+                f"{name}: a colour for every tag the editor offers, and no more")
+    bert.T.use("light")
+
+    # The filters are built by walking the palette, so parity above is what
+    # gives every offered tag a checkbox.
+    for q in ex.QUEUES_OFFERED:
+        c.ok(q in bert.T.QUEUE, f"{q} can be filtered")
+
+    # Retired queues are parsed, never offered.
+    c.ok(ex.RETIRED_QUEUES, "there is at least one retired queue to speak of")
+    for q in ex.RETIRED_QUEUES:
+        c.ok(q in ex.QUEUES, f"{q} still parses")
+        c.ok(q not in ex.QUEUES_OFFERED, f"{q} is not offered")
+        c.ok(q not in bert.T.QUEUE, f"{q} has no colour, and falls back to neutral")
+
+    # The whole point: a retired title still reads.
+    t = ex.parse_title("DATA: Fleet - 02Sep26 - Backfill equipment master ids")
+    c.equal(t.queue, "DATA", "a retired title parses rather than going unreadable")
+    c.equal(t.client_raw, "Fleet", "and gives up its client like any other")
+    c.equal(t.confidence, "strict", "at full confidence, not as something unreadable")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_unassigned_is_neutral, check_triage_is_outlined_not_filled,
-          check_the_other_skins, check_choosing_a_theme)
+          check_the_other_skins, check_choosing_a_theme,
+          check_the_queues_the_board_can_draw)

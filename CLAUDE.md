@@ -79,6 +79,17 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   editor sets `removed_at`, and undo needs both rows still there. The editor
   sends `work_add` / `work_remove`, not the whole list, so two people adding
   different items merge instead of colliding.
+- **A retired queue is parsed, never offered.** `QUEUES` is every prefix a
+  title may legitimately start with and drives `_PREFIX`, so nothing may be
+  taken out of it because it fell out of use: the titles already in the mirror
+  would stop matching, fall to `UNREADABLE_CONFIDENCE`, and be ranked to the
+  *top* of unassigned as cards nobody can read. `QUEUES_OFFERED` is what Bert's
+  editor offers, and `T.QUEUE` must hold exactly those -- the filter checkboxes
+  are built by walking the palette, so a tag with no colour also has no filter.
+  `tests/check_palette.py` holds the two together. DATA was retired 2026-09
+  with one thread in the sandbox and one in production still carrying it; the
+  editor keeps a retired tag on a card that already has it rather than
+  silently clearing it on the next save.
 - `cards.action_item`, `build_state`, `return_state` and `direction` are
   retired — work items replaced all four. Nothing shows or edits them; they
   stay only so undo can reach an old `edited` event.

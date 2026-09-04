@@ -1268,10 +1268,17 @@ class Card(QFrame):
 
         self.f_queue = Combo()
         self.f_queue.addItem("—", "")
-        for q in ex.QUEUES:
+        for q in ex.QUEUES_OFFERED:
             self.f_queue.addItem(q, q)
-        self.f_queue.setCurrentIndex(
-            max(self.f_queue.findData(d.get("queue") or ""), 0))
+        # A card already carrying a retired queue keeps it. Without this the
+        # findData below misses, falls back to index 0, and saving the card
+        # for any other reason quietly clears the tag -- the retired queue is
+        # not offered to anybody, but it is not taken off the one card that
+        # has it either.
+        here = d.get("queue") or ""
+        if here and self.f_queue.findData(here) < 0:
+            self.f_queue.addItem(here, here)
+        self.f_queue.setCurrentIndex(max(self.f_queue.findData(here), 0))
 
         # textEdited fires only for typing, so rebuilding the suggestion below
         # doesn't count as the person taking the title over.
