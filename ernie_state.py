@@ -132,7 +132,15 @@ def render(card: Card, position: int, actor: str = "ernie") -> str:
         done = sum(1 for i in card.items if i.done)
         lines.append(f"_{done}/{len(card.items)} done_ — {work}")
     lines.append(f"_last touched by {who}_")
-    body = json.dumps(dict(card.payload(), by=who, at=now_iso()),
+    # `by` is only a person when we actually know of one. `who` falls back to
+    # the publishing machine's own name, which is "ernie" -- and the other
+    # board files a replayed change under whatever this says, so a card nobody
+    # here has touched arrived over there as "ernie moved ...", reading like
+    # the software had decided something. None instead, which apply_card
+    # already renders as "the other board": true, and clearly not a person.
+    # Not part of state_only(), so this changes nothing about what is compared
+    # and rewrites no messages.
+    body = json.dumps(dict(card.payload(), by=card.actor or None, at=now_iso()),
                       ensure_ascii=False)
     return "\n".join(lines) + f"\n```json\n{body}\n```"
 
@@ -527,13 +535,25 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
 
     Records what it published as the agreed base, which is what lets the pull
     tell "they moved it" from "we moved it" without comparing clocks.
+
+    **A card the channel has moved is left alone.** The pull resolves three
+    ways against the stored base; this has to as well, or the two directions
+    disagree. It used to overwrite whatever was there whenever it differed
+    from the local row, which is only right if the difference is ours. The
+    push and the pull are separate processes on separate loops, so a change
+    arriving between our last pull and this push is a difference that is
+    theirs -- and publishing over it put our stale view back in the channel,
+    recorded that as agreed, and left the other board to pull its own change
+    back out again. Seen in a two-machine test as somebody moving a card and
+    the other stack undoing it a minute later, twice.
     """
     if cards is None:
         cards = load_board(db)
     state, summary = fetch_channel(d, cid)
     pos = positions(cards)
     con = rw(db)
-    counts = {"posted": 0, "edited": 0, "unchanged": 0}
+    bases = read_bases(con)
+    counts = {"posted": 0, "edited": 0, "unchanged": 0, "deferred": 0}
     skew = None
     try:
         for c in cards:
@@ -557,6 +577,15 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
             elif (same_state(known["payload"], c.payload())
                   and prose_of(known.get("content", "")) == prose_of(content)):
                 counts["unchanged"] += 1
+            elif not same_state(known["payload"], bases.get(c.thread_id) or {}):
+                # The channel is not where we left it, so somebody else has
+                # moved this card and the pull has not caught up. Whatever we
+                # have locally is the older answer. Leave it: reconcile() will
+                # apply theirs, or call it a conflict and say so in the feed,
+                # and the next publish goes out from a view that knows about
+                # it. Deliberately no save_base -- we have agreed nothing.
+                counts["deferred"] += 1
+                continue
             else:
                 sent = d.write("PATCH",
                                f"/channels/{cid}/messages/{known['message_id']}",

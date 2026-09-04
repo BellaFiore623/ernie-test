@@ -11,6 +11,7 @@ published, because one machine's write time is all it can honestly know.
 """
 
 import dataclasses
+import json
 
 NL = chr(10)
 import sqlite3
@@ -242,6 +243,135 @@ def check_the_pages_follow_the_board() -> bool:
     return c.report()
 
 
+def _publish_into(chan, b, cards=None):
+    """Publish, and reflect what went out into the fake channel."""
+    d = FakeDiscord()
+    r = S.publish(d, "chan", b.path, cards=cards)
+    for verb, path, content in d.calls:
+        p = S.parse(content)
+        if not p:
+            continue
+        chan[p["thread"]] = {"message_id": path.rsplit("/", 1)[-1],
+                             "payload": p, "content": content}
+    return r, d
+
+
+def check_publish_leaves_a_card_the_channel_moved() -> bool:
+    """
+    The push has to resolve three ways as well, or it undoes the pull.
+
+    Seen in a two-machine test: somebody moves a card, and a minute later the
+    other stack moves it back. The push and the pull are separate processes on
+    separate loops, so a change arriving between our last pull and this push
+    is a difference that belongs to them -- and publish() overwrote whatever
+    was in the channel whenever it differed from the local row, which is only
+    right when the difference is ours.
+
+    Worse, it then recorded its own stale view as the agreed base. So the
+    board that made the change pulled it back out again a cycle later, and the
+    change simply vanished.
+    """
+    c = Check("publish leaves a card the channel has moved")
+    saved = S.fetch_channel, S.fetch_state
+    try:
+        with Board() as b:
+            tid = b.card("PROD: Trekk - 04aug26 - SSD0008", "unassigned", 1000.0)
+            channel = {}
+            S.fetch_channel = lambda d, cid: (channel, [])
+
+            # First publish: an empty channel, so it is posted and agreed.
+            _publish_into(channel, b)
+            c.ok(tid in channel, "the card reaches the channel")
+            base = json.loads(b.state_sync()[tid]["base_json"])
+            c.equal(base["priority"], "unassigned", "and a base is recorded")
+
+            # The other board moves it. We have not pulled yet, so our own row
+            # is still the older answer.
+            # Rendered the way their machine would render it, prose and
+            # payload together -- a message with one but not the other is a
+            # state the channel never actually holds.
+            theirs = dataclasses.replace(S.load_board(b.path)[0],
+                                         priority="critical",
+                                         actor="Julian Dubeau")
+            content = S.render(theirs, 1, "Julian Dubeau")
+            channel[tid] = {"message_id": channel[tid]["message_id"],
+                            "payload": S.parse(content), "content": content}
+            c.equal(b.con.execute("SELECT priority FROM cards WHERE thread_id=?",
+                                  (tid,)).fetchone()[0],
+                    "unassigned", "our copy still says unassigned")
+
+            r, d = _publish_into(channel, b)
+            c.equal(r.get("deferred"), 1, "the card is left alone")
+            c.equal([v for v in d.verbs() if v == "PATCH"], [],
+                    "nothing is written over it")
+            c.equal(channel[tid]["payload"]["priority"], "critical",
+                    "so their change is still there to be read")
+
+            # And nothing was agreed: recording their state as our base without
+            # applying it would lose the change just as thoroughly.
+            base = json.loads(b.state_sync()[tid]["base_json"])
+            c.equal(base["priority"], "unassigned",
+                    "the base is untouched, because nothing was agreed")
+
+            # The pull is what settles it.
+            S.fetch_state = lambda d, cid: channel
+            S.reconcile(None, "chan", b.path)
+            c.equal(b.con.execute("SELECT priority FROM cards WHERE thread_id=?",
+                                  (tid,)).fetchone()[0],
+                    "critical", "the pull applies their change")
+
+            e = b.con.execute(
+                """SELECT actor_name, old_value, new_value FROM events
+                   WHERE verb='priority_changed'
+                   ORDER BY rowid DESC LIMIT 1""").fetchone()
+            c.equal((e["old_value"], e["new_value"]), ("unassigned", "critical"),
+                    "and the feed says which way it went")
+            c.equal(e["actor_name"], "Julian Dubeau", "naming who did it")
+
+            # The two now agree, so the next push has nothing to say.
+            r, d = _publish_into(channel, b)
+            c.equal(r.get("deferred", 0), 0, "the next push defers nothing")
+            c.equal([v for v in d.verbs() if v == "PATCH"], [],
+                    "and writes nothing, because there is nothing to write")
+    finally:
+        S.fetch_channel, S.fetch_state = saved
+
+    return c.report()
+
+
+def check_publish_still_sends_our_own_changes() -> bool:
+    """The guard must only catch differences that are theirs."""
+    c = Check("our own changes still go out")
+    saved = S.fetch_channel
+    try:
+        with Board() as b:
+            tid = b.card("OPS: Munhall - 26Aug26 - 1k reel", "unassigned", 1000.0)
+            channel = {}
+            S.fetch_channel = lambda d, cid: (channel, [])
+            _publish_into(channel, b)
+
+            # We move it. The channel is exactly where we left it.
+            b.con.execute("UPDATE cards SET priority='high' WHERE thread_id=?",
+                          (tid,))
+            b.con.commit()
+
+            r, d = _publish_into(channel, b)
+            c.equal(r.get("deferred", 0), 0, "nothing is deferred")
+            c.equal(r["edited"], 1, "the change is published")
+            c.ok("PATCH" in d.verbs(), "as an edit to its own message")
+            c.equal(channel[tid]["payload"]["priority"], "high",
+                    "and the channel now carries it")
+
+            base = json.loads(b.state_sync()[tid]["base_json"])
+            c.equal(base["priority"], "high", "and it becomes what we agreed")
+    finally:
+        S.fetch_channel = saved
+
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
+          check_publish_leaves_a_card_the_channel_moved,
+          check_publish_still_sends_our_own_changes,
           check_a_long_board_keeps_every_row,
           check_the_pages_follow_the_board)

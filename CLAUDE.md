@@ -252,6 +252,17 @@ other's API. Priority, rank, work items and completion live in
   `ernie_sync.py` is read-only against Discord and `ernie_outbox.py` is the
   only thing that writes there. Sync pulls the channel into SQLite; the
   outbox publishes SQLite into the channel.
+- **The push resolves three ways too, not just the pull.** `publish()` leaves
+  a card whose channel message no longer matches our stored base: that
+  difference is theirs, not ours, and the two directions run in different
+  processes on different loops, so a change arriving between our last pull and
+  this push is exactly that case. It used to overwrite whatever was there
+  whenever it differed from the local row, and record its own stale view as
+  agreed -- so the board that made the change pulled it back out a cycle later
+  and the change vanished. Seen in the two-machine test as somebody moving a
+  card and the other stack undoing it a minute later. A deferred card writes no
+  base, because nothing was agreed; `reconcile()` applies theirs, or names the
+  conflict in the feed, and the next push goes out from a view that knows.
 - **Conflicts are resolved three-way against `state_sync`, never by
   comparing the two machines' clocks.** `state_sync` holds what this machine
   last agreed with the channel about, per card; against that base, the
@@ -281,6 +292,13 @@ other's API. Priority, rank, work items and completion live in
   sent the reader to ask the other person about a window on their own machine.
   The summary message says **last published**, not "last checked", for the same
   reason: it is one machine's write time, not an agreement between two.
+- A card message's `by` is a person or it is nothing. `render()` falls back to
+  the publishing machine's own name for a card nobody here has touched, and
+  that name is `ernie`, so the other board filed the replay as "ernie moved
+  ..." -- reading as though the software had decided something. The payload
+  carries `None` instead, which `apply_card()` already renders as "the other
+  board". `by` is outside `state_only()`, so this changes nothing that is
+  compared.
 - Applying a remote change writes an event with **`dispatch_after` NULL**.
   The machine that made the change already queued its own message; giving
   the replay a dispatch would post the same update twice, once per board.
