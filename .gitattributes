@@ -16,3 +16,8 @@
 
 *.png binary
 *.db  binary
+
+# Word documents. Not ours to reformat: normalising line endings inside one
+# is a change no diff will show and Word may not thank us for.
+*.rtf  binary
+*.docx binary
