@@ -221,6 +221,15 @@ activity feed, undo, and the outbox.
   out so a wide board clips at the narrow width anyway. The scale never falls
   below 1, so a narrow board reads exactly as it did.
 - Writes take an idempotency `key`; retries return the original result.
+- **One editor at a time, and the second click offers to finish the first.**
+  `editor_is_busy()` used to say no and stop, leaving somebody to find the
+  other card themselves. It now offers Save / Discard / Keep editing, with
+  *keep editing* as the default because it is the one that loses nothing. An
+  editor with nothing typed in it is closed without asking: `Card.is_dirty()`
+  compares exactly what `save()` would send against `_edit_base`, so clicking
+  Edit on the wrong ticket and moving on costs no dialog. Every button names
+  both tickets -- "this ticket" is the one phrase that cannot be used here,
+  because the ticket being closed is not the one just clicked.
 - **Bert's close warning owes two different debts, and must count both.**
   `queued` is events waiting out their undo window before Ernie posts them to
   the customer thread; `sharing.waiting_to_send` is cards that have moved since

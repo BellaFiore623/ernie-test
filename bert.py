@@ -1502,6 +1502,21 @@ class Card(QFrame):
         # Redrawing is safe again now the editor is gone.
         self.board.apply_pending()
 
+    def is_dirty(self):
+        """Whether this editor is holding anything worth asking about.
+
+        Exactly what save() would send, compared against what the card
+        held when the editor opened. Somebody who clicked Edit on the
+        wrong ticket and clicked away has nothing to decide, and should
+        not be asked to decide it.
+        """
+        base = getattr(self, "_edit_base", None) or {}
+        if self.f_title.text().strip() != (base.get("title") or ""):
+            return True
+        if self.f_client.text().strip() != (base.get("client_override") or ""):
+            return True
+        return bool(self.f_work.added() or self.f_work.removed())
+
     def save(self):
         fields = {
             "title": self.f_title.text().strip(),
@@ -3374,10 +3389,17 @@ class Bert(QMainWindow):
         self.refresh()
 
     def editor_is_busy(self, tid):
-        """True if some other card already has an editor open.
+        """True if another card's editor is in the way and stays there.
 
-        One at a time: two open editors mean two unsaved drafts, and a refresh
-        can only warn the single card it is tracking that it changed underneath.
+        One at a time: two open editors mean two unsaved drafts, and a
+        refresh can only warn the single card it is tracking that it
+        changed underneath.
+
+        It used to say so and stop, which left somebody to find the other
+        card themselves and deal with it before they could get on. It
+        offers to finish it now -- and an editor with nothing typed in it
+        is closed without asking at all, because there is no decision to
+        put to anybody.
         """
         busy = self.editing_card
         if not busy or busy == tid:
@@ -3386,12 +3408,49 @@ class Bert(QMainWindow):
         if w is None or not getattr(w, "editing", False):
             self.editing_card = None      # its editor is gone; don't lock up
             return False
+
+        if not w.is_dirty():
+            w.exit_edit()
+            return False
+
         self.reveal(busy)
-        QMessageBox.information(
-            self, "One ticket at a time",
-            f"You're still editing:\n\n{w.data.get('name') or busy}\n\n"
-            f"Save or cancel that one first.")
+        going = self._short_name(tid)
+        held = w.data.get("name") or busy
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Unsaved changes on another ticket")
+        box.setText(f"You have unsaved changes on:\n\n{held}")
+        box.setInformativeText(
+            f"Opening {going} will close that editor.")
+        # Each button says what happens to both tickets. "this ticket" was
+        # the one word that could not be used here: the ticket being closed
+        # is not the one just clicked on.
+        save = box.addButton(f"Save and open {going}",
+                             QMessageBox.AcceptRole)
+        drop = box.addButton(f"Discard and open {going}",
+                             QMessageBox.DestructiveRole)
+        stay = box.addButton("Keep editing", QMessageBox.RejectRole)
+        # Staying is the one that loses nothing, so it is what Escape does.
+        box.setDefaultButton(stay)
+        box.exec()
+
+        if box.clickedButton() is save:
+            # save() closes the editor itself, and refresh() is a thread, so
+            # the board is not redrawn under the card about to be opened.
+            w.save()
+            return False
+        if box.clickedButton() is drop:
+            w.exit_edit()
+            return False
         return True
+
+    def _short_name(self, tid):
+        """A ticket in a few words, for a sentence about two of them."""
+        c = next((x for x in self.cards if x["thread_id"] == tid), None)
+        if not c:
+            return "the other ticket"
+        return clip(c.get("client_override") or c.get("client_raw")
+                    or c.get("name") or "that ticket", 28)
 
     def reveal(self, tid):
         """Scroll the board to a card, opening its band if it's folded away."""
