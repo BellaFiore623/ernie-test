@@ -1983,17 +1983,20 @@ class Band(QWidget):
             f"#bandHeader {{ background:{tint};"
             f" border-left:3px solid {accent}; }}")
 
+        # Only the band that has something to say gets a label. An empty one
+        # was made for the other four and then never added to anything, and a
+        # QWidget with no parent is a top-level window: four of them per board,
+        # and four more every time a theme change rebuilds it.
+        self.hint = None
         if priority == "unassigned":
             self.hint = QLabel("new — drag into a priority")
             self.hint.setStyleSheet(
                 f"color:{accent}; font-size:11px; background:transparent;")
-        else:
-            self.hint = QLabel("")
 
         h.addWidget(self.caret)
         h.addWidget(self.title)
         h.addWidget(self.count)
-        if self.hint.text():
+        if self.hint is not None:
             h.addSpacing(12)    # the hint is a caption, not part of the count
             h.addWidget(self.hint)
         h.addStretch(1)
@@ -2016,7 +2019,11 @@ class Band(QWidget):
         # Shown only while a drag is running and this band is empty. Without
         # it an empty band is a blank strip that gives no sign it will take the
         # card, and the drop goes to whichever neighbour has cards in it.
-        self.empty_hint = QLabel("drop here")
+        # Parented to the panel from the start. It is only put into the layout
+        # once a drag needs it, and until then an unparented widget is a
+        # window of its own -- one per band, sitting there hidden, for the
+        # whole life of the board.
+        self.empty_hint = QLabel("drop here", self.panel)
         self.empty_hint.setAlignment(Qt.AlignCenter)
         self.empty_hint.setMinimumHeight(DROP_ZONE_MIN)
         self.empty_hint.setStyleSheet(

@@ -495,10 +495,50 @@ def check_only_the_header_is_tinted() -> bool:
     return c.report()
 
 
+def check_a_band_leaves_no_stray_windows() -> bool:
+    """A QWidget with no parent is a top-level window, shown or not.
+
+    Band made a QLabel("") for every band that had no hint to show and then
+    never added it to anything, and built empty_hint unparented because the
+    layout only wants it during a drag. Nine of them survived startup on a
+    five-band board -- measured with QApplication.topLevelWidgets() -- and a
+    theme change, which builds the window again, made nine more.
+
+    Read off the source, like the tint check above: building a Band with no
+    QApplication does not raise, it takes the process down.
+    """
+    c = Check("a band leaves no stray windows")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    band = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.ClassDef) and n.name == "Band"), None)
+    init = next((n for n in band.body if isinstance(n, ast.FunctionDef)
+                 and n.name == "__init__"), None) if band else None
+    c.ok(init is not None, "Band still has an __init__ to read")
+
+    labels = [n for n in ast.walk(init)] if init else []
+    calls = [n for n in labels if isinstance(n, ast.Call)
+             and getattr(n.func, "id", None) == "QLabel"]
+
+    # Every label it makes is either given a parent or added to a layout.
+    body = ast.get_source_segment(src, init) or ""
+    c.ok('QLabel("")' not in body,
+         "no empty label is made for a band with nothing to say")
+    c.ok("self.hint = None" in body,
+         "that band carries no hint at all")
+    drop = [n for n in calls
+            if n.args and getattr(n.args[0], "value", None) == "drop here"]
+    c.ok(drop and len(drop[0].args) >= 2,
+         "the drop hint is parented when it is made, not when it is used")
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
           check_triage_is_outlined_not_filled,
           check_the_other_skins, check_choosing_a_theme,
           check_the_queues_the_board_can_draw,
-          check_only_the_header_is_tinted)
+          check_only_the_header_is_tinted,
+          check_a_band_leaves_no_stray_windows)
