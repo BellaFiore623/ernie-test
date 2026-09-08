@@ -4258,6 +4258,14 @@ class Bert(QMainWindow):
         band = self.bands.get(priority)
         if band is None:
             return
+        # A folded band hides its panel and keeps its header, so the button
+        # that starts a ticket stays clickable while the place the card goes
+        # does not exist on screen. The card would be inserted out of sight
+        # with its editor, and editing_card holds the poll off meanwhile, so
+        # the board reads as frozen with nothing on it to explain why. Open
+        # it, for the reason a drag arriving opens one.
+        if band.collapsed:
+            band.set_collapsed(False)
         card = Card(blank, self)
         band.lay.insertWidget(0, card)
         band.setVisible(True)

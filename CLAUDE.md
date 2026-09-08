@@ -371,6 +371,16 @@ a ticket with no home yet is the ordinary case rather than an exception.
   Bert install to a Discord account, so the bot is the author and the name
   from `settings` goes in as plain text -- the same way every other name this
   posts does. The optional first message follows it.
+- **A folded band opens for the ticket started in it.** Folding hides a band's
+  *panel* and keeps its header -- which is what lets the count and the drop
+  target go on working, and is also the trap, because `+ New Ticket` sits on
+  that header. Pressing it on a folded band put the card and its editor into
+  the hidden panel, and `editing_card` holds every poll off while an editor is
+  open, so the board sat frozen with nothing on it to say why: five bands
+  tried, five editors opened, none of them visible. Three paths put something
+  into a band -- starting a ticket, `reveal()`, and a drag arriving -- and all
+  three have to open a folded one. `tests/check_board_order.py` holds them
+  together.
 - **Starting one is not editing one, and the words follow.** `NEW_TICKET` is
   the sentinel a ticket with no thread stands under. It goes through the same
   one-editor rule, but the dialog offers *Create it* rather than *Save*, says

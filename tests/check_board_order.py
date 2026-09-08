@@ -358,8 +358,65 @@ def check_a_collapsed_band_still_lands_a_drop() -> bool:
     return c.report()
 
 
+def check_a_folded_band_opens_for_what_goes_into_it() -> bool:
+    """
+    A band folded away must not swallow the thing you just asked for.
+
+    Folding hides the band's *panel* and keeps its header, which is what lets
+    the count and the drop target go on working -- and it is also the trap:
+    the `+ New Ticket` button sits on that header, so it stays clickable with
+    nowhere on screen for the card to go. Pressing it on a folded band put the
+    card and its editor into the hidden panel, and `editing_card` holds every
+    poll off while an editor is open, so the board sat frozen with nothing on
+    it to say why. Measured on all five bands before the fix: five editors
+    opened, none of them visible.
+
+    Three paths put something into a band, and all three have to open it.
+    """
+    c = Check("a folded band opens for whatever is put into it")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def method(cls_name, fn):
+        cls = next((n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
+                    and n.name == cls_name), None)
+        if cls is None:
+            return None
+        return next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == fn), None)
+
+    def opens_a_fold(fn):
+        """Does it unfold a band it found folded?"""
+        return fn is not None and any(
+            isinstance(n, ast.Call)
+            and getattr(n.func, "attr", None) == "set_collapsed"
+            and n.args and isinstance(n.args[0], ast.Constant)
+            and n.args[0].value is False
+            for n in ast.walk(fn))
+
+    # Why the guard is needed at all: the header outlives the fold.
+    fold = method("Band", "set_collapsed")
+    c.ok(fold is not None and any(
+        isinstance(n, ast.Call)
+        and getattr(n.func, "attr", None) == "setVisible"
+        and getattr(getattr(n.func, "value", None), "attr", None) == "panel"
+        for n in ast.walk(fold)),
+        "folding hides the panel, so the header and its button stay live")
+
+    for cls_name, fn, why in (
+            ("Bert", "start_ticket", "starting a ticket in it"),
+            ("Bert", "reveal", "revealing a card in it"),
+            ("Band", "dragEnterEvent", "a drag arriving over it")):
+        c.ok(opens_a_fold(method(cls_name, fn)),
+             f"{cls_name}.{fn} opens a folded band -- {why}")
+
+    return c.report()
+
+
 CHECKS = (check_predicate, check_new_cards_rank, check_one_order,
           check_a_reorder_says_where_it_went,
           check_a_reorder_that_moves_nothing_says_nothing,
           check_the_rail_clips_to_its_width,
-          check_a_collapsed_band_still_lands_a_drop)
+          check_a_collapsed_band_still_lands_a_drop,
+          check_a_folded_band_opens_for_what_goes_into_it)
