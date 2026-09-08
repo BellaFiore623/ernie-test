@@ -502,8 +502,20 @@ so the name is *picked* in Bert instead of typed.
 ./run.sh test bert          # sandbox: sync + outbox + api + bert
 ./run.sh test bert lan      # same, API reachable from other machines
 ./run.sh prod               # production: sync + api only, no outbox
+./run.sh stop               # stop a stack this script started
 python ernie_sync.py --once --env ernie-test.env --db ernie-test.db
 ```
+
+**Closing the terminal window leaves the stack running.** Ctrl+C reaches the
+children through the process group and they stop tidily; closing the window
+runs no trap at all, and sync and outbox go on with nothing on screen to say
+so. Found in the sandbox after a day of it: **six syncs writing to one
+database and six outboxes publishing to one state channel**, which is where
+`outbox.log`'s 429s came from -- and a console window flashing past for every
+process every start, which is what a report of "dozens of white windows" turned
+out to be. `run.sh` now records the **Windows** pids (`/proc/<job>/winpid`, not
+its own job numbers, which do not outlive it), refuses to start on top of a
+stack that is still up, and `./run.sh stop` ends them with `taskkill`.
 
 ## Testing with somebody else
 

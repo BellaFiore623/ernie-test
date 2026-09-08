@@ -5,6 +5,7 @@
 #   ./run.sh prod            real guild, read-only sync, port 8787
 #   ./run.sh test bert       same, and open Bert too
 #   ./run.sh test bert lan   same, with the API reachable from other machines
+#   ./run.sh stop            stop a stack this script started
 #
 # `lan` is for testing with somebody else: they run only Bert, pointed at this
 # machine, so there is one database and one board between you. The API has no
@@ -21,12 +22,15 @@ ENVNAME=test
 WITH_BERT=
 HOST=127.0.0.1                  # loopback unless asked otherwise
 
+JUST_STOP=
+
 for arg in "$@"; do
   case "$arg" in
-    test|prod)  ENVNAME="$arg" ;;
-    bert)       WITH_BERT=bert ;;
-    lan|--lan)  HOST=0.0.0.0 ;;
-    *) echo "usage: ./run.sh [test|prod] [bert] [lan]"; exit 1 ;;
+    test|prod)   ENVNAME="$arg" ;;
+    bert)        WITH_BERT=bert ;;
+    lan|--lan)   HOST=0.0.0.0 ;;
+    stop|--stop) JUST_STOP=yes ;;
+    *) echo "usage: ./run.sh [test|prod] [bert] [lan] | ./run.sh stop"; exit 1 ;;
   esac
 done
 
@@ -48,22 +52,74 @@ fi
 
 mkdir -p logs
 PIDS=()
+PIDFILE=logs/stack.pids
+
+# Windows pids, not bash job numbers. Ctrl+C reaches the children through the
+# process group and they die tidily; closing the terminal window runs no trap
+# at all, and then sync and outbox go on running with nothing on screen to say
+# so. taskkill ends the process and its children however it was started.
+kill_pidfile() {
+  [ -f "$PIDFILE" ] || return 0
+  while read -r wpid; do
+    [ -n "$wpid" ] || continue
+    taskkill //PID "$wpid" //T //F >/dev/null 2>&1
+  done < "$PIDFILE"
+  rm -f "$PIDFILE"
+}
+
+alive_from_pidfile() {          # the pids in it that are still running
+  [ -f "$PIDFILE" ] || return 0
+  while read -r wpid; do
+    [ -n "$wpid" ] || continue
+    if tasklist //FI "PID eq $wpid" //NH 2>/dev/null | grep -qi python; then
+      echo "$wpid"
+    fi
+  done < "$PIDFILE"
+}
 
 stop() {
   echo ""
   echo "stopping..."
   for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null; done
+  kill_pidfile
   wait 2>/dev/null
   echo "stopped"
   exit 0
 }
 trap stop INT TERM
 
+if [ -n "$JUST_STOP" ]; then
+  n=$(alive_from_pidfile | grep -c . || true)
+  kill_pidfile
+  echo "stopped $n process(es)"
+  exit 0
+fi
+
+# Starting on top of a stack that is already up gives a second sync writing to
+# the same database and a second outbox posting to the same Discord channel.
+# Six of each were found running at once after a day of closing the window
+# rather than pressing Ctrl+C -- which is where the outbox's 429s came from,
+# and every start flashes a console window per process on the way past.
+LEFTOVER=$(alive_from_pidfile)
+if [ -n "$LEFTOVER" ]; then
+  echo "a stack this script started is still running:"
+  for wpid in $LEFTOVER; do echo "  pid $wpid"; done
+  echo ""
+  echo "stop it first:  ./run.sh stop"
+  exit 1
+fi
+: > "$PIDFILE"
+
 start() {                       # start <name> <command...>
   local name="$1"; shift
   echo "  $name"
   "$@" >> "logs/$name.log" 2>&1 &
   PIDS+=($!)
+  # /proc/<job>/winpid is Git Bash's map from its own pid to the Windows one,
+  # and the Windows one is what outlives this script.
+  local wpid
+  wpid=$(cat "/proc/$!/winpid" 2>/dev/null)
+  [ -n "$wpid" ] && echo "$wpid" >> "$PIDFILE"
 }
 
 echo "starting [$ENVNAME]  db=$DB  port=$PORT"
