@@ -6,3 +6,9 @@ pydantic>=2.0        # request bodies (arrives with fastapi; imported directly)
 
 # Bert: the desktop board. Not needed on a machine that only runs the backend.
 PySide6>=6.6
+
+# jira_client.py only -- the standalone CLI for poking Jira by hand. Nothing
+# in the running stack imports it: ernie_jira.py talks to Jira over httpx like
+# every other call in here. Two HTTP libraries is one more than this repository
+# wants, and this is the line that says why the second one is here.
+requests>=2.31
