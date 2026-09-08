@@ -124,6 +124,17 @@ class StatusBody(BaseModel):
     key: Optional[str] = None
 
 
+class NewTicketBody(BaseModel):
+    actor: str
+    title: str
+    priority: str = "unassigned"
+    work_add: list[str] = []
+    # Optional. The thread gets a note saying who started it either way; this
+    # is the message they would have typed into it themselves.
+    first_message: Optional[str] = None
+    key: Optional[str] = None
+
+
 class ActorBody(BaseModel):
     actor: str
     key: Optional[str] = None
@@ -571,6 +582,34 @@ def cards(
         if c["confidence"] in ("loose", "prefix_only", "none"):
             merged.append(f"title_{c['confidence']}")
         c["issues"] = sorted(set(merged))
+    # Tickets started here whose thread does not exist yet. They belong on the
+    # board straight away -- somebody just made one -- and they carry the
+    # unsent mark for the same reason every other queued change does. Not
+    # cards yet, so nothing that keys on a thread_id will find them: Bert
+    # shows them and leaves them alone until the outbox has made the thread.
+    for d in con.execute(
+            """SELECT draft_id, title, priority, work_json, attempts, created_at
+               FROM new_threads WHERE posted_at IS NULL
+               ORDER BY created_at"""):
+        t = ex.parse_title(d["title"])
+        out.append({
+            "thread_id": d["draft_id"], "pending": True,
+            "priority": d["priority"], "rank": 0.0,
+            "name": d["title"], "queue": t.queue, "client_raw": t.client_raw,
+            "client_key": ex.normalise_client(t.client_raw or "") or None,
+            "thread_date": t.date.isoformat() if t.date else None,
+            "summary": t.summary, "confidence": t.confidence,
+            "archived": 0, "completed_at": None, "completed_by": None,
+            "client_override": None, "updated_at": d["created_at"],
+            "ticket_count": 0, "last_human_at": None, "title_pending": False,
+            "equipment": [], "issues": [],
+            "work_items": [{"item_id": None, "body": b, "done": False}
+                           for b in json.loads(d["work_json"])],
+            "unsent": 0 if d["attempts"] >= OUTBOX_MAX_ATTEMPTS else 1,
+            "stuck": 1 if d["attempts"] >= OUTBOX_MAX_ATTEMPTS else 0,
+            "unshared": False,
+        })
+
     con.close()
 
     out.sort(key=lambda c: (PRIORITY_ORDER.index(c["priority"])
@@ -733,6 +772,59 @@ def client_roster():
 # --------------------------------------------------------------------------
 # Writes
 # --------------------------------------------------------------------------
+
+@app.post("/tickets")
+def new_ticket(body: NewTicketBody):
+    """Start a ticket that has no Discord thread yet.
+
+    Bert cannot make the thread -- only the outbox writes to Discord -- so
+    this records what to make and hands it over. The board shows it in the
+    meantime, wearing the unsent mark, which is what it is.
+    """
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(400, "A ticket needs a title.")
+    if body.priority not in PRIORITY_ORDER:
+        raise HTTPException(400, f"Unknown priority {body.priority!r}")
+
+    con = rw()
+    try:
+        done = replay(con, body.key)
+        if done is not None:
+            return done
+
+        # Whichever channel the board's cards come from. There is normally one;
+        # if somebody watches two, the first is as good an answer as exists and
+        # is better than refusing.
+        chan = con.execute(
+            "SELECT channel_id FROM watched_channels WHERE generate_cards = 1 "
+            "ORDER BY channel_id LIMIT 1").fetchone()
+        if not chan:
+            raise HTTPException(400, "No channel is set to generate cards, so "
+                                     "there is nowhere to put a new ticket.")
+
+        typed = [t.strip() for t in body.work_add if t and t.strip()]
+        if any(len(t) > WORK_ITEM_MAX for t in typed):
+            raise HTTPException(400, f"A work item is limited to "
+                                     f"{WORK_ITEM_MAX} characters.")
+
+        draft = str(uuid.uuid4())
+        con.execute(
+            """INSERT INTO new_threads (draft_id, channel_id, title, priority,
+                                        work_json, first_message, actor,
+                                        created_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (draft, chan["channel_id"], title, body.priority,
+             json.dumps(typed), (body.first_message or "").strip() or None,
+             body.actor, now_iso()))
+        result = {"draft_id": draft, "title": title, "priority": body.priority,
+                  "work_items": typed}
+        remember(con, body.key, result)
+        con.commit()
+        return result
+    finally:
+        con.close()
+
 
 @app.post("/cards/{thread_id}/move")
 def move_card(thread_id: str, body: MoveBody):

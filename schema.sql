@@ -243,6 +243,35 @@ CREATE INDEX IF NOT EXISTS ix_clients_key ON clients(name_key);
 -- its own settings and sends it with every write; Ernie drops that string
 -- straight into the thread message. Plain text, no Discord mention.
 
+-- A ticket started in Bert, before its Discord thread exists.
+--
+-- It cannot be a card yet: every card keys on a thread_id, and the thread is
+-- not made until the outbox picks this up -- Bert and the API never write to
+-- Discord, so there is a gap between somebody pressing Save and the thread
+-- being real. The board shows it during that gap wearing the unsent mark,
+-- because that is exactly what it is: a change that has not left this machine.
+--
+-- The retry columns match the outbox's, and for the same reason: a thread that
+-- could not be created must be tried again, and then given up on out loud
+-- rather than retried for ever.
+CREATE TABLE IF NOT EXISTS new_threads (
+    draft_id      TEXT PRIMARY KEY,          -- uuid; stands in for a thread_id
+    channel_id    TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    priority      TEXT NOT NULL,
+    work_json     TEXT NOT NULL DEFAULT '[]',
+    first_message TEXT,                      -- optional, posted after the note
+    actor         TEXT,                      -- whose name the note carries
+    created_at    TEXT NOT NULL,
+    claimed_at    TEXT,
+    thread_id     TEXT,                      -- filled once Discord has it
+    posted_at     TEXT,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    last_error    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_new_threads_due ON new_threads(posted_at, attempts);
+
 -- ==========================================================================
 -- EVENTS  (activity feed + undo + outbox, one table)
 -- ==========================================================================

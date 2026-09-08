@@ -17,9 +17,11 @@ Needs two permissions the read-only bot doesn't have:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 
 import ernie_changelog
@@ -233,6 +235,84 @@ def drain(con, d: Discord) -> dict:
     return counts
 
 
+def make_threads(con, d: Discord) -> dict:
+    """Create the Discord threads for tickets started in Bert.
+
+    Bert cannot do this and neither can the API -- every write to Discord goes
+    through Discord.write, which is here. Until this runs the ticket is a row
+    in new_threads and a card on the board wearing the unsent mark.
+
+    Three writes, in an order chosen so a failure leaves something legible:
+    the thread, a note saying who started it, then their opening message if
+    they wrote one. The note comes from Bert's own settings and is plain text,
+    the same way every other name this posts is -- Ernie has no idea which
+    Discord account belongs to which person, so the thread is opened by the
+    bot and says whose it is.
+    """
+    counts = {"made": 0, "failed": 0}
+    due = con.execute(
+        "SELECT * FROM new_threads WHERE posted_at IS NULL AND attempts < ? "
+        "ORDER BY created_at", (MAX_ATTEMPTS,)).fetchall()
+
+    for row in due:
+        try:
+            made = d.write("POST", f"/channels/{row['channel_id']}/threads",
+                           name=row["title"][:100], type=11,
+                           auto_archive_duration=10080)
+            tid = made["id"]
+
+            who = (row["actor"] or "").strip()
+            if who:
+                d.write("POST", f"/channels/{tid}/messages",
+                        content=f"Thread started by {who} from the board.")
+            if row["first_message"]:
+                d.write("POST", f"/channels/{tid}/messages",
+                        content=row["first_message"])
+
+            # Recorded here rather than waiting for the sync to notice it: the
+            # card would otherwise arrive a cycle later and land in unassigned,
+            # losing the band somebody chose by pressing the + in it. The sync
+            # reconciles both rows on its next pass anyway -- they are written
+            # the way it writes them.
+            ts = now()
+            con.execute(
+                """INSERT OR IGNORE INTO threads (thread_id, parent_id, guild_id,
+                                                  created_at, first_seen_at,
+                                                  last_synced_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (tid, row["channel_id"], d.guild_id, ts, ts, ts))
+            con.execute(
+                """INSERT OR REPLACE INTO thread_titles (thread_id, observed_at,
+                                                         name, confidence)
+                   VALUES (?,?,?,?)""",
+                (tid, ts, row["title"], "pending"))
+            rank = con.execute(
+                "SELECT COALESCE(MAX(rank), 0) + 1000.0 FROM cards WHERE priority=?",
+                (row["priority"],)).fetchone()[0]
+            con.execute(
+                """INSERT OR IGNORE INTO cards (thread_id, priority, rank,
+                                                updated_at)
+                   VALUES (?,?,?,?)""", (tid, row["priority"], rank, ts))
+            for n, body in enumerate(json.loads(row["work_json"] or "[]")):
+                con.execute(
+                    """INSERT INTO work_items (item_id, thread_id, body, position,
+                                               created_at, created_by)
+                       VALUES (?,?,?,?,?,?)""",
+                    (str(uuid.uuid4()), tid, body, float(n + 1), ts, row["actor"]))
+
+            con.execute("UPDATE new_threads SET thread_id=?, posted_at=? "
+                        "WHERE draft_id=?", (tid, ts, row["draft_id"]))
+            counts["made"] += 1
+        except Exception as e:
+            con.execute(
+                "UPDATE new_threads SET attempts=attempts+1, last_error=? "
+                "WHERE draft_id=?", (str(e)[:500], row["draft_id"]))
+            counts["failed"] += 1
+        con.commit()
+
+    return counts
+
+
 def pending(con) -> int:
     """Events still inside their undo window."""
     return con.execute(
@@ -286,6 +366,10 @@ def main() -> None:
     while True:
         try:
             c = drain(con, d)
+            m = make_threads(con, d)
+            if m["made"] or m["failed"]:
+                print(f"[{now()[:19]}] new threads: {m['made']} made, "
+                      f"{m['failed']} failed")
             if any(c.values()):
                 print(f"[{now()[:19]}] sent={c['sent']} skipped={c['skipped']} "
                       f"failed={c['failed']} waiting={pending(con)}")

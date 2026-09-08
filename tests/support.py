@@ -130,6 +130,9 @@ class FakeDiscord:
 
     def __init__(self):
         self.calls: list[tuple[str, str, str]] = []
+        # The real client carries it, and creating a thread records which
+        # guild the thread it just made belongs to.
+        self.guild_id = GUILD
 
     def write(self, verb: str, path: str, **kw):
         self.calls.append((verb, path, kw.get("content", "")))

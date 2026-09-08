@@ -18,7 +18,7 @@ import pathlib
 NL = chr(10)
 import sqlite3
 
-from support import Board, Check, FakeDiscord, iso
+from support import Board, Check, FakeDiscord, PARENT, iso
 
 import bert
 import ernie_api as api
@@ -710,6 +710,64 @@ def check_the_client_list_says_when_it_has_gone_stale() -> bool:
     return c.report()
 
 
+def check_a_ticket_started_in_bert_becomes_a_thread() -> bool:
+    """Bert cannot make a Discord thread, so it asks for one and waits.
+
+    Every write to Discord goes through Discord.write, which lives in the
+    outbox. So a ticket started on the board is a row in new_threads until
+    the outbox picks it up -- and it shows on the board during that gap
+    wearing the unsent mark, because that is what it is.
+
+    The outbox writes the mirror rows itself rather than leaving them to the
+    sync. Waiting would put the card on the board a cycle later and in
+    unassigned, losing the band somebody chose by pressing the + in it.
+    """
+    c = Check("a ticket started in Bert becomes a thread")
+
+    with Board() as b:
+        api.DB = b.path
+        b.con.execute("INSERT INTO watched_channels (channel_id, name, mirror,"
+                      " generate_cards) VALUES (?,?,1,1)",
+                      (PARENT, "customer-threads"))
+        b.con.commit()
+
+        api.new_ticket(api.NewTicketBody(
+            actor="Bella Fiore", priority="high",
+            title="PROD: Trekk - 08Sep26 - EReel-1220 fiber respool",
+            work_add=["Chase the courier"],
+            first_message="Reel came back with the fiber snapped."))
+
+        def board():
+            return api.cards(queue=None, client=None,
+                             include_completed=False)["cards"]
+
+        card = board()[0]
+        c.ok(card.get("pending"), "it is on the board straight away")
+        c.equal(card["priority"], "high", "in the band it was started in")
+        c.equal(card["unsent"], 1, "wearing the unsent mark")
+        c.equal([i["body"] for i in card["work_items"]], ["Chase the courier"],
+                "with the work items typed into it")
+
+        d = FakeDiscord()
+        got = outbox.make_threads(b.con, d)
+        c.equal(got, {"made": 1, "failed": 0}, "the outbox makes the thread")
+
+        paths = [p for _, p, _ in d.calls]
+        c.ok(paths[0].endswith("/threads"), "the thread first")
+        said = [t for _, _, t in d.calls if t]
+        c.ok(any("Bella Fiore" in t for t in said),
+             "then a note naming who started it, since the bot opened it")
+        c.ok(any("fiber snapped" in t for t in said),
+             "then their own opening message")
+
+        card = board()[0]
+        c.ok(not card.get("pending"), "and it is a real card afterwards")
+        c.equal(card["priority"], "high", "still in the band it was started in")
+        c.equal([i["body"] for i in card["work_items"]], ["Chase the courier"],
+                "still carrying its work")
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -722,4 +780,5 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_about_to_send,
           check_a_ticked_item_still_reaches_the_board,
           check_reopening_a_work_item_round_trips,
-          check_the_client_list_says_when_it_has_gone_stale)
+          check_the_client_list_says_when_it_has_gone_stale,
+          check_a_ticket_started_in_bert_becomes_a_thread)
