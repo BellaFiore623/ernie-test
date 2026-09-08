@@ -55,6 +55,10 @@ SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
 # six means the pull has stopped -- a bad token, or Jira unreachable. Only
 # then is there anything to say: an indicator that is always on is furniture.
 ROSTER_STALE_S = 6 * 3600
+# What a ticket being started stands under until Ernie has made its thread.
+# It is not a thread id and never becomes one: the real card arrives from the
+# next poll with an id of its own.
+NEW_TICKET = "__new__"
 MIRROR_STALE_S = 180   # the same three cycles, asked of Ernie's own reading:
                        # past this the sync loop has stopped and the board is
                        # older than it looks
@@ -701,6 +705,9 @@ class Api:
 
     def roster(self):
         return self.client.get(f"{self.base}/clients/roster").json()
+
+    def new_ticket(self, fields, actor):
+        return self._post("/tickets", {**fields, "actor": actor})
 
     def _post(self, path, payload):
         payload.setdefault("key", str(uuid.uuid4()))
@@ -1518,6 +1525,9 @@ class Card(QFrame):
         # 0 means ask the widget, which is right once it has been laid out.
         self.room = room
         self.thread_id = data["thread_id"]
+        # A ticket being started has no thread yet, so it has no card either:
+        # it is this widget and a row the API is about to be told to make.
+        self.is_new = bool(data.get("is_new"))
         self.editing = False
         self._press = None
         self.problem = needs_triage(data)
@@ -1795,6 +1805,19 @@ class Card(QFrame):
         form.addRow("Tag", self.f_queue)
         form.addRow("Client", self.f_client)
         form.addRow("Work items", self.f_work)
+
+        # Only when starting one. Ernie opens the thread, so it posts a line
+        # saying who it was for -- this is the message they would have typed
+        # into it themselves, and is optional because plenty of tickets are
+        # their title and nothing more.
+        self.f_first = None
+        if self.is_new:
+            self.f_first = QLineEdit()
+            self.f_first.setStyleSheet(field())
+            self.f_first.setPlaceholderText(
+                "Optional -- posted into the thread after Ernie says who "
+                "started it")
+            form.addRow("First message", self.f_first)
         # The labels QFormLayout makes for itself paint their palette
         # background.
         for i in range(form.rowCount()):
@@ -1803,10 +1826,14 @@ class Card(QFrame):
                 lab.widget().setStyleSheet("background:transparent;")
         self.body.addLayout(form)
 
-        note = QLabel("Saving posts one update to the thread, however many "
-                      "fields you change. Picking a client rewrites the "
-                      "title, and changing the title renames the Discord "
-                      "thread.")
+        note = QLabel(
+            "Saving opens a thread in Discord with this title. Ernie posts a "
+            "line saying you started it, then your first message if you "
+            "wrote one."
+            if self.is_new else
+            "Saving posts one update to the thread, however many fields you "
+            "change. Picking a client rewrites the title, and changing the "
+            "title renames the Discord thread.")
         note.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                            f" background:transparent;")
         self.body.addWidget(note)
@@ -1817,7 +1844,7 @@ class Card(QFrame):
         cancel.setStyleSheet(BTN_HIT)
         cancel.clicked.connect(self.exit_edit)
         row.addWidget(cancel)
-        save = QPushButton("Save")
+        save = QPushButton("Create ticket" if self.is_new else "Save")
         save.setStyleSheet(BTN_HIT + f"background:{T.ACCENT}; color:{T.ON_ACCENT};"
                                      f" border:none;")
         save.clicked.connect(self.save)
@@ -1913,6 +1940,15 @@ class Card(QFrame):
     def exit_edit(self):
         self.editing = False
         self.board.editing_card = None
+        if self.is_new:
+            # There is nothing behind it to show. Dropping the widget also
+            # releases the board, which has been holding every poll while
+            # this editor was open.
+            self.hide()
+            self.setParent(None)
+            self.deleteLater()
+            self.board.apply_pending()
+            return
         self._clear()
         self._paint()
         self._build_view()
@@ -1949,6 +1985,15 @@ class Card(QFrame):
         wrong ticket and clicked away has nothing to decide, and should
         not be asked to decide it.
         """
+        if self.is_new:
+            # A blank template is not a draft. What makes it one is anything
+            # typed into it -- and the title starts filled in, so it is only
+            # a change from the template that counts.
+            base = getattr(self, "_edit_base", None) or {}
+            return bool(
+                self.f_title.text().strip() != (base.get("title") or "")
+                or self.f_work.added()
+                or (self.f_first and self.f_first.text().strip()))
         base = getattr(self, "_edit_base", None) or {}
         if self.f_title.text().strip() != (base.get("title") or ""):
             return True
@@ -1958,6 +2003,15 @@ class Card(QFrame):
                     or self.f_work.undone())
 
     def save(self):
+        if self.is_new:
+            self.board.create_ticket(self, {
+                "title": self.f_title.text().strip(),
+                "priority": self.data["priority"],
+                "work_add": self.f_work.added(),
+                "first_message": (self.f_first.text().strip()
+                                  if self.f_first else ""),
+            })
+            return
         fields = {
             "title": self.f_title.text().strip(),
             "client_override": self._override(),
@@ -2111,6 +2165,25 @@ class Band(QWidget):
             h.addSpacing(12)    # the hint is a caption, not part of the count
             h.addWidget(self.hint)
         h.addStretch(1)
+
+        # One per band, because the band is the answer to "where does this
+        # go" and pressing the one you mean has already given it. Needs
+        # Attention keeps one too: every thread opened in Discord lands there
+        # anyway, so a ticket with no home yet is the ordinary case, not an
+        # exception.
+        self.add_btn = QPushButton("+ New Ticket")
+        self.add_btn.setCursor(Qt.PointingHandCursor)
+        self.add_btn.setToolTip(f"Start a ticket in {BAND_LABEL[priority]}")
+        self.add_btn.setStyleSheet(
+            f"QPushButton {{ {BTN_HIT} border:1px solid {rgba(accent, 0.45)};"
+            f" border-radius:3px; color:{accent}; background:transparent;"
+            f" font-size:11px; }}"
+            f"QPushButton:hover {{ background:{rgba(accent, 0.14)}; }}"
+            f"QPushButton:disabled {{ color:{T.MUTED};"
+            f" border-color:{T.LINE}; }}")
+        self.add_btn.clicked.connect(
+            lambda: self.board.start_ticket(self.priority))
+        h.addWidget(self.add_btn)
         outer.addWidget(self.header)
 
         # -- the container the cards sit in -----------------------------------
@@ -4116,20 +4189,36 @@ class Bert(QMainWindow):
         self.reveal(busy)
         going = self._short_name(tid)
         held = w.data.get("name") or busy
+        if busy == NEW_TICKET:
+            held = w.f_title.text().strip() or "an untitled ticket"
 
+        # A ticket being started is not a card with unsaved edits: there is
+        # nothing behind it, so "unsaved changes" and "Save" are both the
+        # wrong words, and discarding loses the whole thing rather than an
+        # edit to something that will still be there.
+        starting = busy == NEW_TICKET
         box = QMessageBox(self)
-        box.setWindowTitle("Unsaved changes on another ticket")
-        box.setText(f"You have unsaved changes on:\n\n{held}")
-        box.setInformativeText(
-            f"Opening {going} will close that editor.")
+        if starting:
+            box.setWindowTitle("A ticket you haven't created yet")
+            box.setText(f"You're partway through starting a ticket:\n\n{held}")
+            box.setInformativeText(
+                f"Opening {going} will close it, and nothing has been created "
+                f"yet -- it would be lost.")
+        else:
+            box.setWindowTitle("Unsaved changes on another ticket")
+            box.setText(f"You have unsaved changes on:\n\n{held}")
+            box.setInformativeText(f"Opening {going} will close that editor.")
         # Each button says what happens to both tickets. "this ticket" was
         # the one word that could not be used here: the ticket being closed
         # is not the one just clicked on.
-        save = box.addButton(f"Save and open {going}",
-                             QMessageBox.AcceptRole)
-        drop = box.addButton(f"Discard and open {going}",
-                             QMessageBox.DestructiveRole)
-        stay = box.addButton("Keep editing", QMessageBox.RejectRole)
+        save = box.addButton(
+            f"Create it, then open {going}" if starting
+            else f"Save and open {going}", QMessageBox.AcceptRole)
+        drop = box.addButton(
+            f"Discard it and open {going}" if starting
+            else f"Discard and open {going}", QMessageBox.DestructiveRole)
+        stay = box.addButton("Keep writing" if starting else "Keep editing",
+                             QMessageBox.RejectRole)
         # Staying is the one that loses nothing, so it is what Escape does.
         box.setDefaultButton(stay)
         box.exec()
@@ -4144,8 +4233,54 @@ class Bert(QMainWindow):
             return False
         return True
 
+    def start_ticket(self, priority):
+        """Open an editor for a ticket that does not exist yet.
+
+        Straight into the editor rather than asking for a title first: the
+        title is the thread's name and has a shape to keep, and the tag, the
+        client and the work items are all in there anyway.
+        """
+        if not self._guard():
+            return
+        if self.editor_is_busy(NEW_TICKET):
+            return
+
+        today = datetime.now(timezone.utc).date()
+        blank = {
+            "thread_id": NEW_TICKET, "is_new": True, "priority": priority,
+            "rank": 0.0, "queue": "PROD", "confidence": "strict",
+            "name": f"PROD: Client - {title_stamp(today)} - what it's about",
+            "client_raw": None, "client_override": None, "summary": None,
+            "issues": [], "work_items": [], "equipment": [],
+            "ticket_count": 0, "last_human_at": None, "completed_at": None,
+            "unsent": 0, "stuck": 0, "unshared": False,
+        }
+        band = self.bands.get(priority)
+        if band is None:
+            return
+        card = Card(blank, self)
+        band.lay.insertWidget(0, card)
+        band.setVisible(True)
+        self.editing_card = NEW_TICKET     # holds the poll off while it is open
+        card.enter_edit()
+
+    def create_ticket(self, card, fields):
+        """Ask Ernie for the thread. It shows on the board straight away."""
+        if not (fields.get("title") or "").strip():
+            QMessageBox.information(self, "A ticket needs a title",
+                                    "Give it a title before creating it.")
+            return
+        card.exit_edit()          # drops the placeholder, releases the board
+        try:
+            self.api.new_ticket(fields, self.name())
+        except Exception as e:
+            QMessageBox.warning(self, "Couldn't start that ticket", str(e))
+        self.refresh()
+
     def _short_name(self, tid):
         """A ticket in a few words, for a sentence about two of them."""
+        if tid == NEW_TICKET:
+            return "a new ticket"
         c = next((x for x in self.cards if x["thread_id"] == tid), None)
         if not c:
             return "the other ticket"

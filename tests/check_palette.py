@@ -667,6 +667,59 @@ def check_a_finished_work_item_says_so() -> bool:
     return c.report()
 
 
+def check_starting_a_ticket_is_not_editing_one() -> bool:
+    """A ticket being started has nothing behind it, and the words follow.
+
+    "Unsaved changes" and "Save" are both wrong for something that does not
+    exist: discarding loses the whole ticket, not an edit to a card that will
+    still be there afterwards. The collision dialog says so, and the editor's
+    button says Create rather than Save.
+
+    Read off the source: the dialog needs a QApplication and a second open
+    editor, and the checks deliberately build neither.
+    """
+    c = Check("starting a ticket is not editing one")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def meth(cls_name, fn):
+        cls = next((n for n in ast.walk(tree)
+                    if isinstance(n, ast.ClassDef) and n.name == cls_name), None)
+        if cls is None:
+            return ""
+        f = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                  and n.name == fn), None)
+        return (ast.get_source_segment(src, f) or "") if f else ""
+
+    c.ok("NEW_TICKET" in src, "a ticket with no thread stands under a sentinel")
+
+    busy = meth("Bert", "editor_is_busy")
+    c.ok("starting = busy == NEW_TICKET" in busy,
+         "the collision dialog knows which case it is in")
+    c.ok("Keep writing" in busy and "Keep editing" in busy,
+         "and says keep writing rather than keep editing")
+    c.ok("Create it, then open" in busy,
+         "offers to create it rather than save it")
+    c.ok("would be lost" in busy,
+         "and says plainly that discarding loses the whole thing")
+
+    start = meth("Bert", "start_ticket")
+    c.ok("editor_is_busy(NEW_TICKET)" in start,
+         "starting one goes through the same one-editor rule")
+    c.ok("self.editing_card = NEW_TICKET" in start,
+         "and holds the poll off, so the board is not redrawn over it")
+
+    exit_ = meth("Card", "exit_edit")
+    c.ok("if self.is_new" in exit_ and "deleteLater" in exit_,
+         "closing one throws the placeholder away, since nothing is behind it")
+
+    save = meth("Card", "save")
+    c.ok("create_ticket" in save,
+         "and saving asks for a thread rather than editing a card")
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
@@ -677,4 +730,5 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_a_band_leaves_no_stray_windows,
           check_nothing_is_unparented_while_it_is_visible,
           check_a_tooltip_is_readable,
-          check_a_finished_work_item_says_so)
+          check_a_finished_work_item_says_so,
+          check_starting_a_ticket_is_not_editing_one)

@@ -317,6 +317,37 @@ activity feed, undo, and the outbox.
   a card for every thread there has ever been, and claiming to have watched
   those start would write a line per thread into the feed and the change log.
 
+## Starting a ticket from the board
+
+A `+ New Ticket` on every band header, because the band is the answer to
+"where does this go" and pressing the one you mean has already given it. Needs
+Attention keeps one too: every thread opened in Discord lands there anyway, so
+a ticket with no home yet is the ordinary case rather than an exception.
+
+- **A card cannot exist without a thread**, and Bert cannot make one -- every
+  write to Discord goes through `Discord.write()`, which lives in the outbox.
+  So `POST /tickets` records what to make in `new_threads`, and the board
+  shows it wearing the **unsent mark** until the outbox has made it. A ticket
+  that exists here and not yet in Discord is exactly a change that has not
+  left this machine, which is what that mark already says.
+- **The outbox writes the mirror rows itself** rather than leaving them to the
+  sync. Waiting would put the card on the board a cycle later and in
+  `unassigned`, losing the band somebody chose by pressing the `+` in it. The
+  sync reconciles both on its next pass; they are written the way it writes
+  them.
+- **Ernie opens the thread and then says whose it is.** There is no map from a
+  Bert install to a Discord account, so the bot is the author and the name
+  from `settings` goes in as plain text -- the same way every other name this
+  posts does. The optional first message follows it.
+- **Starting one is not editing one, and the words follow.** `NEW_TICKET` is
+  the sentinel a ticket with no thread stands under. It goes through the same
+  one-editor rule, but the dialog offers *Create it* rather than *Save*, says
+  *Keep writing* rather than *Keep editing*, and says plainly that discarding
+  loses the whole thing -- there is no card behind it to go back to. Closing
+  the editor throws the placeholder away, and a blank template is not a draft:
+  `is_dirty()` compares against the template, so pressing `+` and changing
+  your mind costs no dialog.
+
 ## The state channel
 
 So two people on two machines share one board without either hosting the
