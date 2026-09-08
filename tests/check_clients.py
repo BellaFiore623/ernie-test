@@ -393,6 +393,128 @@ def check_a_missing_key_is_judged_by_what_it_is():
     return c.report()
 
 
+def _roster():
+    """The handful of real clients these searches are about."""
+    def c(cid, name, short, ambiguous=False, aliases=()):
+        return {"client_id": cid, "name": name, "short_name": short,
+                "ambiguous": ambiguous, "aliases": list(aliases)}
+    return [
+        c("PIP-8605", "Duke's Root Control", "Duke's Root Control",
+          aliases=["Dukes Root Control"]),
+        c("PIP-8425", "Duke's Omaha : (MudMaster Hybrid)", "Duke's Omaha"),
+        c("PIP-2148", "Inspect.AI", "Inspect.AI", aliases=["Inspect AI"]),
+        c("PIP-6700", "Eight-Eleven Co", "Eight-Eleven Co"),
+        c("PIP-4863", "Thrasher : (ST Client)", "Thrasher"),
+        c("PIP-6878", "Trekk Design Group (ST Client)", "Trekk"),
+        # Its summary mentions Trekk, but it is not Trekk.
+        c("PIP-2149", "Abay Construction *Working under Trekk*",
+          "Abay Construction"),
+        c("PIP-7979", "MBE (Monaloh Basin Engineers)", "MBE"),
+        c("PIP-2136", "IPI : El Paso", "IPI", ambiguous=True),
+        c("PIP-3927", "IPI : *REP*", "IPI", ambiguous=True),
+    ]
+
+
+def check_punctuation_never_hides_a_client():
+    """Every miss measured on the real board was punctuation, not letters.
+
+    "Duke's" has an apostrophe, 'Inspect.AI' a dot, 'Eight-Eleven' a hyphen.
+    Somebody typing 'dukes' is not making a mistake worth correcting -- they
+    are typing the name without the apostrophe, and a substring search finds
+    nothing at all. Both of these are spellings that really appear in
+    production titles.
+    """
+    c = Check("punctuation never hides a client")
+
+    # Asserted on the squash itself, not only through a search: the alias and
+    # fuzzy tiers can rescue these for their own reasons, and did -- taking
+    # the squash out left every search still passing, which is a check
+    # agreeing with the code rather than testing it.
+    for raw, want in [("Duke's Root Control", "dukesrootcontrol"),
+                      ("Inspect.AI", "inspectai"),
+                      ("Eight-Eleven Co", "eightelevenco"),
+                      ("Clinton, MS", "clintonms"),
+                      ("  RK&K  ", "rkk")]:
+        c.equal(bert.client_squash(raw), want, f"squash {raw!r}")
+
+    # And a client with no alias to fall back on, so only the squash can
+    # answer: the apostrophe is the only thing between the two strings.
+    solo = [x for x in _roster() if x["client_id"] == "PIP-8425"]
+    c.equal([x["short_name"] for x in bert.client_matches("dukesomaha", solo)],
+            ["Duke's Omaha"], "an unaliased name found through its apostrophe")
+
+    r = _roster()
+    for typed, want in [("dukes", "Duke's Root Control"),
+                        ("inspect ai", "Inspect.AI"),
+                        ("eight eleven", "Eight-Eleven Co"),
+                        ("root control", "Duke's Root Control")]:
+        got = [x["short_name"] for x in bert.client_matches(typed, r)]
+        c.ok(want in got, f"{typed!r} offers {want!r}  (got {got[:3]})")
+    return c.report()
+
+
+def check_a_mistyped_name_still_finds_its_client():
+    """A letter wrong is the case the dropdown exists for."""
+    c = Check("a mistyped name still finds its client")
+    r = _roster()
+    c.equal([x["short_name"] for x in bert.client_matches("thasher", r)],
+            ["Thrasher"], "'thasher' offers Thrasher")
+    c.equal(bert.client_matches("zzzzzz", r), [],
+            "and nonsense offers nothing rather than the nearest thing")
+    return c.report()
+
+
+def check_the_customer_outranks_a_note_about_them():
+    """'Abay Construction *Working under Trekk*' contains the word Trekk.
+
+    So does Trekk Design Group, which is who you meant. A single score would
+    put them in whatever order the roster happened to be in; the tiers put a
+    hit on the customer's own name above a hit on somebody's summary.
+    """
+    c = Check("the customer outranks a note about them")
+    got = [x["short_name"] for x in bert.client_matches("trek", _roster())]
+    c.ok(got[:1] == ["Trekk"], f"Trekk is offered first  (got {got})")
+    c.ok("Abay Construction" in got, "and Abay is still findable, just after")
+    return c.report()
+
+
+def check_an_old_spelling_finds_the_right_customer():
+    """The alias table already knows the misspellings.
+
+    'Dukes Root Control' is on nine production threads and 'Inspect AI' on
+    six. Somebody typing what a title said last year should land on the
+    customer, not on nothing -- the editor has no reason to rediscover what
+    reconciliation already worked out.
+    """
+    c = Check("an old spelling finds the right customer")
+    r = _roster()
+    got = [x["short_name"] for x in bert.client_matches("monaloh", r)]
+    c.equal(got, ["MBE"], "a name that appears only in the Jira summary")
+    got = [x["short_name"] for x in bert.client_matches("Dukes Root Control", r)]
+    c.ok(got[:1] == ["Duke's Root Control"],
+         f"and a spelling only the alias table knows  (got {got[:2]})")
+    return c.report()
+
+
+def check_the_search_suggests_and_never_decides():
+    """This is the half of fuzzy matching that is safe.
+
+    reconcile_aliases refuses to merge on resemblance because 'falmouth ma'
+    and 'falmouth me' are 0.91 similar and are different places. That rule is
+    about a matcher writing an alias with nobody watching. Searching is the
+    other half: it may offer anything it likes, because a person chooses. So
+    an ambiguous query must offer *both* rather than pick one.
+    """
+    c = Check("the search suggests and never decides")
+    got = [x["client_id"] for x in bert.client_matches("dukes", _roster())]
+    c.ok("PIP-8605" in got and "PIP-8425" in got,
+         "'dukes' offers both Duke's customers, and settles nothing")
+    got = [x["client_id"] for x in bert.client_matches("ipi", _roster())]
+    c.equal(sorted(got), ["PIP-2136", "PIP-3927"],
+            "as does a name two live customers share")
+    return c.report()
+
+
 CHECKS = (
     check_the_short_name_cuts_the_note_not_the_name,
     check_only_the_starred_marker_retires_a_client,
@@ -407,6 +529,11 @@ CHECKS = (
     check_the_editor_offers_the_roster_and_still_takes_anything,
     check_no_jira_means_no_change,
     check_a_missing_key_is_judged_by_what_it_is,
+    check_punctuation_never_hides_a_client,
+    check_a_mistyped_name_still_finds_its_client,
+    check_the_customer_outranks_a_note_about_them,
+    check_an_old_spelling_finds_the_right_customer,
+    check_the_search_suggests_and_never_decides,
 )
 
 

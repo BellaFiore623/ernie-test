@@ -679,8 +679,23 @@ def client_roster():
           WHERE c.offered = 1 AND c.short_name IS NOT NULL AND c.short_name <> ''
           ORDER BY c.short_name COLLATE NOCASE"""))
     seen = Counter((c["short_name"] or "").lower() for c in out)
+
+    # Every spelling the board has ever used for each client. Bert searches
+    # these as well as the name, so somebody who types what a title said last
+    # year still finds the customer -- the alias table already knows the
+    # misspellings, and there is no reason to make the editor rediscover them.
+    aliases: dict[str, list[str]] = {}
+    for r in con.execute(
+            """SELECT a.client_id, v.client_raw FROM client_aliases a
+               JOIN v_thread_current v ON v.client_key = a.raw_key
+               WHERE v.client_raw IS NOT NULL AND v.client_raw <> ''"""):
+        aliases.setdefault(r["client_id"], [])
+        if r["client_raw"] not in aliases[r["client_id"]]:
+            aliases[r["client_id"]].append(r["client_raw"])
+
     for c in out:
         c["ambiguous"] = seen[(c["short_name"] or "").lower()] > 1
+        c["aliases"] = aliases.get(c["client_id"], [])
     stamp = con.execute("SELECT MAX(synced_at) AS at FROM clients").fetchone()
     con.close()
     return {"count": len(out), "clients": out,

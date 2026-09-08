@@ -471,6 +471,28 @@ so the name is *picked* in Bert instead of typed.
   as `short_name`. The rest were not, and the reason matters: `Dukes Root
   Control` appears on 9 threads and is a *misspelling* of `Duke's Root Control`,
   not a shortening. Adopting by popularity would have made the typo canonical.
+- **The box searches, the person picks.** `client_matches()` fills the popup
+  rather than the completer filtering it, because a completer can only match
+  the strings in the list and half of what people type is not in it: `dukes`
+  is not a substring of `Duke's Root Control`, `inspect ai` is not one of
+  `Inspect.AI`, and `monaloh` appears only in MBE's Jira summary. It searches
+  the name, the summary, and every spelling the board has used -- the alias
+  table already knows the misspellings, so a name typed wrong last year finds
+  the customer today. Every miss measured on the real board was punctuation
+  rather than letters, so `client_squash()` takes it out; a letter genuinely
+  wrong falls to a `difflib` tier at `CLIENT_FUZZY_MIN`.
+- **The tiers exist because a summary mentions other customers.** `Abay
+  Construction *Working under Trekk*` contains Trekk and is not Trekk, and one
+  flat score ordered the two by whatever the roster happened to be in. A hit on
+  the customer's own name outranks a hit on an alias, which outranks a hit on a
+  summary.
+- **Searching may be fuzzy; resolving may not.** `reconcile_aliases` refuses to
+  merge on resemblance because `falmouth ma` and `falmouth me` are 0.91 similar
+  and are different places. That rule is about a matcher writing an alias with
+  nobody watching. The search only puts candidates in front of a person, so it
+  may offer anything -- and must offer *both* when a query is ambiguous rather
+  than choosing: `dukes` returns Duke's Omaha and Duke's Root Control, and
+  settles nothing.
 - The dropdown is **pick-or-type**. A customer exists before Jira hears about
   them, and a card already carrying an unoffered client keeps it.
 

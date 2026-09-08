@@ -12,9 +12,11 @@ edits are batched so the server can process them in one go.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import math
 import pathlib
+import re
 import sys
 import time
 import uuid
@@ -27,8 +29,8 @@ import httpx
 # agreement.
 import ernie_extract as ex
 from PySide6.QtCore import (
-    QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer,
-    Signal,
+    QMimeData, QPoint, QPointF, QRect, QRectF, QSize, QStringListModel, Qt,
+    QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon, QPainter,
@@ -912,6 +914,84 @@ class Combo(QComboBox):
         e.ignore()
 
 
+# How wanted a match is, most wanted first. Tiered rather than one number so
+# a hit on the customer's own name always outranks a hit on a note about them:
+# 'Abay Construction *Working under Trekk*' contains Trekk, and typing "trek"
+# must offer Trekk first and Abay second, not the other way round.
+_M_EXACT, _M_PREFIX, _M_NAME, _M_ALIAS, _M_SUMMARY = 3.0, 2.5, 2.2, 2.0, 1.8
+CLIENT_FUZZY_MIN = 0.72    # below this a near miss is just a different word
+CLIENT_HITS = 8            # a popup you scan, not a list you read
+SEP = chr(0xB7)            # middle dot, as the shared-board label uses
+
+
+def client_squash(text: str) -> str:
+    """A client name with the punctuation taken out.
+
+    Every miss measured on the real board was punctuation, not letters: the
+    apostrophe in Duke's, the dot in Inspect.AI, the hyphen in Eight-Eleven.
+    Somebody typing "dukes" is not making a mistake worth correcting, they are
+    typing the name without the apostrophe, and the box should find it.
+    """
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def client_label(c) -> str:
+    """How one client reads in the list.
+
+    Two live customers can shorten to the same word -- IPI is both PIP-2136
+    and PIP-3927 -- so those carry their Jira summary and nothing else does.
+    """
+    short = (c.get("short_name") or "").strip()
+    return (f"{short}  " + SEP + f"  {c['name']}"
+            if c.get("ambiguous") else short)
+
+
+def client_matches(typed, roster, limit=CLIENT_HITS):
+    """The clients worth offering for what has been typed so far.
+
+    Searches the customer's name, their Jira summary, and every spelling the
+    board has ever used for them -- the alias table already knows the
+    misspellings, so a name that was typed wrong last year finds the right
+    customer today.
+
+    Nothing here decides anything. reconcile_aliases refuses to merge on
+    resemblance because 'falmouth ma' and 'falmouth me' are 0.91 similar and
+    are different places; that rule is about a matcher writing an alias with
+    nobody watching. This one only puts candidates in front of a person, who
+    picks -- which is the safe half of the same idea.
+    """
+    q = client_squash(typed)
+    if not q:
+        return []
+    out = []
+    for c in roster or []:
+        short = client_squash(c.get("short_name"))
+        names = [client_squash(a) for a in (c.get("aliases") or [])]
+        summary = client_squash(c.get("name"))
+        if short == q:
+            score = _M_EXACT
+        elif short.startswith(q):
+            score = _M_PREFIX
+        elif q in short:
+            score = _M_NAME
+        elif any(q in a for a in names):
+            score = _M_ALIAS
+        elif q in summary:
+            score = _M_SUMMARY
+        else:
+            # Only now is it worth the cost, and only against what the client
+            # is actually called -- fuzzy against a whole summary matches
+            # anything long enough.
+            best = max((difflib.SequenceMatcher(None, q, k).ratio()
+                        for k in [short] + names if k), default=0.0)
+            if best < CLIENT_FUZZY_MIN:
+                continue
+            score = best
+        out.append((score, (c.get("short_name") or "").lower(), c))
+    out.sort(key=lambda t: (-t[0], t[1]))
+    return [c for _, _, c in out[:limit]]
+
+
 class ClientCombo(Combo):
     """The customer list, picked rather than typed.
 
@@ -941,8 +1021,7 @@ class ClientCombo(Combo):
             # same word twice is worse than the typos this replaces. The full
             # summary goes on the line for those, and the short name is still
             # what lands in the title.
-            label = (f"{short}  ·  {c['name']}"
-                     if c.get("ambiguous") else short)
+            label = client_label(c)
             self.addItem(label, short)
             self.setItemData(self.count() - 1, c.get("name"), Qt.ToolTipRole)
             offered.add(short.lower())
@@ -954,18 +1033,42 @@ class ClientCombo(Combo):
         if current and current.lower() not in offered:
             self.addItem(current, current)
 
-        # Match on any part of the name: people reach for 'root control' as
-        # readily as 'Duke', and a prefix-only completer finds neither.
-        comp = self.completer()
-        comp.setCompletionMode(QCompleter.PopupCompletion)
-        comp.setFilterMode(Qt.MatchContains)
+        # The popup is filled by client_matches rather than filtered by the
+        # completer, because the completer can only match the strings in the
+        # list -- and half of what people type is not in it. 'dukes' is not a
+        # substring of "Duke's Root Control", 'inspect ai' is not one of
+        # 'Inspect.AI', and 'monaloh' appears only in MBE's Jira summary.
+        # Unfiltered means the popup shows exactly what was put in it, in the
+        # order it was put in.
+        self._roster = list(roster or [])
+        self._short_of = {client_label(c): (c.get("short_name") or "")
+                          for c in self._roster}
+        comp = QCompleter([], self)
+        comp.setCompletionMode(QCompleter.UnfilteredPopupCompletion)
         comp.setCaseSensitivity(Qt.CaseInsensitive)
+        comp.activated[str].connect(self._took_completion)
+        self.setCompleter(comp)
+        self._comp = comp
+        # textEdited, so rebuilding the list is never mistaken for typing.
+        self.lineEdit().textEdited.connect(self._offer)
 
         self.setCurrentIndex(max(self.findData(current), 0) if current else 0)
         self.setEditText(current)
         # Picking the disambiguated line must put the short name in the box,
         # not the whole line including the summary.
         self.activated.connect(self._took_pick)
+
+    def _offer(self, text):
+        """Put the clients worth considering into the popup, best first."""
+        hits = client_matches(text, self._roster)
+        self._comp.setModel(
+            QStringListModel([client_label(c) for c in hits], self._comp))
+        if hits:
+            self._comp.complete()
+
+    def _took_completion(self, label):
+        """A pick from the popup leaves the short name, not the whole line."""
+        self.setEditText(self._short_of.get(label, label))
 
     def _took_pick(self, index):
         self.setEditText(self.itemData(index) or "")
