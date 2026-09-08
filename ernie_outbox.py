@@ -281,14 +281,21 @@ def make_threads(con, d: Discord) -> dict:
                                                   last_synced_at)
                    VALUES (?,?,?,?,?,?)""",
                 (tid, row["channel_id"], d.guild_id, ts, ts, ts))
-            con.execute(
-                """INSERT OR REPLACE INTO thread_titles (thread_id, observed_at,
-                                                         name, confidence)
-                   VALUES (?,?,?,?)""",
-                (tid, ts, row["title"], "pending"))
-            rank = con.execute(
-                "SELECT COALESCE(MAX(rank), 0) + 1000.0 FROM cards WHERE priority=?",
-                (row["priority"],)).fetchone()[0]
+            # Parsed, through the one writer the sync uses. Writing just the
+            # name left queue and client NULL until a sync cycle filled them
+            # in, so a ticket whose title reads perfectly well came up grey
+            # with "unknown client" the moment its thread existed.
+            load.record_title(con, tid, row["title"], ts)
+            # To the top of its band, which is where Bert has been showing it
+            # since the + was pressed. rank is the order and the only one, so
+            # it has to say what the board says -- MAX + a step put the card
+            # at the bottom of the band, and a ticket somebody had just
+            # written slid away from them as soon as it became real.
+            edge = con.execute(
+                "SELECT MIN(rank) AS m FROM cards WHERE priority=?",
+                (row["priority"],)).fetchone()
+            rank = (load.RANK_STEP if edge["m"] is None
+                    else edge["m"]) - load.RANK_STEP
             con.execute(
                 """INSERT OR IGNORE INTO cards (thread_id, priority, rank,
                                                 updated_at)

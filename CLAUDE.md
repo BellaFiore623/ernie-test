@@ -367,6 +367,19 @@ a ticket with no home yet is the ordinary case rather than an exception.
   `unassigned`, losing the band somebody chose by pressing the `+` in it. The
   sync reconciles both on its next pass; they are written the way it writes
   them.
+- **The outbox writes the card the way the sync would, or the board shows two
+  different tickets.** The rows it writes are read straight back by the API, so
+  a shortcut there is visible immediately. It wrote the title row with the name
+  alone and `confidence='pending'`, leaving queue and client NULL: a title that
+  parses perfectly well -- `PROD: CHA Solutions - 08Sep26 - what it's about` --
+  came up grey with "unknown client" the moment its thread existed, and stayed
+  that way, because the sync writes a revision only when the *name* changes and
+  the name never did. `load.record_title()` is now the one writer both go
+  through. And it ranked the card to `MAX + RANK_STEP`, the bottom of the band,
+  while Bert had been showing it at the top since the `+` was pressed -- rank is
+  the order and the only one, so it has to say what the board says. It goes to
+  `MIN - RANK_STEP` of the band whose `+` was pressed, the same idiom
+  `ensure_card` uses to rank an unreadable thread to the top.
 - **Ernie opens the thread and then says whose it is.** There is no map from a
   Bert install to a Discord account, so the bot is the author and the name
   from `settings` goes in as plain text -- the same way every other name this

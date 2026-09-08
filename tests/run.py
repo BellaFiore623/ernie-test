@@ -21,6 +21,7 @@ import check_changelog                                       # noqa: E402
 import check_clients                                         # noqa: E402
 import check_feed                                            # noqa: E402
 import check_freshness                                       # noqa: E402
+import check_new_ticket                                       # noqa: E402
 import check_palette                                         # noqa: E402
 import check_poll_hold                                       # noqa: E402
 import check_started                                         # noqa: E402
@@ -30,7 +31,8 @@ MODULES = {"changelog": check_changelog, "state": check_state,
            "order": check_board_order, "poll": check_poll_hold,
            "fresh": check_freshness, "started": check_started,
            "palette": check_palette, "feed": check_feed,
-           "clients": check_clients}
+           "clients": check_clients,
+           "newticket": check_new_ticket}
 
 
 def main(argv: list[str]) -> int:

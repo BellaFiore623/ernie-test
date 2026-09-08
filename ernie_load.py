@@ -111,7 +111,6 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
     )
 
     # Title revision, only when it differs from the last one we saw.
-    title = ex.parse_title(t.get("name", ""))
     prev = con.execute(
         """SELECT name FROM thread_titles WHERE thread_id=?
            ORDER BY observed_at DESC LIMIT 1""", (tid,)).fetchone()
@@ -119,17 +118,31 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
     if prev is None or prev["name"] != t.get("name", ""):
         if prev is not None:
             stats["titles_changed"] += 1
-        con.execute(
-            """INSERT OR REPLACE INTO thread_titles
-               (thread_id, observed_at, name, queue, client_raw, client_key,
-                thread_date, summary, confidence)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (tid, ts, t.get("name", ""), title.queue, title.client_raw,
-             ex.normalise_client(title.client_raw or "") or None,
-             title.date.isoformat() if title.date else None,
-             title.summary, title.confidence),
-        )
+        record_title(con, tid, t.get("name", ""), ts)
     return tid
+
+
+def record_title(con: sqlite3.Connection, tid: str, name: str,
+                 ts: str | None = None) -> None:
+    """Write one title revision, parsed.
+
+    The only place that decides what a title row holds. The outbox writes one
+    too, for a thread it has just created, and wrote only the name -- so the
+    card came up with no queue and no client until a sync cycle later filled
+    them in: grey, "unknown client", for a title that reads perfectly well.
+    Both callers come through here so there is one answer rather than two.
+    """
+    ts = ts or now()
+    t = ex.parse_title(name or "")
+    con.execute(
+        """INSERT OR REPLACE INTO thread_titles
+           (thread_id, observed_at, name, queue, client_raw, client_key,
+            thread_date, summary, confidence)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (tid, ts, name or "", t.queue, t.client_raw,
+         ex.normalise_client(t.client_raw or "") or None,
+         t.date.isoformat() if t.date else None, t.summary, t.confidence),
+    )
 
 
 def load_messages(con: sqlite3.Connection, tid: str, msgs: list, stats: dict) -> None:
