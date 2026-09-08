@@ -67,6 +67,7 @@ TOAST_MS = 6_000      # a ceiling: the toast normally clears the
 DRAG_THRESHOLD = 5
 RAIL_ZONE_MIN = 34                               
 RAIL_ZONE_GAP = 7                            
+RAIL_HEAD_GAP = 8          # air above a band's name, so it groups downward
 DROP_ZONE_MIN = 72                     
 RANK_STEP = 1000.0          
 EDGE_SCROLL_ZONE = 64
@@ -79,6 +80,7 @@ RAIL_MAX_W = 460           # wider is a second board, not a running order
 # much of a line fits across the rest of a row.
 RAIL_ROW_CHROME = 26
 RAIL_REDRAW_MS = 140       # after the handle settles, not during
+RAIL_BAR_H = 2             # the rule beside a band's name in the running order
 BOARD_PAD = 16              
 BOARD_MAX = 800             
                            
@@ -2058,6 +2060,81 @@ class RailRow(QFrame):
         self._press = None
 
 
+class RailBandHead(QWidget):
+    """A band's name in the running order, with a rule running off it.
+
+    This used to be a bare coloured bar, which said a band started here and
+    never said which -- you counted down from the top to work it out. The word
+    says it outright, and says it in the neutral ink: a card already wears its
+    tag, the board already tints its band headers, and spending a third colour
+    on the same fact is what the tag rule exists to stop. The rule is what
+    carries the eye across; it is a hairline, not a bar.
+
+    Clicking it collapses the band. A long board puts High and Low a screen
+    apart, and folding what is between them is the difference between a drag
+    you can make in one movement and one you cannot -- so a collapsed band
+    stays collapsed *during* a drag, which is the whole point of it. It
+    remains a place to drop: the header takes a card and the band names
+    itself, exactly as an empty band's slot does.
+    """
+
+    def __init__(self, priority, count, collapsed, rail=None):
+        super().__init__()
+        self.priority = priority
+        self.collapsed = collapsed
+        self.rail = rail
+        self.setStyleSheet("background:transparent;")
+        self.setCursor(Qt.PointingHandCursor)
+        shown = BAND_LABEL[priority]
+        self.setToolTip(f"{'Show' if collapsed else 'Hide'} {shown}")
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, RAIL_HEAD_GAP, 0, 3)
+        row.setSpacing(6)
+
+        self.caret = QLabel("▸" if collapsed else "▾")
+        row.addWidget(self.caret)
+
+        self.name = QLabel(shown)
+        f = self.name.font()
+        f.setBold(True)
+        self.name.setFont(f)
+        row.addWidget(self.name)
+
+        # Collapsed, the count is the only thing left saying there is work in
+        # here. An empty band says so rather than leaving the rule to explain
+        # a header with nothing under it.
+        self.note = QLabel(f"{count}" if collapsed else "" if count else "empty")
+        row.addWidget(self.note)
+
+        self.rule = QFrame()
+        self.rule.setFixedHeight(RAIL_BAR_H)
+        self.rule.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.addWidget(self.rule, 1)
+        self._paint(False)
+
+    def _paint(self, hot):
+        # Hot uses the accent the drop marker already uses, so a target and an
+        # insertion line are recognisably the same promise.
+        ink = T.ACCENT if hot else T.MUTED
+        line = T.ACCENT if hot else T.LINE
+        self.caret.setStyleSheet(f"color:{ink}; font-size:9px;"
+                                 f" background:transparent;")
+        self.name.setStyleSheet(f"color:{ink}; font-size:10px;"
+                                f" letter-spacing:0.5px; background:transparent;")
+        self.note.setStyleSheet(f"color:{T.MUTED if hot else T.LINE};"
+                                f" font-size:10px; background:transparent;")
+        self.rule.setStyleSheet(f"background:{line}; border:none;")
+
+    def set_hot(self, hot):
+        """Light up while a drag is over a collapsed band, as its slot would."""
+        self._paint(hot and self.collapsed)
+
+    def mouseReleaseEvent(self, e):
+        if self.rail is not None and e.button() == Qt.LeftButton:
+            self.rail.toggle_band(self.priority)
+
+
 class RailZone(QWidget):
     """The place an empty band keeps in the running order, during a drag.
     """
@@ -2101,6 +2178,8 @@ class Rail(QWidget):
         self._sig = None
         self.folded = False
         self._spacer = None
+        # Which bands are folded away, remembered like the rail's own width.
+        self.collapsed = set(board.settings.get("rail_collapsed") or [])
         self.setAcceptDrops(True)
         # A range, not a fixed width -- a fixed child gives the splitter
         # handle nothing to move. set_folded() fixes it, because folded is
@@ -2214,7 +2293,11 @@ class Rail(QWidget):
         # The clip widths are part of what a row draws, so a rail that has been
         # dragged is a different picture of the same cards and has to be rebuilt.
         room = self.row_width()
-        sig = json.dumps([cards, self.board.dragging, room],
+        # Which bands are folded is part of the picture, the same way the
+        # clip width is: without it here, collapsing a band changes nothing
+        # on screen until the cards themselves happen to change.
+        sig = json.dumps([cards, self.board.dragging, room,
+                          sorted(self.collapsed)],
                          sort_keys=True, default=str)
         if sig == self._sig:
             self.cards = cards
@@ -2233,24 +2316,55 @@ class Rail(QWidget):
 
         # Walk the bands rather than the cards, so a band with nothing in it
         # still gets its turn.
-        first = True
         for band in BANDS:
             group = [c for c in self.cards if c["priority"] == band]
             if not group and not self.board.dragging:
                 continue
-            if not first:
-                # Where the next band starts.
-                line = QFrame()
-                line.setFixedHeight(2)
-                line.setStyleSheet(
-                    f"background:{rgba(T.BAND_TEXT[band], 0.55)}; border:none;")
-                self.lay.addWidget(line)
-            first = False
+            # Every band is named, the first one included: the word is a
+            # label rather than a separator, and "Needs Attention" at the top
+            # is the one people most need to see.
+            shut = band in self.collapsed
+            self.lay.addWidget(RailBandHead(band, len(group), shut, self))
+            if shut:
+                # Deliberately still folded mid-drag. Shortening the distance
+                # between High and Low is what somebody collapsed Medium for,
+                # and opening it under them would undo that at the moment it
+                # matters. The header takes the drop instead.
+                continue
             for c in group:
                 self.lay.addWidget(RailRow(c, self.board, room))
             if not group:
                 self.lay.addWidget(RailZone(band))
         self.lay.addStretch()
+
+    def toggle_band(self, priority):
+        """Fold a band away, or bring it back."""
+        if priority in self.collapsed:
+            self.collapsed.discard(priority)
+        else:
+            self.collapsed.add(priority)
+        self.board.remember_collapsed(self.collapsed)
+        self.set_cards(self.cards)
+
+    def _heads(self):
+        return [self.lay.itemAt(i).widget() for i in range(self.lay.count())
+                if isinstance(self.lay.itemAt(i).widget(), RailBandHead)]
+
+    def _shut_head_at(self, y):
+        """The collapsed band's header under the pointer, if there is one.
+
+        Only a collapsed one: an open band's header is a label sitting above
+        rows that can speak for themselves, and taking the drop there would
+        send a card to the bottom of the band when the row it was dropped
+        beside said otherwise.
+        """
+        for h in self._heads():
+            if not h.collapsed:
+                continue
+            top = h.mapTo(self, QPoint(0, 0)).y()
+            if top <= y <= top + h.height():
+                return h
+        return None
 
     def _zones(self):
         return [self.lay.itemAt(i).widget() for i in range(self.lay.count())
@@ -2339,7 +2453,15 @@ class Rail(QWidget):
         hot = self._zone_at(y)
         for z in self._zones():
             z.set_hot(z is hot)
-        if hot is not None:
+
+        # A collapsed band answers for itself the same way an empty one does:
+        # the header is the target, and an insertion line between two rows of
+        # some other band would be saying something else.
+        shut = self._shut_head_at(y) if hot is None else None
+        for h in self._heads():
+            h.set_hot(h is shut)
+
+        if hot is not None or shut is not None:
             self.marker.hide()
             self.lay.removeWidget(self.marker)
             e.acceptProposedAction()
@@ -2358,6 +2480,8 @@ class Rail(QWidget):
         self.lay.removeWidget(self.marker)
         for z in self._zones():
             z.set_hot(False)
+        for h in self._heads():
+            h.set_hot(False)
 
     def dropEvent(self, e):
         tid = bytes(e.mimeData().data(MIME)).decode()
@@ -2365,6 +2489,17 @@ class Rail(QWidget):
         self.lay.removeWidget(self.marker)
         for z in self._zones():
             z.set_hot(False)
+        for h in self._heads():
+            h.set_hot(False)
+
+        # Dropped on a collapsed band's header: no neighbours to read, and
+        # none needed -- the header names the band, and a neighbourless move
+        # lands at the end of it.
+        shut = self._shut_head_at(e.position().toPoint().y())
+        if shut is not None:
+            self.board.move_card(tid, shut.priority, None, None)
+            e.acceptProposedAction()
+            return
 
         # Dropped on an empty band's slot: it has no neighbours to read the
         # band off, and doesn't need any -- the slot names it.
@@ -2750,6 +2885,15 @@ class Bert(QMainWindow):
                 SETTINGS.write_text(json.dumps(self.settings, indent=2))
             except OSError:
                 pass    # a layout is not worth an error box
+
+    def remember_collapsed(self, bands):
+        """Kept the way the rail width is: a layout somebody chose should
+        survive the next launch."""
+        self.settings["rail_collapsed"] = sorted(bands)
+        try:
+            SETTINGS.write_text(json.dumps(self.settings, indent=2))
+        except OSError:
+            pass    # a layout is not worth an error box
 
     def _place_rail(self):
         """Put the handle where it was left, once per unfold."""

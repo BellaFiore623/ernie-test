@@ -285,7 +285,81 @@ def check_the_rail_clips_to_its_width() -> bool:
     return c.report()
 
 
+def check_a_collapsed_band_still_lands_a_drop() -> bool:
+    """
+    Folding a band away must not move where a drop lands.
+
+    This is the shape of a bug the board has already had: Bert used to arrange
+    cards at draw time, and "a drop between two visible cards was measured
+    against neighbours that were not its neighbours". Hiding a band puts two
+    rows next to each other on screen that are not next to each other in the
+    order, which is the same trap.
+
+    What makes it safe is a guard that predates collapsing: _drop_at only ever
+    takes a neighbour from the dragged card's own band. Nobody may remove it.
+    """
+    c = Check("a collapsed band still lands a drop where it looks")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def method(cls_name, fn):
+        cls = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.ClassDef) and n.name == cls_name)
+        return next(n for n in cls.body
+                    if isinstance(n, ast.FunctionDef) and n.name == fn)
+
+    # The guard the whole thing rests on: a neighbour has to share the band.
+    drop = method("Rail", "_drop_at")
+    same_band = [n for n in ast.walk(drop)
+                 if isinstance(n, ast.Compare)
+                 and any(isinstance(x, ast.Subscript)
+                         and getattr(getattr(x, "slice", None), "value", None)
+                         == "priority"
+                         for x in [n.left] + list(n.comparators))]
+    c.equal(len(same_band), 2,
+            "_drop_at takes a neighbour only from the card's own band")
+
+    # Collapsing has to count as a change, or the rail paints the old picture.
+    setc = method("Rail", "set_cards")
+    sig = next(n for n in ast.walk(setc) if isinstance(n, ast.Assign)
+               and any(getattr(t, "id", None) == "sig" for t in n.targets))
+    c.ok(any(getattr(n, "attr", None) == "collapsed" for n in ast.walk(sig)),
+         "the fold is part of the redraw signature")
+
+    # A fold that opened itself the moment a drag began would defeat its own
+    # purpose -- shortening the run from High to Low is what it is for.
+    body = ast.get_source_segment(src, setc) or ""
+    shut = body.split("shut = band in self.collapsed")[-1]
+    c.ok("shut = band in self.collapsed" in body,
+         "the build loop reads the fold")
+    c.ok("dragging" not in shut.split("for c in group")[0],
+         "and a drag does not quietly reopen it")
+
+    # Reachable while folded: the header takes the drop, before any neighbour
+    # logic gets a look at it.
+    drop_ev = ast.get_source_segment(src, method("Rail", "dropEvent")) or ""
+    c.ok(drop_ev.index("_shut_head_at") < drop_ev.index("_zone_at"),
+         "a drop on a folded header is answered before the empty-band slot")
+    c.ok("move_card" in drop_ev.split("_shut_head_at")[1].split("return")[0],
+         "and it moves the card into that band")
+
+    # Only a folded header takes a drop. An open one sits above rows that can
+    # speak for themselves.
+    head_at = ast.get_source_segment(src, method("Rail", "_shut_head_at")) or ""
+    c.ok("if not h.collapsed" in head_at,
+         "an open band's header is not a drop target")
+
+    # Remembered, like the rail's own width.
+    c.ok(any(isinstance(n, ast.FunctionDef) and n.name == "remember_collapsed"
+             for n in ast.walk(tree)),
+         "the fold survives a restart")
+
+    return c.report()
+
+
 CHECKS = (check_predicate, check_new_cards_rank, check_one_order,
           check_a_reorder_says_where_it_went,
           check_a_reorder_that_moves_nothing_says_nothing,
-          check_the_rail_clips_to_its_width)
+          check_the_rail_clips_to_its_width,
+          check_a_collapsed_band_still_lands_a_drop)
