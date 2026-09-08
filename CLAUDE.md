@@ -76,6 +76,14 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   rank that puts it there. Dragging one down leaves it down; a later rename
   to something unreadable does not haul it back up.
 - Work is a list, not a field: `work_items`, one row per bubble on the card.
+  **A ticked one stays on the card, in green**, with a static tick instead of
+  a button -- `/cards` used to filter on `done_at IS NULL`, so it vanished,
+  and the bubble was the only thing saying the work had happened: ticking the
+  last one left a card silent about what had been done on it. In the editor a
+  finished bubble is unfilled with a dashed border and keeps its ✕, because
+  taking one off the card is a different statement from finishing it. Removed
+  ones do stay gone. Both greens are `T.OK_BG`/`T.OK_FG`, which the palette
+  already had.
   Rows are never deleted — a tick in view mode sets `done_at`, an ✕ in the
   editor sets `removed_at`, and undo needs both rows still there. The editor
   sends `work_add` / `work_remove`, not the whole list, so two people adding

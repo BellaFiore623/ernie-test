@@ -469,13 +469,19 @@ def cards(
 
     # One query for every card's bubbles rather than one per card; the board
     # is redrawn on every poll and this sits in that path.
+    # Ticked ones come too, flagged rather than filtered. A bubble that
+    # vanished the moment it was ticked took the only record of the work with
+    # it -- the card went quiet and said nothing about what had been done on
+    # it. Removed ones stay gone: an x in the editor says "this should not be
+    # here", which is a different statement from "this is finished".
     items: dict[str, list] = {}
     for r in con.execute(
-            """SELECT thread_id, item_id, body FROM work_items
-               WHERE done_at IS NULL AND removed_at IS NULL
+            """SELECT thread_id, item_id, body, done_at FROM work_items
+               WHERE removed_at IS NULL
                ORDER BY thread_id, position"""):
         items.setdefault(r["thread_id"], []).append(
-            {"item_id": r["item_id"], "body": r["body"]})
+            {"item_id": r["item_id"], "body": r["body"],
+             "done": r["done_at"] is not None})
 
     # What this machine still owes on each card, so a card can say it holds a
     # change that has not left here yet.

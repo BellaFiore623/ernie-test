@@ -1198,29 +1198,63 @@ class FlowLayout(QLayout):
 
 class Bubble(QFrame):
     """One work item.
+
+    A ticked one stays on the card, in green. It used to vanish -- the API
+    filtered on done_at IS NULL -- and the bubble was the only record that the
+    work had happened, so ticking the last one left a card saying nothing
+    about what had been done on it.
+
+    In the editor it goes quieter and takes a dashed border, the way an empty
+    band's slot does: there to be read, and removed if it should not be there,
+    rather than worked on.
     """
 
     acted = Signal(str)          # this bubble's key
 
-    def __init__(self, key, body, editing):
+    def __init__(self, key, body, editing, done=False):
         super().__init__()
         self.key = key
         self.body = body
+        self.done = done
         self.setObjectName("bubble")
-        # White, not a tint: the card underneath is now its queue's colour, and
-        # a pale blue bubble all but disappeared on a blue ENG card.
-        self.setStyleSheet(
-            f"#bubble {{ background:{T.SURFACE};"
-            f" border:1px solid {rgba(T.INK, 0.16)}; border-radius:11px; }}")
+        if done:
+            fill = "transparent" if editing else T.OK_BG
+            edge = "dashed" if editing else "solid"
+            self.setStyleSheet(
+                f"#bubble {{ background:{fill};"
+                f" border:1px {edge} {rgba(T.OK_FG, 0.55)};"
+                f" border-radius:11px; }}")
+            ink = T.OK_FG
+        else:
+            # White, not a tint: the card underneath is now its queue's colour,
+            # and a pale blue bubble all but disappeared on a blue ENG card.
+            self.setStyleSheet(
+                f"#bubble {{ background:{T.SURFACE};"
+                f" border:1px solid {rgba(T.INK, 0.16)}; border-radius:11px; }}")
+            ink = T.INK
 
         h = QHBoxLayout(self)
         h.setContentsMargins(10, 2, 3, 2)
         h.setSpacing(4)
 
         lab = QLabel(body)
-        lab.setStyleSheet(f"color:{T.INK}; font-size:11px;"
+        lab.setStyleSheet(f"color:{ink}; font-size:11px;"
                           f" background:transparent; border:none;")
         h.addWidget(lab)
+
+        # Nothing left to tick on a finished one. In the editor it keeps its
+        # x, because taking a bubble off the card is a different statement
+        # from finishing it and is still worth being able to make.
+        if done and not editing:
+            mark = QLabel("\u2713")
+            mark.setFixedSize(22, 22)
+            mark.setAlignment(Qt.AlignCenter)
+            mark.setStyleSheet(f"color:{T.OK_FG}; font-size:11px;"
+                               f" background:transparent; border:none;")
+            h.addWidget(mark)
+            self.btn = None
+            self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+            return
 
         self.btn = QPushButton("\u2715" if editing else "\u2713")
         # Smaller than the buttons elsewhere on the card, but the square is the
@@ -1286,7 +1320,8 @@ class WorkBar(QWidget):
         super().__init__()
         self.editing = editing
         self._rows = [{"key": i["item_id"], "item_id": i["item_id"],
-                       "body": i["body"]} for i in items]
+                       "body": i["body"], "done": i.get("done", False)}
+                      for i in items]
         self._removed = []       # item_ids of stored bubbles crossed off
         self._new = 0            # counter behind the keys of unsaved bubbles
 
@@ -1377,7 +1412,8 @@ class WorkBar(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         for row in self._rows:
-            b = Bubble(row["key"], row["body"], self.editing)
+            b = Bubble(row["key"], row["body"], self.editing,
+                       row.get("done", False))
             b.acted.connect(self._acted)
             self.flow.addWidget(b)
         # An empty holder still claims a row's worth of height, which reads as
@@ -1391,7 +1427,8 @@ class WorkBar(QWidget):
     def set_enabled(self, ok):
         """Grey the ticks out while the board can't write."""
         for b in self.holder.findChildren(Bubble):
-            b.btn.setEnabled(ok)
+            if b.btn is not None:      # a finished bubble has no tick
+                b.btn.setEnabled(ok)
 
 
 class QueueBox(QCheckBox):

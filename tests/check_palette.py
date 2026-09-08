@@ -606,6 +606,51 @@ def check_a_tooltip_is_readable() -> bool:
     return c.report()
 
 
+def check_a_finished_work_item_says_so() -> bool:
+    """A ticked bubble stays on the card, in green.
+
+    It used to vanish -- /cards filtered on done_at IS NULL -- and the bubble
+    was the only record that the work had happened, so ticking the last one
+    left a card saying nothing about what had been done on it.
+
+    In the editor it is unfilled with a dashed border: there to be read, and
+    removed if it should not be there, rather than worked on. Both greens come
+    off the palette, which already had them.
+    """
+    c = Check("a finished work item says so")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next((n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Bubble"), None)
+    init = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                 and n.name == "__init__"), None) if cls else None
+    c.ok(init is not None and any(a.arg == "done" for a in init.args.args),
+         "a bubble knows whether it is finished")
+
+    body = (ast.get_source_segment(src, init) or "") if init else ""
+    c.ok("T.OK_BG" in body and "T.OK_FG" in body,
+         "and wears the palette's green, not a hex")
+    c.ok('"dashed" if editing' in body,
+         "dashed in the editor, solid on the card")
+    c.ok('"transparent" if editing' in body,
+         "and unfilled there, so it reads as quieter")
+    c.ok("self.btn = None" in body,
+         "a finished bubble has nothing left to tick")
+    c.ok("if done and not editing" in body,
+         "but keeps its x in the editor, which is a different act")
+
+    # set_enabled walks every bubble; a finished one has no button to grey.
+    bar = next((n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "WorkBar"), None)
+    en = next((n for n in bar.body if isinstance(n, ast.FunctionDef)
+               and n.name == "set_enabled"), None) if bar else None
+    enb = (ast.get_source_segment(src, en) or "") if en else ""
+    c.ok("is not None" in enb,
+         "and greying the ticks out skips the bubbles that have none")
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
@@ -615,4 +660,5 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_only_the_header_is_tinted,
           check_a_band_leaves_no_stray_windows,
           check_nothing_is_unparented_while_it_is_visible,
-          check_a_tooltip_is_readable)
+          check_a_tooltip_is_readable,
+          check_a_finished_work_item_says_so)

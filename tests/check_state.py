@@ -581,6 +581,38 @@ def check_a_given_up_change_is_not_about_to_send() -> bool:
     return c.report()
 
 
+def check_a_ticked_item_still_reaches_the_board() -> bool:
+    """Ticking a work item must not delete it from the card.
+
+    /cards filtered on done_at IS NULL, so a ticked bubble disappeared -- and
+    the bubble was the only thing on the card saying that work had been done.
+    Removed ones do stay gone: an x in the editor says "this should not be
+    here", which is a different statement from "this is finished".
+    """
+    c = Check("a ticked work item still reaches the board")
+
+    with Board() as b:
+        api.DB = b.path
+        tid = b.card("PROD: Penn Hills - 02Sep26 - EReel-1220 respool")
+        for n, (item, done, removed) in enumerate((
+                ("Chase the courier", None, None),
+                ("Return Equipment", iso(-60), None),
+                ("Book the van", None, iso(-30)))):
+            b.con.execute(
+                """INSERT INTO work_items (item_id, thread_id, body, position,
+                                           created_at, done_at, removed_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (f"w{n}", tid, item, float(n), iso(-600), done, removed))
+        b.con.commit()
+
+        got = api.cards(queue=None, client=None,
+                        include_completed=False)["cards"][0]["work_items"]
+        bodies = {i["body"]: i["done"] for i in got}
+        c.equal(bodies, {"Chase the courier": False, "Return Equipment": True},
+                "the ticked one comes too, flagged; the removed one does not")
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -590,4 +622,5 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_long_board_keeps_every_row,
           check_the_pages_follow_the_board,
           check_a_card_says_it_holds_an_unsent_change,
-          check_a_given_up_change_is_not_about_to_send)
+          check_a_given_up_change_is_not_about_to_send,
+          check_a_ticked_item_still_reaches_the_board)
