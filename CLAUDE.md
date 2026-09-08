@@ -484,8 +484,27 @@ so the name is *picked* in Bert instead of typed.
   trailing `- note`. It deliberately does **not** reuse `normalise_client`'s
   annotation list, which strips `purchase|loaner|rental|demo` wherever they
   appear and turns `Edge AI Demo Team` into `Edge AI Team`. The derived value
-  is a seed: `sync_clients` never overwrites one afterwards, so a correction
-  sticks.
+  is a seed, and `sync_clients` tells a seed from a correction by re-deriving
+  from the *previous* summary: if what is stored is exactly what that summary
+  would have produced, nobody has touched it and it may follow a rename.
+  `COALESCE(clients.short_name, ...)` could not tell them apart -- short_name
+  is filled on the first insert, so it is never NULL again and was therefore
+  never updated: renaming a client in Jira left the dropdown on the old name
+  for ever.
+- **A client the query stops returning is retired, not deleted.** `offered`
+  goes to 0, so the cards already carrying it keep their name and it comes
+  back if the query finds it again -- the same rule as an `*INACTIVE*` one.
+  **A pull that returns nothing retires nobody**: an empty result is Jira
+  being unreachable, not an empty roster, and quietly retiring all 65 clients
+  is not a thing to do on a failed request.
+- **Freshness is reported only when it has stopped.** `/health` carries a
+  `clients` block -- count, offered, and how long since the pull -- and it is
+  `None` on a machine with no Jira, so nothing shows there. Bert says nothing
+  until `ROSTER_STALE_S` (six hours, against an hourly pull), because the list
+  changes rarely and an indicator that is always on is furniture. The failure
+  it exists for is otherwise silent: `ernie_sync` catches it, writes a line to
+  `logs/sync.log` and carries on, and the dropdown goes on offering whatever
+  it last knew.
 - **`offered = 0` is not deletion.** A summary marked `*INACTIVE*`,
   `*PENDING*` or `*PAUSED*` drops off the dropdown and keeps naming the cards
   that already carry it -- `PIP-7079` and `PIP-8410` are retired and sit under

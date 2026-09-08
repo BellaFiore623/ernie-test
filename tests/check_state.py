@@ -11,6 +11,7 @@ published, because one machine's write time is all it can honestly know.
 """
 
 import dataclasses
+import time
 import json
 import pathlib
 
@@ -664,6 +665,51 @@ def check_reopening_a_work_item_round_trips() -> bool:
     return c.report()
 
 
+def check_the_client_list_says_when_it_has_gone_stale() -> bool:
+    """A pull that has stopped shows up nowhere else.
+
+    ernie_sync catches the failure, writes a line to the log and carries on,
+    and the Client dropdown goes on offering whatever it last knew. The list
+    changes rarely, so its age is not news -- what is news is hours of it.
+    """
+    c = Check("the client list says when it has gone stale")
+
+    tick = bert.Bert._tick_roster
+    seen = {}
+
+    class W:
+        health_at = time.time()
+
+        class roster_age:
+            @staticmethod
+            def hide(): seen["shown"] = False
+            @staticmethod
+            def show(): seen["shown"] = True
+            @staticmethod
+            def setText(t): seen["text"] = t
+            @staticmethod
+            def setStyleSheet(t): pass
+            @staticmethod
+            def setToolTip(t): seen["tip"] = t
+
+    for label, health, shown in (
+            ("no Jira configured", {"clients": None}, False),
+            ("never pulled", {"clients": {"seconds_since_sync": None}}, False),
+            ("an hour ago", {"clients": {"seconds_since_sync": 3600}}, False),
+            ("six hours exactly", {"clients": {"seconds_since_sync": 6 * 3600}}, False),
+            ("nine hours ago", {"clients": {"seconds_since_sync": 9 * 3600}}, True)):
+        seen.clear()
+        W.health = health
+        tick(W)
+        c.equal(seen.get("shown"), shown, label)
+
+    c.ok("client list" in (seen.get("text") or ""),
+         f"and it names what is stale  ({seen.get('text')!r})")
+    c.ok("Jira" in (seen.get("tip") or "") and "logs" in (seen.get("tip") or ""),
+         "with somewhere to go about it")
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -675,4 +721,5 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_card_says_it_holds_an_unsent_change,
           check_a_given_up_change_is_not_about_to_send,
           check_a_ticked_item_still_reaches_the_board,
-          check_reopening_a_work_item_round_trips)
+          check_reopening_a_work_item_round_trips,
+          check_the_client_list_says_when_it_has_gone_stale)

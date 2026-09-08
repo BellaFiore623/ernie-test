@@ -51,6 +51,10 @@ LOGO = pathlib.Path(__file__).parent / "assets" / "bert_logo.png"
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
+# The customer list is pulled hourly, so a few hours late means nothing and
+# six means the pull has stopped -- a bad token, or Jira unreachable. Only
+# then is there anything to say: an indicator that is always on is furniture.
+ROSTER_STALE_S = 6 * 3600
 MIRROR_STALE_S = 180   # the same three cycles, asked of Ernie's own reading:
                        # past this the sync loop has stopped and the board is
                        # older than it looks
@@ -3111,6 +3115,15 @@ class Bert(QMainWindow):
         lay.addSpacing(10)
         lay.addWidget(self.shared)
 
+        # Third freshness, and the quietest. The client list is pulled hourly
+        # and changes rarely, so this says nothing at all until the pull has
+        # clearly stopped -- the failure it exists for is silent otherwise:
+        # a token that expired, and a list that goes on looking fine.
+        self.roster_age = QLabel("")
+        self.roster_age.hide()
+        lay.addSpacing(10)
+        lay.addWidget(self.roster_age)
+
         # Before the two buttons rather than between them. It is empty for
         # anybody who has set their name, so all it did there was hold the
         # refresh button and the gear apart for no visible reason.
@@ -3766,6 +3779,34 @@ class Bert(QMainWindow):
             return super().closeEvent(ev)
         ev.ignore()
 
+    def _tick_roster(self):
+        """Whether the customer list is still being pulled.
+
+        Hidden unless it has clearly stopped. The list changes rarely, so its
+        age is not news -- what is news is a pull that has been failing, which
+        otherwise shows up nowhere: ernie_sync catches it, writes a line to
+        the log and carries on, and the dropdown goes on offering whatever it
+        last knew.
+        """
+        r = (self.health or {}).get("clients")
+        if not r:
+            self.roster_age.hide()       # no Jira here, nothing to report
+            return
+        since = r.get("seconds_since_sync")
+        if since is not None:
+            since += int(time.time() - self.health_at)
+        if since is None or since <= ROSTER_STALE_S:
+            self.roster_age.hide()
+            return
+        self.roster_age.setText(f"client list · {ago(since)} old")
+        self.roster_age.setStyleSheet(f"color:{T.AMBER_FG}; font-size:11px;")
+        self.roster_age.setToolTip(
+            "Ernie hasn't pulled the customer list from Jira in a while, so "
+            "the Client dropdown may be missing recent changes. It is pulled "
+            "hourly -- if this stays, check the JIRA_ keys in the env file "
+            "and logs/sync.log.")
+        self.roster_age.show()
+
     def _tick_sharing(self):
         """
         How the shared board is doing, which is a different question from how
@@ -3830,6 +3871,7 @@ class Bert(QMainWindow):
         """
         self._check_awaited()
         self._tick_sharing()
+        self._tick_roster()
         if self.last_sync is None:
             self._say_fresh("never updated", False,
                             "Bert hasn't reached Ernie yet.")

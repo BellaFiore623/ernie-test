@@ -399,6 +399,21 @@ def health():
     # Given up on, and reported separately: leaving the stack running will not
     # send these, so a warning that says "wait a minute" would be wrong about
     # them -- but they must not be silently dropped either.
+    # The customer roster's age. None on a machine with no Jira configured --
+    # the table is empty there, and an indicator for something switched off is
+    # noise. The list changes rarely, so what matters is not how old it is but
+    # whether the pull has stopped: hours, not minutes.
+    roster = None
+    rr = con.execute("SELECT COUNT(*) AS n, SUM(offered) AS offered, "
+                     "MAX(synced_at) AS at FROM clients").fetchone()
+    if rr and rr["n"]:
+        since = None
+        if rr["at"]:
+            since = int((datetime.now(timezone.utc)
+                         - datetime.fromisoformat(rr["at"])).total_seconds())
+        roster = {"count": rr["n"], "offered": rr["offered"] or 0,
+                  "synced_at": rr["at"], "seconds_since_sync": since}
+
     stuck = con.execute(
         """SELECT COUNT(*) AS n FROM events
            WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
@@ -421,6 +436,7 @@ def health():
         "syncing": bool(last and not last["finished_at"]),
         "board_size": board,
         "sharing": sharing,
+        "clients": roster,
         "queued": {"count": owed["n"], "due_at": owed["soonest"]},
         "stuck": {"count": stuck["n"]},
     }

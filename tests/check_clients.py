@@ -515,6 +515,62 @@ def check_the_search_suggests_and_never_decides():
     return c.report()
 
 
+def check_the_roster_follows_jira_but_not_over_a_correction():
+    """Three things a roster has to survive: an edit, a removal, a bad pull.
+
+    A rename in Jira has to reach short_name, and a correction made by hand
+    has to survive one. COALESCE could tell neither apart -- short_name is
+    filled on the first insert, so it was never NULL again and therefore never
+    updated: renaming a client in Jira left the dropdown on the old name for
+    ever. Re-deriving from the previous summary answers it. If what is stored
+    is exactly what that summary would have produced, nobody has touched it.
+    """
+    c = Check("the roster follows Jira, but not over a correction")
+
+    def pull(b, *pairs):
+        return J.sync_clients(b.con, J.client_rows(
+            [{"key": k, "fields": {"summary": s}} for k, s in pairs]))
+
+    def short(b, cid):
+        r = b.con.execute("SELECT short_name, offered FROM clients "
+                          "WHERE client_id=?", (cid,)).fetchone()
+        return (r["short_name"], r["offered"]) if r else None
+
+    with Board() as b:
+        pull(b, ("PIP-1", "Trekk Design Group (ST Client)"),
+                ("PIP-2", "SCI Infrastructure LLC. **PURCHASE**"))
+        c.equal(short(b, "PIP-1"), ("Trekk Design Group", 1), "derived at first")
+
+        r = pull(b, ("PIP-1", "Trekk Infrastructure (ST Client)"),
+                    ("PIP-2", "SCI Infrastructure LLC. **PURCHASE**"))
+        c.equal(short(b, "PIP-1")[0], "Trekk Infrastructure",
+                "a rename in Jira reaches the short name")
+        c.equal([x[0] for x in r["renamed"]], ["PIP-1"], "and is reported")
+
+        b.con.execute("UPDATE clients SET short_name='SCI' WHERE client_id='PIP-2'")
+        b.con.commit()
+        pull(b, ("PIP-1", "Trekk Infrastructure (ST Client)"),
+                ("PIP-2", "SCI Infrastructure LLC. **PURCHASE** (3 Bots)"))
+        c.equal(short(b, "PIP-2")[0], "SCI",
+                "a hand-written one survives a later edit in Jira")
+
+        # Gone from the query: retired, not deleted. The cards carrying it
+        # keep their name, and it comes back if the query finds it again.
+        r = pull(b, ("PIP-1", "Trekk Infrastructure (ST Client)"))
+        c.equal(short(b, "PIP-2"), ("SCI", 0), "one that left the query retires")
+        c.equal(r["retired"], ["PIP-2"], "and is reported")
+        r = pull(b, ("PIP-1", "Trekk Infrastructure (ST Client)"),
+                    ("PIP-2", "SCI Infrastructure LLC. **PURCHASE** (3 Bots)"))
+        c.equal(short(b, "PIP-2"), ("SCI", 1), "and comes back if it returns")
+
+        # A pull that returned nothing is a failure, not an empty roster.
+        r = pull(b)
+        c.equal(short(b, "PIP-1"), ("Trekk Infrastructure", 1),
+                "an empty pull retires nobody")
+        c.equal(r["retired"], [], "and says it did nothing")
+    return c.report()
+
+
 CHECKS = (
     check_the_short_name_cuts_the_note_not_the_name,
     check_only_the_starred_marker_retires_a_client,
@@ -534,6 +590,7 @@ CHECKS = (
     check_the_customer_outranks_a_note_about_them,
     check_an_old_spelling_finds_the_right_customer,
     check_the_search_suggests_and_never_decides,
+    check_the_roster_follows_jira_but_not_over_a_correction,
 )
 
 

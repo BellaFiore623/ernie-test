@@ -85,6 +85,11 @@ class FakeBert:
     def _tick_sharing(self):
         pass
 
+    def _tick_roster(self):
+        # A third indicator hangs off _tick_freshness now. It has its own
+        # check; here it only has to not exist as a hole in the fake.
+        pass
+
     def _say_fresh(self, text, amber, tip):
         self.said = (text, amber, tip)
 

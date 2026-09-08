@@ -215,12 +215,41 @@ def client_rows(issues: list[dict]) -> list[dict]:
 
 def sync_clients(con, rows: list[dict]) -> dict:
     """
-    Upsert the roster. Idempotent, and short_name is never clobbered.
+    Upsert the roster. Idempotent, and a hand-written short name survives.
 
-    A short name corrected by hand has to survive every later sync, so the
-    update leaves it alone once it holds anything -- the same discipline as
-    ensure_card, which creates a card and then never overwrites one.
+    Telling a hand-written one from a derived one is the whole difficulty.
+    COALESCE could not: short_name is filled on the first insert, so it is
+    never NULL again and was therefore never updated -- rename a client in
+    Jira and the dropdown kept the old name for ever, which is the opposite
+    of the intent. Re-deriving from the *previous* summary answers it: if the
+    stored short name is exactly what that summary would have produced, then
+    nobody has touched it and it may follow the rename.
+
+    A client the pull no longer returns stops being offered rather than being
+    deleted. Same rule as an *INACTIVE* one: the cards already carrying it
+    keep their name, and it comes back if the query finds it again.
     """
+    if not rows:
+        # A pull that returned nothing is a failure, not an empty roster.
+        # Retiring all 65 clients because Jira was briefly unreachable is not
+        # a thing to do quietly.
+        return {"seen": 0, "offered": 0, "retired": [], "renamed": [],
+                "collisions": collisions(con)}
+
+    before = {r["client_id"]: r for r in con.execute(
+        "SELECT client_id, name, short_name FROM clients")}
+    renamed = []
+    rows = [dict(r) for r in rows]          # decided here, written below
+    for r in rows:
+        was = before.get(r["client_id"])
+        if was is None:
+            continue
+        derived = short_name(was["name"] or "")
+        if (was["short_name"] or "") != derived:
+            r["short_name"] = was["short_name"]        # somebody set it by hand
+        elif derived != r["short_name"]:
+            renamed.append((r["client_id"], derived, r["short_name"]))
+
     stamp = now()
     for r in rows:
         con.execute(
@@ -233,11 +262,21 @@ def sync_clients(con, rows: list[dict]) -> dict:
                    name_key   = excluded.name_key,
                    offered    = excluded.offered,
                    synced_at  = excluded.synced_at,
-                   short_name = COALESCE(clients.short_name, excluded.short_name)
+                   short_name = excluded.short_name
             """, dict(r, synced_at=stamp))
+    # Anything the query no longer returns: retired, not removed.
+    here = [r["client_id"] for r in rows]
+    marks = ",".join("?" * len(here))
+    retired = [x["client_id"] for x in con.execute(
+        f"SELECT client_id FROM clients WHERE offered = 1 "
+        f"AND client_id NOT IN ({marks})", here)]
+    if retired:
+        con.execute(f"UPDATE clients SET offered = 0 WHERE client_id NOT IN "
+                    f"({marks})", here)
     con.commit()
     return {"seen": len(rows),
             "offered": sum(r["offered"] for r in rows),
+            "retired": retired, "renamed": renamed,
             "collisions": collisions(con)}
 
 
