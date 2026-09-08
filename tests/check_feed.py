@@ -903,6 +903,41 @@ def check_a_feed_row_reads_as_a_row() -> bool:
     return c.report()
 
 
+def check_a_feed_row_sits_on_one_line() -> bool:
+    """Every column in a row is centred on the same line, with room to spare.
+
+    The Undo button only looked centred: it is taller than a line of text, so
+    it filled a row that a top-aligned 16px label sat high in, and the time,
+    the text and the status chip all rode above it. Everything is centred now,
+    so they share a centre line.
+
+    And the row carries FEED_ROW_PAD above and below. Without it the button is
+    exactly as tall as the row, so it sat on the hairline under it -- the rule
+    that ties a line to its buttons was touching the button it ties.
+    """
+    c = Check("a feed row sits on one line")
+
+    src = _bert_src()
+    render = ast.get_source_segment(src, _method("_render_feed")) or ""
+    start = render.find("row = FeedRow()")
+    end = render.find("self.feed_lay.addWidget(row)")
+    block = render[start:end] if start >= 0 < end else ""
+
+    c.ok(block, "the row-building block is still readable")
+    c.ok("Qt.AlignTop" not in block,
+         "nothing in the row is pinned to the top any more")
+    c.equal(block.count("Qt.AlignVCenter"), 6,
+            "every column is centred: time, text open, text shut, chevron, "
+            "status, undo")
+    c.ok("FEED_ROW_PAD" in block,
+         "and the row keeps room above and below its contents")
+    # The row's own layout, not its columns'. The status and undo columns
+    # are flush on purpose -- the row is what carries the padding for them.
+    c.ok("h.setContentsMargins(0, 0, 0, 0)" not in block,
+         "rather than the row sitting flush against its own edges")
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -926,4 +961,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_a_cards_corner_survives_a_long_client,
           check_a_card_cuts_its_client_to_the_room_it_has,
           check_an_open_row_keeps_the_spacing,
-          check_a_feed_row_reads_as_a_row)
+          check_a_feed_row_reads_as_a_row,
+          check_a_feed_row_sits_on_one_line)

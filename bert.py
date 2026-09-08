@@ -122,6 +122,8 @@ FEED_SAMPLE = ("Bella Fiore edited PROD: Steel City Water - 30Aug26 - "
                "SSD0311 firmware rollback")
 FEED_STATUS_W = 118        
 FEED_UNDO_W = 88           
+FEED_ROW_PAD = 4           # above and below a row's contents, so the Undo
+                           # button clears the hairline under it
 FEED_LIMIT = 200           
 
 # The customer list is pulled from Jira on the sync's own hourly heartbeat, so
@@ -4250,13 +4252,15 @@ class Bert(QMainWindow):
             # something behind it gets the cursor and the click, below.
             row = FeedRow()
             h = QHBoxLayout(row)
-            h.setContentsMargins(0, 0, 0, 0)
+            # Room above and below, so the Undo button is not sitting on the
+            # hairline under the row.
+            h.setContentsMargins(0, FEED_ROW_PAD, 0, FEED_ROW_PAD)
             h.setSpacing(8)
 
             when = QLabel(self._clock(e["occurred_at"]))
             when.setFixedWidth(FEED_TIME_W)
             when.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
-            h.addWidget(when, 0, Qt.AlignTop)
+            h.addWidget(when, 0, Qt.AlignVCenter)
 
             txt = FeedLine(whole if opened else short)
             # Wrapping only when open. A closed row is a one-line summary and
@@ -4275,13 +4279,13 @@ class Bert(QMainWindow):
                 f"color:{T.INK}; font-size:{FEED_FONT_PX}px;")
             if opened:
                 # Wrapped, so it wants the width to wrap into.
-                h.addWidget(txt, 1, Qt.AlignTop)
+                h.addWidget(txt, 1, Qt.AlignVCenter)
             else:
                 # Its natural width, so the chevron sits against the end of
                 # the text; FeedLine is what lets it be squeezed below that
                 # when the window is narrow, which keeps the controls on
                 # screen.
-                h.addWidget(txt, 0, Qt.AlignTop)
+                h.addWidget(txt, 0, Qt.AlignVCenter)
 
             # Its own column, so a narrow window clipping the text cannot also
             # take away the only sign that there is more of it to read.
@@ -4292,7 +4296,7 @@ class Bert(QMainWindow):
             chevron = QLabel("\u25be" if opened else "\u25b8" if more else "")
             chevron.setFixedWidth(FEED_MORE_W)
             chevron.setStyleSheet(f"color:{T.MUTED}; font-size:{FEED_FONT_PX}px;")
-            h.addWidget(chevron, 0, Qt.AlignTop)
+            h.addWidget(chevron, 0, Qt.AlignVCenter)
             # Everything left over goes here, between the line and the
             # controls, rather than between the line and its own chevron.
             h.addStretch(1)
@@ -4315,14 +4319,14 @@ class Bert(QMainWindow):
             if status:
                 sc.addWidget(chip(*status))
             status_col.setFixedWidth(FEED_STATUS_W)
-            h.addWidget(status_col, 0, Qt.AlignTop)
+            h.addWidget(status_col, 0, Qt.AlignVCenter)
 
             undo_col = QWidget()
             uc = QHBoxLayout(undo_col)
             uc.setContentsMargins(0, 0, 0, 0)
             uc.addStretch()
             undo_col.setFixedWidth(FEED_UNDO_W)
-            h.addWidget(undo_col, 0, Qt.AlignTop)
+            h.addWidget(undo_col, 0, Qt.AlignVCenter)
 
             undoable = e["verb"] in ("completed", "priority_changed", "edited",
                                      "work_done")

@@ -180,6 +180,14 @@ activity feed, undo, and the outbox.
   it take its own `sizeHint`, which is small -- 432px, cap or no cap.
   `_feed_scale()` measures against the capped width too, or the line would be
   sized for room the row is never given.
+- **Every column in a feed row is centred, and the row keeps `FEED_ROW_PAD`
+  above and below.** The Undo button only ever looked centred: it is taller
+  than a line of text, so it filled a row that a top-aligned 16px label sat
+  high in, and the time, the text and the status chip all rode above it.
+  Centring them puts the five on one line. The padding is what stops the
+  button touching the hairline under the row -- without it the button is
+  exactly as tall as the row, so the rule that ties a line to its buttons was
+  resting on one. It costs density: rows went from 29px to 37px.
 - **Each feed row carries a hairline under it**, in `T.LINE`, so an entry and
   its buttons read as one row. `FEED_ROW_MAX_W` caps how far apart the two
   ends can get; the rule closes the rest, and it was still not obvious which
