@@ -239,6 +239,14 @@ activity feed, undo, and the outbox.
   appears only in the second. Counting the first alone meant reordering the
   board and closing straight away asked nothing, and the running order never
   left the machine. `Bert._owed()` reads both.
+- **The unsent mark is drawn in the ink, not the accent.** Measured against
+  every card fill in both palettes: the accent averages 4.6:1 in light and
+  5.9:1 in dark, the ink 13.7:1 and 11.8:1. It is also the cheaper choice --
+  a card already wears its tag's colour, and a mark spending none leaves
+  colour meaning something, which is the same rule the band bars in the
+  running order follow. The glyph is what says which state it is, so nothing
+  is lost: `*` is still waiting, `!` is given up, and `!` keeps amber because
+  a caution is the one thing on the card that is genuinely a warning.
 - **`/health` counts as owed only what the outbox will still try.**
   `OUTBOX_MAX_ATTEMPTS` matches `ernie_outbox.MAX_ATTEMPTS` and the
   `attempts < 5` in `v_outbox_due`; without it a row nothing would ever pick up

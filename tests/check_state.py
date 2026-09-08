@@ -561,7 +561,12 @@ def check_a_given_up_change_is_not_about_to_send() -> bool:
                              include_completed=False)["cards"][0]
             return bert.unsent_mark(card)
 
-        c.equal((mark() or [None])[0], "*", "while it is still being tried")
+        got = mark()
+        c.equal((got or [None])[0], "*", "while it is still being tried")
+        # The ink, not the accent: three times the contrast against a card,
+        # measured, and it spends no colour a tag might want.
+        c.equal(got[1] if got else None, bert.T.INK,
+                "and drawn in the ink rather than the accent")
 
         b.con.execute("UPDATE events SET attempts=? WHERE event_id=?",
                       (api.OUTBOX_MAX_ATTEMPTS, eid))
