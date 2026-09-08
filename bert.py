@@ -29,8 +29,8 @@ import httpx
 # agreement.
 import ernie_extract as ex
 from PySide6.QtCore import (
-    QMimeData, QPoint, QPointF, QRect, QRectF, QSize, QStringListModel, Qt,
-    QThread, QTimer, Signal,
+    QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize,
+    QStringListModel, Qt, QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
     QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon, QPainter,
@@ -4383,6 +4383,14 @@ class Bert(QMainWindow):
         entirely -- the same thing the activity feed did after an undo, and
         fixed the same way.
 
+        The pixel alone is not enough, which is what it used to keep. All the
+        height above the view belongs to other cards, and any of it can change
+        between rebuilds: sixteen cards above gaining a line each moved the
+        view a card and a half while the scrollbar read exactly the same
+        number. So the card at the top of the view is noted and put back at
+        the same height, and the pixel is only the fallback for when that card
+        has gone -- completed, or filtered out by a search.
+
         Bands have no scroll area of their own; the two lists that scroll are
         the board column and the rail, which is the pair _edge_scroll walks
         for the same reason.
@@ -4391,15 +4399,88 @@ class Bert(QMainWindow):
             # _edge_scroll owns the scrollbars while a card is in the air, and
             # putting them back mid-drag fights it.
             return
-        kept = [(bar, bar.value()) for bar in
-                (self.scroll.verticalScrollBar(),
-                 self.rail.scroll.verticalScrollBar())]
 
-        def put_back():
-            for bar, was in kept:
+        def in_order(area):
+            """The scrolling items, top to bottom.
+
+            findChildren answers in the order Qt happens to hold them, which
+            is not the order they are drawn in -- and picking "the topmost"
+            out of that gave whichever card came first in the tree.
+            """
+            out = []
+            if area is self.scroll:
+                for band in (self.bands[p] for p in BANDS if p in self.bands):
+                    for i in range(band.lay.count()):
+                        w = band.lay.itemAt(i).widget()
+                        if isinstance(w, Card):
+                            out.append(w)
+            else:
+                for i in range(self.rail.lay.count()):
+                    w = self.rail.lay.itemAt(i).widget()
+                    if isinstance(w, RailRow):
+                        out.append(w)
+            return out
+
+        def anchor(area):
+            """The item the eye is on: the one covering the top of the view."""
+            vp = area.viewport()
+            for w in in_order(area):
+                y = w.mapTo(vp, QPoint(0, 0)).y()
+                if y + w.height() > 0:
+                    return w.thread_id, y
+            return None
+
+        kept = []
+        for area in (self.scroll, self.rail.scroll):
+            bar = area.verticalScrollBar()
+            kept.append((area, bar, bar.value(), anchor(area)))
+
+        def put_back(tries=4, first=True):
+            # Settle the geometry first. A rebuild posts its layout requests
+            # rather than doing the work there and then, so a position read
+            # before they are delivered is the old one -- measured: the board
+            # still reported its old maximum on the first pass and grew by
+            # 144px on the next, which is exactly how far the view was out.
+            # Twice, because activating a band posts fresh requests to the
+            # cards inside it.
+            for _ in range(2):
+                QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+                for band in self.bands.values():
+                    band.lay.activate()
+                self.rail.lay.activate()
+
+            drifted = False
+            for area, bar, was, held in kept:
                 # A board that got shorter -- the last bubble ticked off a
                 # card, say -- has a smaller maximum than the value we took.
-                bar.setValue(min(was, bar.maximum()))
+                # Only on the way in: a later pass corrects what is left over
+                # from the one before it, and putting the raw number back
+                # first would throw that away and re-derive it every time.
+                if first:
+                    bar.setValue(min(was, bar.maximum()))
+                if held is None:
+                    continue
+                vp = area.viewport()
+                for w in in_order(area):
+                    if w.thread_id != held[0]:
+                        continue
+                    moved = w.mapTo(vp, QPoint(0, 0)).y() - held[1]
+                    if moved:
+                        bar.setValue(
+                            max(0, min(bar.value() + moved, bar.maximum())))
+                        drifted = True
+                    break
+            # Again until it stops moving, rather than a fixed number of
+            # passes -- too few for a big board, wasted work on a small one.
+            # `or first` is the one that matters: a first pass measuring no
+            # movement means the rebuild had not landed yet, not that there
+            # was nothing to do, and stopping there was the bug. Measured, a
+            # board whose cards above the view each gained four bubbles read
+            # as unmoved on the first pass and 144px out on the next, and the
+            # view was left a card and a half from where it had been.
+            # Bounded, so a layout that never settles cannot loop.
+            if tries > 1 and (drifted or first):
+                QTimer.singleShot(16, lambda: put_back(tries - 1, first=False))
 
         # Not yet: the layout hasn't settled, so maximum() is still the old one.
         QTimer.singleShot(0, put_back)

@@ -181,6 +181,26 @@ activity feed, undo, and the outbox.
   out from under whoever was moving it. Rows are still held to one height;
   that is a different question and the thing that stops an undo shifting the
   list.
+- **The place in a list is a card, not a scrollbar number.** `render()` tears
+  every card down and builds it again whenever the data changes, so both
+  scrolling lists have to be put back afterwards -- and the number alone is not
+  where you were. Every pixel above the view belongs to some other card and any
+  of it can change between rebuilds: measured, sixteen cards above the view
+  each gaining four bubbles left the scrollbar reading exactly the number it
+  had before with a different card under the cursor. `_hold_scroll` notes the
+  card covering the top of the view by `thread_id` and puts *it* back at the
+  same height; the number is the fallback for when that card has gone. It
+  walks the band and rail layouts rather than `findChildren`, which answers in
+  the order Qt happens to hold the widgets and not the order they are drawn.
+  The correction repeats **until it stops moving**, not a fixed number of
+  passes and not only while it can see movement: a rebuild posts its layout
+  requests rather than doing the work there and then, so a first pass measuring
+  nothing means the rebuild had not landed yet -- it read as unmoved and 144px
+  out one turn later. Bounded, so a layout that never settles cannot loop.
+  Hitting Edit does not itself rebuild the board -- a card builds its own
+  editor -- so the jump somebody sees there is a poll, or the other editor's
+  save, landing on the same click.
+
 - **A feed row stops growing at `FEED_ROW_MAX_W`.** The status chip and Undo
   are right-aligned in fixed columns, which is what makes them a column you can
   run down and click -- but unbounded, a full-screen board put them a thousand

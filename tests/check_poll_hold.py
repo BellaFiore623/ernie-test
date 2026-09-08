@@ -217,6 +217,71 @@ def check_render_keeps_your_place() -> bool:
     return c.report()
 
 
+def check_the_place_is_a_card_not_a_number() -> bool:
+    """
+    The scrollbar number is not the place; the card at the top of the view is.
+
+    Every pixel above the view belongs to some other card, and any of it can
+    change between one rebuild and the next. Measured on a real board: sixteen
+    cards above the view each gained four bubbles, the scrollbar read exactly
+    the number it had before, and a different card was under the cursor -- the
+    view had moved a card and a half without the number moving at all. That is
+    what somebody hitting Edit saw as the board jumping up or down under them.
+
+    So the card covering the top of the view is noted by thread_id and put
+    back at the same height, and the number is only the fallback for when that
+    card has gone -- completed, or filtered out by a search.
+    """
+    c = Check("the place held is a card, not a scrollbar number")
+
+    hold = _method("_hold_scroll")
+
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "thread_id"
+             for n in ast.walk(hold)),
+         "it notes which card the view was on, not just where the bar was")
+
+    # Visual order, walked off the layouts. findChildren answers in the order
+    # Qt happens to hold the widgets, which is not the order they are drawn
+    # in, so "the topmost" came back as whichever card was first in the tree.
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "itemAt"
+             for n in ast.walk(hold)),
+         "walking the layouts, so top to bottom means what it says")
+    c.ok(not any(isinstance(n, ast.Attribute) and n.attr == "findChildren"
+                 for n in ast.walk(hold)),
+         "and not findChildren, which answers in tree order")
+
+    # A rebuild posts its layout requests rather than doing the work there and
+    # then, so a position read before they are delivered is the old one.
+    c.ok(any(isinstance(n, ast.Attribute) and n.attr == "sendPostedEvents"
+             for n in ast.walk(hold)),
+         "the geometry is settled before anything is measured")
+
+    # And the correction repeats until it stops moving: one pass lands against
+    # geometry that is still changing.
+    inner = next((n for n in ast.walk(hold) if isinstance(n, ast.FunctionDef)
+                  and any(isinstance(x, ast.Name) and x.id == n.name
+                          for x in ast.walk(n))), None)
+    c.ok(inner is not None, "the correction runs again after itself")
+
+    if inner is not None:
+        again = [n for n in ast.walk(inner) if isinstance(n, ast.If)
+                 and any(isinstance(x, ast.Name) and x.id == inner.name
+                         for x in ast.walk(n))]
+        # The guard that matters. A first pass measuring no movement means the
+        # rebuild had not landed yet, not that there was nothing to do, and
+        # stopping there was the bug: the board read as unmoved on the first
+        # pass and 144px out on the next.
+        c.ok(any(any(isinstance(x, ast.Name) and x.id == "first"
+                     for x in ast.walk(n.test)) for n in again),
+             "and never trusts a first reading that says nothing moved")
+        c.ok(any(any(isinstance(x, ast.Name) and x.id == "tries"
+                     for x in ast.walk(n.test)) for n in again),
+             "bounded, so a layout that never settles cannot loop")
+
+    return c.report()
+
+
 CHECKS = (check_free_board, check_editor_holds, check_drag_still_holds,
           check_other_hold_reparks, check_stale_hold_dropped,
-          check_render_keeps_your_place)
+          check_render_keeps_your_place,
+          check_the_place_is_a_card_not_a_number)
