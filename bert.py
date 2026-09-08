@@ -35,7 +35,8 @@ from PySide6.QtGui import (
     QPalette, QPen, QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+    QApplication, QCheckBox, QComboBox, QCompleter, QDialog, QDialogButtonBox,
+    QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout,
     QWidget,
@@ -115,6 +116,10 @@ FEED_SAMPLE = ("Bella Fiore edited PROD: Steel City Water - 30Aug26 - "
 FEED_STATUS_W = 118        
 FEED_UNDO_W = 88           
 FEED_LIMIT = 200           
+
+# The customer list is pulled from Jira on the sync's own hourly heartbeat, so
+# asking Ernie for it more often than this only ever gets the same answer back.
+ROSTER_MAX_AGE_S = 900
 
 BANDS = ["unassigned", "critical", "high", "medium", "low"]
 BAND_LABEL = {b: b.capitalize() for b in BANDS}
@@ -630,6 +635,9 @@ class Api:
     def health(self):
         return self.client.get(f"{self.base}/health").json()
 
+    def roster(self):
+        return self.client.get(f"{self.base}/clients/roster").json()
+
     def _post(self, path, payload):
         payload.setdefault("key", str(uuid.uuid4()))
         r = self.client.post(f"{self.base}{path}", json=payload)
@@ -670,15 +678,29 @@ class Poller(QThread):
     loaded = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, api):
+    def __init__(self, api, want_roster=False):
         super().__init__()
         self.api = api
+        # The customer list is 65 rows that change about hourly, so it does
+        # not ride the five-second poll. It comes back on the polls that ask,
+        # and it comes back here rather than on demand because fetching it
+        # when an editor opens would block the window on an HTTP call.
+        self.want_roster = want_roster
 
     def run(self):
         try:
-            self.loaded.emit({"board": self.api.board(),
-                              "events": self.api.events(),
-                              "health": self.api.health()})
+            p = {"board": self.api.board(),
+                 "events": self.api.events(),
+                 "health": self.api.health()}
+            if self.want_roster:
+                # A stack with no Jira configured serves an empty list, and an
+                # older Ernie has no such route at all. Neither is a reason to
+                # fail the poll the board depends on.
+                try:
+                    p["roster"] = self.api.roster().get("clients") or []
+                except Exception:
+                    p["roster"] = []
+            self.loaded.emit(p)
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -832,6 +854,71 @@ class Combo(QComboBox):
 
     def wheelEvent(self, e):
         e.ignore()
+
+
+class ClientCombo(Combo):
+    """The customer list, picked rather than typed.
+
+    Editable on purpose. The list is what Jira knows about, and a customer
+    exists before Jira hears about them -- so this offers the roster and still
+    takes anything, the way QUEUES_OFFERED is narrower than QUEUES without
+    stopping a card from carrying a tag nobody offers any more.
+
+    It answers to text()/setText() so the editor's save() and is_dirty() read
+    it exactly as they read the box it replaced; those two are the same
+    statement twice and have to stay that way.
+    """
+
+    def __init__(self, roster, current="", parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+
+        self.addItem("", "")
+        offered = set()
+        for c in roster or []:
+            short = (c.get("short_name") or "").strip()
+            if not short:
+                continue
+            # Two live customers can shorten to the same label -- 'IPI : El
+            # Paso' and 'IPI : *REP*' both read as IPI -- and a list with the
+            # same word twice is worse than the typos this replaces. The full
+            # summary goes on the line for those, and the short name is still
+            # what lands in the title.
+            label = (f"{short}  ·  {c['name']}"
+                     if c.get("ambiguous") else short)
+            self.addItem(label, short)
+            self.setItemData(self.count() - 1, c.get("name"), Qt.ToolTipRole)
+            offered.add(short.lower())
+
+        # A client already on the card that Jira does not offer -- retired,
+        # paused, or never in the list -- stays on the card. Same reason the
+        # queue dropdown keeps a retired tag: not offering it to anybody is
+        # not the same as taking it off the one ticket that has it.
+        if current and current.lower() not in offered:
+            self.addItem(current, current)
+
+        # Match on any part of the name: people reach for 'root control' as
+        # readily as 'Duke', and a prefix-only completer finds neither.
+        comp = self.completer()
+        comp.setCompletionMode(QCompleter.PopupCompletion)
+        comp.setFilterMode(Qt.MatchContains)
+        comp.setCaseSensitivity(Qt.CaseInsensitive)
+
+        self.setCurrentIndex(max(self.findData(current), 0) if current else 0)
+        self.setEditText(current)
+        # Picking the disambiguated line must put the short name in the box,
+        # not the whole line including the summary.
+        self.activated.connect(self._took_pick)
+
+    def _took_pick(self, index):
+        self.setEditText(self.itemData(index) or "")
+
+    def text(self) -> str:
+        return self.currentText()
+
+    def setText(self, value: str) -> None:
+        self.setEditText(value or "")
 
 
 def plain_cursors(parent):
@@ -1333,8 +1420,12 @@ class Card(QFrame):
         form.setContentsMargins(0, 0, 0, 0)
         form.setSpacing(6)
 
-        self.f_client = QLineEdit(d.get("client_override") or d.get("client_raw") or "")
-        self.f_client.setStyleSheet(field())
+        # Picked from Jira's customer list rather than typed. The board runs
+        # 120 spellings of 43 customers -- five ways of writing Inspect.AI --
+        # because every one of them was typed into a title by hand.
+        self.f_client = ClientCombo(
+            self.board.roster,
+            d.get("client_override") or d.get("client_raw") or "")
         self.f_work = WorkBar(d.get("work_items") or [], editing=True)
 
         self.f_title = QLineEdit(d.get("name") or "")
@@ -1373,7 +1464,7 @@ class Card(QFrame):
         self.f_title.textEdited.connect(self._title_edited)
         self.f_title.textChanged.connect(self._check_title)
         self.f_queue.currentIndexChanged.connect(self._queue_picked)
-        self.f_client.textChanged.connect(self._suggest_title)
+        self.f_client.currentTextChanged.connect(self._suggest_title)
         self._check_title()
 
         form.addRow("Thread title", title_holder)
@@ -1389,8 +1480,9 @@ class Card(QFrame):
         self.body.addLayout(form)
 
         note = QLabel("Saving posts one update to the thread, however many "
-                      "fields you change. Changing the title renames the "
-                      "Discord thread.")
+                      "fields you change. Picking a client rewrites the "
+                      "title, and changing the title renames the Discord "
+                      "thread.")
         note.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                            f" background:transparent;")
         self.body.addWidget(note)
@@ -1502,6 +1594,28 @@ class Card(QFrame):
         # Redrawing is safe again now the editor is gone.
         self.board.apply_pending()
 
+    def _override(self) -> str:
+        """What the Client box means as a client_override.
+
+        An override says "the parsed client is wrong, use this instead". When
+        the title already says what the box says -- which it does whenever the
+        client was picked from the list, because picking rewrites the title --
+        there is nothing to override, and saying so anyway would be a lie with
+        consequences: needs_triage() reads a client_override as somebody
+        vouching for an unreadable card, and would clear the red edge off
+        every ticket anyone had merely opened.
+
+        Compared against the title in the box rather than the card's
+        client_raw, which is the *old* title's client until the next sync.
+        """
+        typed = self.f_client.text().strip()
+        if not typed:
+            return ""
+        t = ex.parse_title(self.f_title.text().strip())
+        if ex.normalise_client(typed) == ex.normalise_client(t.client_raw or ""):
+            return ""
+        return typed
+
     def is_dirty(self):
         """Whether this editor is holding anything worth asking about.
 
@@ -1513,14 +1627,14 @@ class Card(QFrame):
         base = getattr(self, "_edit_base", None) or {}
         if self.f_title.text().strip() != (base.get("title") or ""):
             return True
-        if self.f_client.text().strip() != (base.get("client_override") or ""):
+        if self._override() != (base.get("client_override") or ""):
             return True
         return bool(self.f_work.added() or self.f_work.removed())
 
     def save(self):
         fields = {
             "title": self.f_title.text().strip(),
-            "client_override": self.f_client.text().strip(),
+            "client_override": self._override(),
             # The bubbles travel as what changed, not as a list to diff: two
             # people adding different items then merge instead of colliding.
             "work_add": self.f_work.added(),
@@ -2275,6 +2389,9 @@ class Bert(QMainWindow):
         self._pending = None        # a poll held back by a drag or an editor
         self.editing_card = None
         self.poller = None
+        # The customer roster, refreshed far more slowly than the board.
+        self.roster = []
+        self.roster_at = 0.0
         self.connected = True
         self.last_sync = None
         self.health = {}            # the last /health payload
@@ -2883,7 +3000,8 @@ class Bert(QMainWindow):
         # its answer: that poll is already on its way back.
         if self.poller is not None and self.poller.isRunning():
             return
-        self.poller = Poller(self.api)
+        self.poller = Poller(
+            self.api, want_roster=time.time() - self.roster_at > ROSTER_MAX_AGE_S)
         self.poller.loaded.connect(self.on_loaded)
         self.poller.failed.connect(self.on_failed)
         self.poller.start()
@@ -2939,6 +3057,11 @@ class Bert(QMainWindow):
         self.health = p.get("health") or {}
         self.sharing = self.health.get("sharing")
         self.health_at = time.time()
+        if "roster" in p:
+            # An empty answer still counts as an answer: without stamping it,
+            # a stack with no Jira asks again on every single poll.
+            self.roster = p["roster"]
+            self.roster_at = time.time()
         self._tick_freshness()          # both labels come off this payload
 
         # The card outlives the click by a poll or two; drop the toast the

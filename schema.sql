@@ -195,6 +195,14 @@ CREATE TABLE IF NOT EXISTS work_items (
 CREATE INDEX IF NOT EXISTS ix_work_thread ON work_items(thread_id, position);
 
 -- Learned client resolutions. Turns fuzzy matching into exact lookup.
+--
+-- One row per spelling anybody has ever put in a thread title, pointing at
+-- the client it actually means. This is the table that makes 'clinton' and
+-- 'clinton ms' the same customer, and it is STATE rather than DERIVED: a
+-- resolution is a decision somebody made, and re-syncing must never discard
+-- it. resolved_by names who or what decided -- 'cr' for the unambiguous ones
+-- read off a ticket's Client CR key, 'auto' for an exact name match, a
+-- person's name for the rest.
 CREATE TABLE IF NOT EXISTS client_aliases (
     raw_key     TEXT PRIMARY KEY,             -- normalised source string
     client_id   TEXT NOT NULL,                -- canonical client
@@ -203,12 +211,33 @@ CREATE TABLE IF NOT EXISTS client_aliases (
     resolved_at TEXT NOT NULL
 );
 
+-- The customer list, pulled from Jira. Really DERIVED -- delete it and the
+-- next sync builds it again -- but it sits here because client_aliases points
+-- into it and the two read as one thing.
+--
+-- client_id is the Client CR issue key (PIP-####), which is what tickets
+-- already carry and the one identifier that does not drift; name is the Jira
+-- summary verbatim.
+--
+-- short_name is what goes in a thread title, because the summary does not fit
+-- one: 'IPI : El Paso' is the customer IPI, and 'SCI Infrastructure LLC.
+-- **PURCHASE** (Should Have 3 Bots!)' is SCI. It is derived on the first sync
+-- and then left alone for ever, so correcting one by hand sticks.
+--
+-- offered=0 is a client the dropdown does not put forward -- *INACTIVE*,
+-- *PENDING* or *PAUSED* in the Jira summary. It is not deletion: those rows
+-- still name the cards that already carry them, exactly as a retired queue
+-- still tags the one thread that has it.
 CREATE TABLE IF NOT EXISTS clients (
-    client_id   TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    name_key    TEXT NOT NULL,
+    client_id   TEXT PRIMARY KEY,             -- PIP-#### of the Client CR
+    name        TEXT NOT NULL,                -- Jira summary, verbatim
+    name_key    TEXT NOT NULL,                -- normalised, for matching
+    short_name  TEXT,                         -- what a thread title calls them
+    offered     INTEGER NOT NULL DEFAULT 1,   -- 0 = parsed but not offered
     synced_at   TEXT
 );
+
+CREATE INDEX IF NOT EXISTS ix_clients_key ON clients(name_key);
 
 -- No roster table. Each Bert install stores the user's first + last name in
 -- its own settings and sends it with every write; Ernie drops that string

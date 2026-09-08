@@ -19,6 +19,7 @@ import json
 import sqlite3
 import sys
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -178,6 +179,7 @@ VALUE_LABEL = {
 # IndexError. Checked once at startup instead.
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
+    "clients": ["short_name", "offered"],
     "events": ["claimed_at"],
     "work_items": ["item_id", "done_at"],
     # Not read here, but the sync writes them every cycle and would fail one
@@ -605,6 +607,44 @@ def clients():
            GROUP BY v.client_key ORDER BY n DESC"""))
     con.close()
     return {"count": len(out), "clients": out}
+
+
+@app.get("/clients/roster")
+def client_roster():
+    """
+    The customer list from Jira, for the editor to offer.
+
+    Different question from /clients above, which answers "what is on my
+    board" for the filter. This one answers "who are our customers", which is
+    the list you pick a name out of when you are naming a thread.
+
+    Offered clients only -- a summary marked *INACTIVE*, *PENDING* or *PAUSED*
+    stays in the table and keeps naming the cards that already carry it, but
+    is not put forward for new ones.
+
+    `name` rides along with every row because `short_name` is not always
+    unique: 'IPI : El Paso' and 'IPI : *REP*' are two live customers that both
+    shorten to IPI, and the summary is the only thing that tells them apart.
+    Rows that need it are flagged, so the editor does not have to work it out.
+    """
+    con = db()
+    out = rows(con.execute(
+        """SELECT c.client_id, c.name, c.short_name,
+                  (SELECT COUNT(*) FROM cards k
+                     JOIN v_thread_current v ON v.thread_id = k.thread_id
+                     JOIN client_aliases a ON a.raw_key = v.client_key
+                    WHERE k.completed_at IS NULL
+                      AND a.client_id = c.client_id) AS n
+           FROM clients c
+          WHERE c.offered = 1 AND c.short_name IS NOT NULL AND c.short_name <> ''
+          ORDER BY c.short_name COLLATE NOCASE"""))
+    seen = Counter((c["short_name"] or "").lower() for c in out)
+    for c in out:
+        c["ambiguous"] = seen[(c["short_name"] or "").lower()] > 1
+    stamp = con.execute("SELECT MAX(synced_at) AS at FROM clients").fetchone()
+    con.close()
+    return {"count": len(out), "clients": out,
+            "synced_at": stamp["at"] if stamp else None}
 
 
 

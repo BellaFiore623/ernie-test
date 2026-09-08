@@ -499,6 +499,29 @@ def main() -> None:
             except Exception as e:
                 print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
 
+        # The customer roster, Jira -> SQLite. Read-only against Jira, so it
+        # belongs in this loop for the same reason the state pull does, and
+        # for the same reason it does not belong in the outbox. Its own slow
+        # heartbeat, though: the list changes about never, and asking on every
+        # cycle would be 1440 searches a day to learn nothing.
+        try:
+            # Imported here because ernie_jira imports load_env from this
+            # module, and a top-level import either way round would be
+            # circular -- the same reason ernie_state is imported above.
+            import ernie_jira
+            cfg = ernie_jira.configured()
+            if cfg and ernie_jira.due(con):
+                cs = ernie_jira.run_once(con, cfg)
+                print(f"[{now()[:19]}] clients: {cs['seen']} seen, "
+                      f"{cs['offered']} offered, "
+                      f"{len(cs['written'])} aliases written")
+                for c in cs["collisions"]:
+                    print(f"    collision: {c['short_name']!r} <- "
+                          + ", ".join(x["client_id"] for x in c["clients"]),
+                          file=sys.stderr)
+        except Exception as e:
+            print(f"[{now()[:19]}] client pull failed: {e}", file=sys.stderr)
+
         first = False
         if a.once:
             return

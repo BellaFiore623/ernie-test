@@ -19,6 +19,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `wipe_test.py` | Deletes all threads in the test channel. Test guild only. |
 | `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
 | `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
+| `ernie_jira.py` | Customer list, Jira → SQLite. Read-only against Jira. Off unless configured. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
@@ -388,6 +389,72 @@ changes worth interrupting somebody for; this gets all of them.
   happened while the logger was down. `--backfill` asks for the history.
 - Nothing reads it back. Deleting the channel and unsetting the variable
   leaves nothing behind but a table nothing looks at.
+
+## The customer list
+
+Client names were typed into thread titles by hand, and the board grew **120
+distinct spellings of 43 customers** -- five ways of writing Inspect.AI, two of
+RavanAir, one title where the apostrophe in Duke's arrived as a replacement
+character. `ernie_jira.py` pulls the real list off the Client CR issues in Jira
+so the name is *picked* in Bert instead of typed.
+
+- **Inert unless `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_TOKEN` and
+  `JIRA_CLIENT_JQL` are all set.** Read-only against Jira: the only POST is the
+  search endpoint, which is a read carrying a body. Nothing here creates or
+  edits an issue. It runs inside `ernie_sync`'s loop for the same reason the
+  state-channel pull does -- that loop is the one that reads into SQLite -- on
+  its own hourly heartbeat, because the roster changes about never.
+- **The query has to be checked, not assumed.** `--check` fails if the JQL
+  misses a client the board already uses. The obvious narrow query returns only
+  the first page: the client CRs in production run `PIP-2136`..`PIP-9450`, and
+  the first page alone would have missed 39 of the 43.
+- **`clients.short_name` is what a title calls them; `name` is the Jira
+  summary.** The summary carries the account note as well as the customer --
+  `IPI : El Paso`, `SCI Infrastructure LLC. **PURCHASE** (Should Have 3
+  Bots!)`, `GFT - *PURCHASE* (ST Client)` -- and none of that belongs in a
+  thread title. `short_name()` drops anything parenthesised (looping, because
+  Jira nests them), cuts at the colon, and strips `*STARRED*` notes and a
+  trailing `- note`. It deliberately does **not** reuse `normalise_client`'s
+  annotation list, which strips `purchase|loaner|rental|demo` wherever they
+  appear and turns `Edge AI Demo Team` into `Edge AI Team`. The derived value
+  is a seed: `sync_clients` never overwrites one afterwards, so a correction
+  sticks.
+- **`offered = 0` is not deletion.** A summary marked `*INACTIVE*`,
+  `*PENDING*` or `*PAUSED*` drops off the dropdown and keeps naming the cards
+  that already carry it -- `PIP-7079` and `PIP-8410` are retired and sit under
+  five live cards. Same rule as `QUEUES` vs `QUEUES_OFFERED`. Match the
+  **starred** form only: `City of Superior WI : LENDING CALIB. BAR - Unpaused`
+  is a live customer that contains the letters. And test it on the summary
+  **before any cutting**: `Wilson Excavating: ACTIVE FOR 3RD PARTY CODING
+  *INACTIVE*` carries its marker after the colon.
+- **Two customers may shorten to the same label and both be live.** `IPI : El
+  Paso` and `IPI : *REP*` both read as `IPI`. A list with the same word twice
+  is worse than the typos it replaces, so a collision is reported rather than
+  written and forgotten, and `/clients/roster` flags the rows and sends the
+  full summary along to tell them apart.
+- **`client_aliases` resolves the spellings already on the board, and never
+  guesses.** Tier 1 goes through the ticket's Client CR key -- the thread says
+  `PIP-8605`, so its title spelling means `PIP-8605`, and no strings are
+  compared, which is how `duke s root control` and `dukes root control` collapse
+  onto one client. Tier 2 is an exact name match for threads with no ticket.
+  Tier 3 leaves the rest alone and reports them. That last tier is the point:
+  `falmouth ma` and `falmouth me` are 0.91 similar and are different places, as
+  are Fulton County North and South, and a matcher confident enough to merge
+  the Duke's spellings would merge those too. `dukes` itself is ambiguous --
+  `Duke's Omaha` and `Duke's Root Control` are two customers -- and waits for a
+  person.
+- **Picking a client writes the thread title, never `cards.client_override`.**
+  The Client box already drives the title through `_suggest_title`, so the
+  dropdown feeds that and nothing else. `needs_triage()` reads a
+  `client_override` as somebody vouching for an unreadable card and clears the
+  red edge; writing one as a side effect of naming a client would clear the red
+  off every ticket anyone had merely opened. `Card._override()` sends one only
+  when the title does *not* already say what the box says, and `is_dirty()`
+  reads the same function -- those two are the same statement twice and have to
+  stay that way. Nothing new is stored on `cards`, so `ernie_state.py` is
+  untouched and no derived name enters the three-way comparison.
+- The dropdown is **pick-or-type**. A customer exists before Jira hears about
+  them, and a card already carrying an unoffered client keeps it.
 
 ## Running
 

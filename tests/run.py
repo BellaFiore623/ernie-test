@@ -18,6 +18,7 @@ if str(HERE) not in sys.path:
 
 import check_board_order                                     # noqa: E402
 import check_changelog                                       # noqa: E402
+import check_clients                                         # noqa: E402
 import check_feed                                            # noqa: E402
 import check_freshness                                       # noqa: E402
 import check_palette                                         # noqa: E402
@@ -28,7 +29,8 @@ import check_state                                           # noqa: E402
 MODULES = {"changelog": check_changelog, "state": check_state,
            "order": check_board_order, "poll": check_poll_hold,
            "fresh": check_freshness, "started": check_started,
-           "palette": check_palette, "feed": check_feed}
+           "palette": check_palette, "feed": check_feed,
+           "clients": check_clients}
 
 
 def main(argv: list[str]) -> int:
