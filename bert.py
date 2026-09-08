@@ -1210,6 +1210,7 @@ class Bubble(QFrame):
     """
 
     acted = Signal(str)          # this bubble's key
+    reopened = Signal(str)       # a finished one, double-clicked
 
     def __init__(self, key, body, editing, done=False):
         super().__init__()
@@ -1242,20 +1243,6 @@ class Bubble(QFrame):
                           f" background:transparent; border:none;")
         h.addWidget(lab)
 
-        # Nothing left to tick on a finished one. In the editor it keeps its
-        # x, because taking a bubble off the card is a different statement
-        # from finishing it and is still worth being able to make.
-        if done and not editing:
-            mark = QLabel("\u2713")
-            mark.setFixedSize(22, 22)
-            mark.setAlignment(Qt.AlignCenter)
-            mark.setStyleSheet(f"color:{T.OK_FG}; font-size:11px;"
-                               f" background:transparent; border:none;")
-            h.addWidget(mark)
-            self.btn = None
-            self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
-            return
-
         self.btn = QPushButton("\u2715" if editing else "\u2713")
         # Smaller than the buttons elsewhere on the card, but the square is the
         # hit area and only the glyph inside it has to stay quiet.
@@ -1271,7 +1258,19 @@ class Bubble(QFrame):
         self.btn.clicked.connect(lambda: self.acted.emit(self.key))
         h.addWidget(self.btn)
 
+        if done:
+            # Double-click, not single: a stray click must not put finished
+            # work back, and the x beside it is one click away. The second
+            # click is the confirmation -- a dialog would tax every tick to
+            # guard against the rare wrong one.
+            self.setToolTip("Double-click to put this back to outstanding")
+
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+
+    def mouseDoubleClickEvent(self, e):
+        if self.done and e.button() == Qt.LeftButton:
+            self.reopened.emit(self.key)
+        super().mouseDoubleClickEvent(e)
 
 
 class FeedLine(QLabel):
@@ -1323,6 +1322,7 @@ class WorkBar(QWidget):
                        "body": i["body"], "done": i.get("done", False)}
                       for i in items]
         self._removed = []       # item_ids of stored bubbles crossed off
+        self._undone = []        # item_ids put back to outstanding
         self._new = 0            # counter behind the keys of unsaved bubbles
 
         outer = QVBoxLayout(self)
@@ -1372,6 +1372,15 @@ class WorkBar(QWidget):
     def removed(self):
         return list(self._removed)
 
+    def undone(self):
+        """Finished bubbles double-clicked back to outstanding.
+
+        Held here rather than sent on the click, because the editor's whole
+        contract is that nothing leaves until Save -- so Cancel takes this
+        back too, the way it takes back a typed bubble.
+        """
+        return list(self._undone)
+
     # -- editing -----------------------------------------------------------
     def commit_typed(self):
         text = self.entry.text().strip()
@@ -1379,9 +1388,19 @@ class WorkBar(QWidget):
             return
         self._new += 1
         self._rows.append({"key": f"new-{self._new}", "item_id": None,
-                           "body": text})
+                           "body": text, "done": False})
         self.entry.clear()
         self._draw()
+
+    def _reopen(self, key):
+        """A finished bubble, double-clicked: outstanding again."""
+        for row in self._rows:
+            if row["key"] == key and row.get("done"):
+                row["done"] = False
+                if row["item_id"] and row["item_id"] not in self._undone:
+                    self._undone.append(row["item_id"])
+                self._draw()
+                return
 
     def _drop_last(self):
         if self._rows:
@@ -1415,6 +1434,7 @@ class WorkBar(QWidget):
             b = Bubble(row["key"], row["body"], self.editing,
                        row.get("done", False))
             b.acted.connect(self._acted)
+            b.reopened.connect(self._reopen)
             self.flow.addWidget(b)
         # An empty holder still claims a row's worth of height, which reads as
         # a gap nobody put there.
@@ -1630,7 +1650,10 @@ class Card(QFrame):
             row.addStretch()
             self.body.addLayout(row)
 
-        items = d.get("work_items") or []
+        # Only what still needs doing. A finished bubble is history, and the
+        # card is a list of what is left -- the editor is where the history
+        # is, and where it can be put back.
+        items = [i for i in (d.get("work_items") or []) if not i.get("done")]
         if items:
             self.work = WorkBar(items, editing=False)
             self.work.ticked.connect(self._tick_off)
@@ -1927,7 +1950,8 @@ class Card(QFrame):
             return True
         if self._override() != (base.get("client_override") or ""):
             return True
-        return bool(self.f_work.added() or self.f_work.removed())
+        return bool(self.f_work.added() or self.f_work.removed()
+                    or self.f_work.undone())
 
     def save(self):
         fields = {
@@ -1937,6 +1961,7 @@ class Card(QFrame):
             # people adding different items then merge instead of colliding.
             "work_add": self.f_work.added(),
             "work_remove": self.f_work.removed(),
+            "work_undone": self.f_work.undone(),
         }
         base = getattr(self, "_edit_base", None)
         # Put the card back in view mode before the write.

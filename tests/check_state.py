@@ -613,6 +613,57 @@ def check_a_ticked_item_still_reaches_the_board() -> bool:
     return c.report()
 
 
+def check_reopening_a_work_item_round_trips() -> bool:
+    """A finished bubble can be put back, and that can itself be undone.
+
+    Reopening rides in the batched save with everything else the editor
+    changes, so it also has to count as a change: without it in `touched`,
+    edit_card updated the row and then returned before the commit -- the
+    bubble came back ticked and no event was written, silently.
+    """
+    c = Check("reopening a work item round-trips")
+
+    with Board() as b:
+        api.DB = b.path
+        tid = b.card("PROD: Penn Hills - 02Sep26 - EReel-1220 respool")
+        for n, (body, done) in enumerate((("Chase the courier", None),
+                                          ("Return Equipment", iso(-60)))):
+            b.con.execute(
+                """INSERT INTO work_items (item_id, thread_id, body, position,
+                                           created_at, done_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (f"w{n}", tid, body, float(n), iso(-600), done))
+        b.con.commit()
+
+        def state():
+            card = api.cards(queue=None, client=None,
+                             include_completed=False)["cards"][0]
+            return {i["body"]: i["done"] for i in card["work_items"]}
+
+        c.equal(state()["Return Equipment"], True, "it starts finished")
+
+        r = api.edit_card(tid, api.EditBody(actor="Tester", work_undone=["w1"]))
+        c.equal(state()["Return Equipment"], False, "reopening puts it back")
+        c.ok("reopened" in (r.get("summary") or ""),
+             f"and the feed says so  ({r.get('summary')!r})")
+
+        # Asserted before it is used: without the event there is nothing to
+        # undo, and a check that raises takes the whole run down rather than
+        # reporting one failure.
+        c.ok(r.get("event_id"), "the reopen is an event, so it can be undone")
+        if r.get("event_id"):
+            api.undo(r["event_id"], api.ActorBody(actor="Tester"))
+            c.equal(state()["Return Equipment"], True,
+                    "and undoing the reopen finishes it again")
+
+        # An x still works on a finished one: removing says it should not be
+        # on the card at all, which the tick does not say.
+        api.edit_card(tid, api.EditBody(actor="Tester", work_remove=["w1"]))
+        c.ok("Return Equipment" not in state(),
+             "a finished bubble can still be removed outright")
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -623,4 +674,5 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_the_pages_follow_the_board,
           check_a_card_says_it_holds_an_unsent_change,
           check_a_given_up_change_is_not_about_to_send,
-          check_a_ticked_item_still_reaches_the_board)
+          check_a_ticked_item_still_reaches_the_board,
+          check_reopening_a_work_item_round_trips)

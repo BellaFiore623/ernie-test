@@ -142,6 +142,10 @@ class EditBody(BaseModel):
     # whole list: texts typed in, and the ids of bubbles x-ed out.
     work_add: list[str] = []
     work_remove: list[str] = []
+    # Ticked bubbles put back to outstanding. A different act from removing
+    # one: removing says the item should not be on the card at all, this says
+    # it is not finished after all.
+    work_undone: list[str] = []
     actor: str
     key: Optional[str] = None
     # What the editor was showing when it opened. Lets the server tell a field
@@ -1053,6 +1057,12 @@ def undo(event_id: str, body: ActorBody):
             for iid in work.get("removed") or []:
                 con.execute("UPDATE work_items SET removed_at=NULL, "
                             "removed_by=NULL WHERE item_id=?", (iid,))
+            # And ones it put back to outstanding are ticked off again. The
+            # timestamp is now rather than the original: undo restores the
+            # state, and there is no record of when it was first finished.
+            for iid in work.get("reopened") or []:
+                con.execute("UPDATE work_items SET done_at=?, done_by=? "
+                            "WHERE item_id=?", (now_iso(), actor, iid))
         elif e["verb"] == "work_done":
             con.execute("UPDATE work_items SET done_at=NULL, done_by=NULL "
                         "WHERE item_id=?", (e["old_value"],))
@@ -1186,10 +1196,26 @@ def edit_card(thread_id: str, body: EditBody):
                     (iid, thread_id, text, pos, ts, actor))
                 added.append({"item_id": iid, "body": text})
 
+        reopened = []
+        for iid in body.work_undone:
+            r = con.execute(
+                """SELECT body FROM work_items WHERE item_id=? AND thread_id=?
+                   AND removed_at IS NULL AND done_at IS NOT NULL""",
+                (iid, thread_id)).fetchone()
+            if not r:
+                continue                  # not ticked, or already gone
+            con.execute("UPDATE work_items SET done_at=NULL, done_by=NULL "
+                        "WHERE item_id=?", (iid,))
+            reopened.append({"item_id": iid, "body": r["body"]})
+
+        # A finished bubble can be removed too. The x says "this should not
+        # be on the card at all", which is as true of something ticked off as
+        # of something outstanding -- and the editor is the only place either
+        # can be said, so refusing it there left no way to say it.
         for iid in body.work_remove:
             r = con.execute(
                 """SELECT body FROM work_items WHERE item_id=? AND thread_id=?
-                   AND removed_at IS NULL AND done_at IS NULL""",
+                   AND removed_at IS NULL""",
                 (iid, thread_id)).fetchone()
             if not r:
                 continue                  # already gone; nothing to report
@@ -1197,8 +1223,12 @@ def edit_card(thread_id: str, body: EditBody):
                         "WHERE item_id=?", (ts, actor, iid))
             removed.append({"item_id": iid, "body": r["body"]})
 
-        work = {"added": added, "removed": removed}
-        touched = bool(changes or added or removed)
+        work = {"added": added, "removed": removed, "reopened": reopened}
+        # Reopening counts. Without it here the work_items row was updated
+        # and then the function returned before the commit, so the bubble came
+        # back ticked and no event was written -- the change simply did not
+        # happen, silently.
+        touched = bool(changes or added or removed or reopened)
 
         if not touched and not renaming:
             return {"thread_id": thread_id, "changed": {}, "event_id": None,
@@ -1235,14 +1265,18 @@ def edit_card(thread_id: str, body: EditBody):
             parts.append("added " + ", ".join(f'"{a["body"]}"' for a in added))
         if removed:
             parts.append("dropped " + ", ".join(f'"{r["body"]}"' for r in removed))
+        if reopened:
+            parts.append("reopened "
+                         + ", ".join(f'"{r["body"]}"' for r in reopened))
         summary = "; ".join(parts)
 
         # __work__ is not a column name, so undo's "is this an editable field"
         # filter passes over it and the work-item branch picks it up instead.
         previous = {f: card[f] for f in changes}
-        if added or removed:
+        if added or removed or reopened:
             previous["__work__"] = {"added": [a["item_id"] for a in added],
-                                    "removed": [r["item_id"] for r in removed]}
+                                    "removed": [r["item_id"] for r in removed],
+                                    "reopened": [r["item_id"] for r in reopened]}
 
         eid = log_event(con, thread_id=thread_id, verb="edited", actor=actor,
                         old=json.dumps(previous), new=summary, post=True)

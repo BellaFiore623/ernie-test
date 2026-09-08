@@ -607,47 +607,63 @@ def check_a_tooltip_is_readable() -> bool:
 
 
 def check_a_finished_work_item_says_so() -> bool:
-    """A ticked bubble stays on the card, in green.
+    """A ticked bubble leaves the card and waits in the editor.
 
-    It used to vanish -- /cards filtered on done_at IS NULL -- and the bubble
-    was the only record that the work had happened, so ticking the last one
-    left a card saying nothing about what had been done on it.
+    The card is the list of what is left, so a finished item comes off it.
+    The editor is where the history is: there it shows unfilled with a dashed
+    green border, and a double-click puts it back to outstanding. Double, not
+    single -- a stray click must not undo finished work, and the second click
+    is the confirmation, which is cheaper than a dialog on every tick.
 
-    In the editor it is unfilled with a dashed border: there to be read, and
-    removed if it should not be there, rather than worked on. Both greens come
-    off the palette, which already had them.
+    The x stays either way. Removing a bubble says it should not be on the
+    card at all, which is as true of something ticked off as of something
+    outstanding.
     """
     c = Check("a finished work item says so")
 
     src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
-    cls = next((n for n in ast.walk(tree)
-                if isinstance(n, ast.ClassDef) and n.name == "Bubble"), None)
-    init = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
-                 and n.name == "__init__"), None) if cls else None
+
+    def meth(cls_name, fn):
+        cls = next((n for n in ast.walk(tree)
+                    if isinstance(n, ast.ClassDef) and n.name == cls_name), None)
+        if cls is None:
+            return None
+        return next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == fn), None)
+
+    view = meth("Card", "_build_view")
+    vbody = (ast.get_source_segment(src, view) or "") if view else ""
+    c.ok('if not i.get("done")' in vbody,
+         "the card shows only what still needs doing")
+
+    edit = meth("Card", "enter_edit")
+    ebody = (ast.get_source_segment(src, edit) or "") if edit else ""
+    c.ok('WorkBar(d.get("work_items") or [], editing=True)' in ebody,
+         "and the editor is given all of them, finished ones included")
+
+    init = meth("Bubble", "__init__")
+    ibody = (ast.get_source_segment(src, init) or "") if init else ""
     c.ok(init is not None and any(a.arg == "done" for a in init.args.args),
          "a bubble knows whether it is finished")
+    c.ok("T.OK_FG" in ibody, "and wears the palette's green, not a hex")
+    c.ok('"dashed" if editing' in ibody and '"transparent" if editing' in ibody,
+         "unfilled and dashed where it is shown")
+    c.ok("self.btn" in ibody and "self.btn = None" not in ibody,
+         "keeping its x, because removing one is a different act")
 
-    body = (ast.get_source_segment(src, init) or "") if init else ""
-    c.ok("T.OK_BG" in body and "T.OK_FG" in body,
-         "and wears the palette's green, not a hex")
-    c.ok('"dashed" if editing' in body,
-         "dashed in the editor, solid on the card")
-    c.ok('"transparent" if editing' in body,
-         "and unfilled there, so it reads as quieter")
-    c.ok("self.btn = None" in body,
-         "a finished bubble has nothing left to tick")
-    c.ok("if done and not editing" in body,
-         "but keeps its x in the editor, which is a different act")
+    dbl = meth("Bubble", "mouseDoubleClickEvent")
+    dbody = (ast.get_source_segment(src, dbl) or "") if dbl else ""
+    c.ok("self.done" in dbody and "reopened.emit" in dbody,
+         "a double-click on a finished one puts it back")
 
-    # set_enabled walks every bubble; a finished one has no button to grey.
-    bar = next((n for n in ast.walk(tree)
-                if isinstance(n, ast.ClassDef) and n.name == "WorkBar"), None)
-    en = next((n for n in bar.body if isinstance(n, ast.FunctionDef)
-               and n.name == "set_enabled"), None) if bar else None
-    enb = (ast.get_source_segment(src, en) or "") if en else ""
-    c.ok("is not None" in enb,
-         "and greying the ticks out skips the bubbles that have none")
+    # Held until Save, like everything else the editor does.
+    save = meth("Card", "save")
+    sbody = (ast.get_source_segment(src, save) or "") if save else ""
+    c.ok("work_undone" in sbody, "and it travels with the batched save")
+    dirty = meth("Card", "is_dirty")
+    c.ok("undone()" in (ast.get_source_segment(src, dirty) or "" if dirty else ""),
+         "so closing the editor on one asks first")
     return c.report()
 
 
