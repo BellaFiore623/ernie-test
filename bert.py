@@ -79,6 +79,9 @@ RAIL_MAX_W = 460           # wider is a second board, not a running order
 # Margins, border and the queue stripe, taken off before working out how
 # much of a line fits across the rest of a row.
 RAIL_ROW_CHROME = 26
+CARD_HEAD_SPACING = 8      # between the columns of a card's top row
+CARD_CLIENT_MIN_W = 44     # a client name never shrinks past this, it elides
+CARD_MIN_W = 140           # below this a card is not a card, whatever the window
 RAIL_REDRAW_MS = 140       # after the handle settles, not during
 RAIL_BAR_H = 2             # the rule beside a band's name in the running order
 BOARD_PAD = 16              
@@ -413,6 +416,40 @@ def needs_triage(c) -> bool:
     if not set(c.get("issues") or []) & BLOCKING:
         return False
     return not (c.get("client_override") or "").strip()
+
+def unsent_mark(c):
+    """The mark on a card holding a change that has not left this machine.
+
+    Returns (glyph, colour, why), or None when the card owes nothing.
+
+    Two debts, and they are the two Bert._owed() counts before warning about
+    a close: events queued behind their undo window, and cards that have moved
+    since the shared board was last published. A reorder, and every band move
+    that is not in or out of critical, is silent by design -- no
+    dispatch_after at all -- and appears only in the second, so reading the
+    first alone would leave a card somebody had just dragged looking as though
+    it had already gone out. The mark and the close warning have to agree, or
+    one of them is lying.
+
+    A row the outbox has given up on gets its own glyph. It will not be tried
+    again, so a mark that reads as "in a moment" would be telling the reader
+    to wait for something that is not coming -- which is exactly why /health
+    reports `stuck` apart from `queued` rather than folding it in.
+    """
+    if c.get("stuck"):
+        return "!", T.AMBER_FG, ("Ernie gave up sending this. It will not "
+                                 "retry on its own.")
+    unsent, unshared = c.get("unsent") or 0, c.get("unshared")
+    if not unsent and not unshared:
+        return None
+    if unsent and unshared:
+        why = "not posted to the thread yet, and not on the shared board yet"
+    elif unsent:
+        why = "waiting to post to the thread"
+    else:
+        why = "waiting to reach the shared board"
+    return "*", T.ACCENT, f"Changed here — {why}"
+
 
 MIME = "application/x-bert-card"
 
@@ -838,8 +875,25 @@ class ClickableWidget(QWidget):
 
 
 class ClickableLabel(QLabel):
-    """Double-click jumps straight into edit mode on that field."""
+    """Double-click jumps straight into edit mode on that field.
+
+    Reports no minimum width, for the reason FeedLine does: an ordinary
+    QLabel cannot be made narrower than its text, so it claims the whole
+    client name as a floor and shoves everything after it off the end. The
+    card's corner is fixed columns -- the PIP count, the age, the mark
+    saying a change has not gone out -- and they were the ones that
+    disappeared. Measured with a real customer: 'Municipal Authority of
+    Westmoreland County' wants 408px inside a 300px card, and the age and
+    the mark both landed past the edge, cut away in silence.
+
+    The text is what gives way. That is the same call the feed rows make,
+    and for the same reason -- a clipped name is still a name, while a
+    control you cannot see is gone.
+    """
     doubleClicked = Signal()
+
+    def minimumSizeHint(self):
+        return QSize(0, super().minimumSizeHint().height())
 
     def mouseDoubleClickEvent(self, e):
         self.doubleClicked.emit()
@@ -1248,10 +1302,14 @@ class QueueBox(QCheckBox):
 
 
 class Card(QFrame):
-    def __init__(self, data, board):
+    def __init__(self, data, board, room=0):
         super().__init__()
         self.data = data
         self.board = board
+        # The width this card will be given, so the client name can be cut to
+        # it -- told its room the way a rail row is, rather than guessing.
+        # 0 means ask the widget, which is right once it has been laid out.
+        self.room = room
         self.thread_id = data["thread_id"]
         self.editing = False
         self._press = None
@@ -1303,23 +1361,20 @@ class Card(QFrame):
         cbg, cfg = T.QUEUE.get(d.get("queue") or "", T.NEUTRAL)[1:]
 
         head = QHBoxLayout()
-        head.setSpacing(8)
-        head.addWidget(chip(d.get("queue") or "\u2014", cbg, cfg))
+        head.setSpacing(CARD_HEAD_SPACING)
+        tag = chip(d.get("queue") or "\u2014", cbg, cfg)
+        head.addWidget(tag)
 
-        client = ClickableLabel(d.get("client_override")
-                                or d.get("client_raw") or "Unknown client")
+        who = (d.get("client_override") or d.get("client_raw")
+               or "Unknown client")
+        client = ClickableLabel(who)
         f = QFont()
         f.setPointSize(11)
         f.setWeight(QFont.DemiBold)
         client.setFont(f)
         client.setStyleSheet(f"color:{T.RED_FG if self.problem else T.INK};"
                              f" background:transparent;")
-        client.setToolTip("Double-click to edit")
         client.doubleClicked.connect(self.enter_edit)
-        head.addWidget(client)
-        if d.get("client_override"):
-            head.addWidget(chip("edited", T.CHIP_BG, T.MUTED))
-        head.addStretch()
 
         # PIP tickets raised in the thread -- the build and return requests the
         # interface bot posts -- not Bert's own tickets, which is what a card
@@ -1332,11 +1387,45 @@ class Card(QFrame):
         # this is a real distinction there -- and in the sandbox, where every
         # thread has exactly one, it correctly says nothing at all.
         pips = d.get("ticket_count") or 0
-        if pips > 1:
-            head.addWidget(chip(f"{pips} PIPs", T.CHIP_BG, T.MUTED))
         ago = QLabel(self._ago(d.get("last_human_at")))
         ago.setStyleSheet(f"color:{T.MUTED}; font-size:11px; background:transparent;")
-        head.addWidget(ago)
+
+        # Built before they are placed, so the client can be told what is
+        # actually left instead of claiming the row and shoving them off it.
+        edited = chip("edited", T.CHIP_BG, T.MUTED) if d.get("client_override") else None
+        after = [chip(f"{pips} PIPs", T.CHIP_BG, T.MUTED)] if pips > 1 else []
+        after.append(ago)
+
+        # Last in the row, so it sits in the card's top corner: this is the
+        # one thing on the card about the change rather than about the ticket.
+        mark = unsent_mark(d)
+        if mark:
+            glyph, colour, why = mark
+            star = QLabel(glyph)
+            star.setToolTip(why)
+            star.setAlignment(Qt.AlignTop | Qt.AlignRight)
+            star.setStyleSheet(f"color:{colour}; font-size:14px;"
+                               f" font-weight:bold; background:transparent;")
+            after.append(star)
+
+        # Cut to the room it actually has, measured against the font it draws
+        # in, the way a rail row cuts both of its lines. A count of characters
+        # would be a guess about a proportional font, and the head's chrome
+        # is not even a fixed set of columns. The whole name is one hover away.
+        room = self._client_room([tag] + ([edited] if edited else []) + after)
+        cut = QFontMetrics(f).elidedText(who, Qt.ElideRight, room)
+        client.setText(cut)
+        # The whole name on hover, but only when it was actually cut --
+        # a tooltip repeating the line it sits on is noise on every card.
+        tip = [who, "Double-click to edit"] if cut != who else ["Double-click to edit"]
+        client.setToolTip("\n".join(tip))
+
+        head.addWidget(client)
+        if edited:
+            head.addWidget(edited)
+        head.addStretch()
+        for w in after:
+            head.addWidget(w)
         self.body.addLayout(head)
 
         if self.problem:
@@ -1398,6 +1487,28 @@ class Card(QFrame):
         plain_cursors(self)
 
     # -- edit mode ---------------------------------------------------------
+
+    def _client_room(self, fixed):
+        """What the card's top row has left for the client name.
+
+        Measured rather than assumed. A rail row can take a constant off its
+        width because every row is the same shape; a card's head is not -- the
+        queue tag, an "edited" chip, a PIP count, the age and the unsent mark
+        are each there or not, and each as wide as its own text. So the chrome
+        is asked how big it is.
+
+        sizeHint() after ensurePolished(), because the padding these carry
+        comes from a stylesheet and is not in the hint until the style has
+        been applied to them.
+        """
+        room = self.room or self.width()
+        m = self.body.contentsMargins()
+        for w in fixed:
+            w.ensurePolished()
+            room -= w.sizeHint().width()
+        room -= m.left() + m.right()
+        room -= CARD_HEAD_SPACING * (len(fixed) + 1)
+        return max(room, CARD_CLIENT_MIN_W)
 
     def enter_edit(self):
         if not self.board.writable() or self.editing:
@@ -1824,11 +1935,21 @@ class Band(QWidget):
         self.panel.setVisible(not yes)
         self.caret.setText("▸" if yes else "▾")
 
+    def card_width(self):
+        """The width a card in this band will be given."""
+        m = self.lay.contentsMargins()
+        return max(self.panel.width() - m.left() - m.right(), CARD_MIN_W)
+
     def set_cards(self, cards):
         # Rebuilding a card is ~4ms, so redrawing every band on every poll costs
         # a fifth of a second of frozen UI on a 50-card board -- for identical
         # content. Only tear down when something actually changed.
-        sig = json.dumps(cards, sort_keys=True, default=str)
+        #
+        # The width counts as a change: a card cuts its client name to the room
+        # it has, so a narrower window is a different picture of the same
+        # cards. The rail carries its row width in here for the same reason.
+        room = self.card_width()
+        sig = json.dumps([cards, room], sort_keys=True, default=str)
         if sig == self._sig:
             self.cards = cards
             self._apply_drag_height()
@@ -1852,7 +1973,7 @@ class Band(QWidget):
         self.cards = cards
         self.count.setText(str(len(cards)))
         for c in cards:
-            self.lay.addWidget(Card(c, self.board))
+            self.lay.addWidget(Card(c, self.board, room))
         self._apply_drag_height()
 
     def _apply_drag_height(self):
@@ -2872,6 +2993,20 @@ class Bert(QMainWindow):
         self.feed_head.setToolTip("Show the activity feed" if self.feed_folded
                                   else "Hide the activity feed")
         self._fit_feed()
+
+    def resizeEvent(self, e):
+        """A resized window is a different picture of the same cards.
+
+        Cards cut their client name to the width they are given, so the board
+        has to be rebuilt when that width changes -- but not on every pixel of
+        a drag, which is thirty cards torn down and rebuilt per frame. It goes
+        through the same timer the rail handle uses, which exists to wait for
+        a geometry change to settle.
+        """
+        super().resizeEvent(e)
+        redraw = getattr(self, "rail_redraw", None)
+        if redraw is not None:      # resize fires while the window is built
+            redraw.start()
 
     def _remember_rail_width(self, *_):
         """Kept the way the feed height is, and for the same reason: a

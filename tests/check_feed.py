@@ -696,6 +696,138 @@ def check_the_feed_can_be_resized() -> bool:
     return c.report()
 
 
+def check_a_cards_corner_survives_a_long_client() -> bool:
+    """
+    On a card the text gives way, never the marks in the corner.
+
+    The same rule as a feed row, and it was broken the same way. An ordinary
+    QLabel cannot be made narrower than its text, so the client name claimed
+    its whole width as a floor and pushed the fixed columns after it -- the
+    PIP count, the age, and the mark saying a change has not gone out -- past
+    the edge of the card, where they were cut away in silence.
+
+    It is not hypothetical: 'Municipal Authority of Westmoreland County' is a
+    real customer, and it wants 408px of head inside a 300px card. The mark
+    was measured ending at x=402. The fix is FeedLine's: keep the width the
+    label wants, report no minimum, and let the layout squeeze the text.
+    """
+    c = Check("a card's corner survives a long client name")
+
+    tree = ast.parse(_bert_src())
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "ClickableLabel")
+    hint = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                 and n.name == "minimumSizeHint"), None)
+    c.ok(hint is not None,
+         "the client label reports a minimum size of its own")
+
+    # Zero width, and the real height -- Ignored would throw away the width
+    # the label wants as well, leaving it nothing at all.
+    zero = hint is not None and any(
+        isinstance(n, ast.Call) and getattr(n.func, "id", None) == "QSize"
+        and n.args and getattr(n.args[0], "value", None) == 0
+        for n in ast.walk(hint))
+    c.ok(zero, "and the width in it is zero, so the text can be squeezed")
+    c.ok(hint is not None and any(
+            getattr(n, "attr", None) == "height" for n in ast.walk(hint)),
+         "while the height is still the label's own")
+
+    # The mark has to be the last thing in the head, or it is not in the
+    # corner -- and it is the column most easily pushed out.
+    card = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Card")
+    view = next(n for n in card.body if isinstance(n, ast.FunctionDef)
+                and n.name == "_build_view")
+    body = ast.get_source_segment(_bert_src(), view) or ""
+    c.ok("unsent_mark" in body, "the head asks whether anything is unsent")
+    c.ok(body.index("unsent_mark") > body.index("_ago("),
+         "and the mark is added after the age, so it sits in the corner")
+
+    return c.report()
+
+
+def check_a_card_cuts_its_client_to_the_room_it_has() -> bool:
+    """
+    A clipped name is a rendering fault; an elided one is a name.
+
+    Squeezing the label is what keeps the card's corner on the card, but a
+    hard clip mid-letter reads as broken. So it is cut the way a rail row cuts
+    its two lines: told its room by the parent, measured with QFontMetrics
+    against the font it actually draws in, with the whole string one hover
+    away.
+
+    Measured and not given a constant, because a card's head is not the fixed
+    shape a rail row is -- an "edited" chip, a PIP count and the unsent mark
+    are each there or not. On a 300px card 'Trekk Design Group' fits whole,
+    and with a mark, three PIPs and an edited chip beside it, it does not.
+    """
+    c = Check("a card cuts its client name to the room it has")
+
+    src = _bert_src()
+    tree = ast.parse(src)
+
+    def method(cls_name, fn):
+        # None rather than an exception: a check that raises takes the whole
+        # run down with it, and "the method is gone" is a finding, not a
+        # crash.
+        cls = next((n for n in ast.walk(tree)
+                    if isinstance(n, ast.ClassDef) and n.name == cls_name), None)
+        if cls is None:
+            return None
+        return next((n for n in cls.body
+                     if isinstance(n, ast.FunctionDef) and n.name == fn), None)
+
+    def walk(node):
+        return ast.walk(node) if node is not None else ()
+
+    # Told its room, the way RailRow is.
+    init = method("Card", "__init__")
+    c.ok(init is not None and any(a.arg == "room" for a in init.args.args),
+         "a card is told the width it will be given")
+
+    view = method("Card", "_build_view")
+    c.ok(any(isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "elidedText"
+             for n in walk(view)),
+         "and cuts the client name with elidedText, not a character count")
+
+    # Measured chrome, not a constant: the head's columns come and go.
+    roomfn = method("Card", "_client_room")
+    c.ok(any(getattr(n, "attr", None) == "sizeHint" for n in walk(roomfn)),
+         "the room is measured off the chrome that is actually there")
+    c.ok(any(getattr(n, "attr", None) == "ensurePolished"
+             for n in walk(roomfn)),
+         "after the stylesheet padding has been applied to it")
+
+    # The parent hands the width down, and a change of width is a redraw.
+    setc = method("Band", "set_cards")
+    sig = next((n for n in walk(setc) if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", None) == "sig" for t in n.targets)), None)
+    c.ok(sig is not None and any(getattr(n, "id", None) == "room"
+                                 for n in ast.walk(sig)),
+         "the band counts its width as part of the picture")
+    call = next((n for n in walk(setc) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", None) == "Card"), None)
+    c.ok(call is not None and any(getattr(a, "id", None) == "room"
+                                  for a in call.args),
+         "and passes it to every card it builds")
+
+    # ...which is worth nothing unless resizing the window rebuilds them.
+    node = method("Bert", "resizeEvent")
+    resize = (ast.get_source_segment(src, node) or "") if node else ""
+    c.ok("rail_redraw" in resize,
+         "a resized window redraws the board, once it has settled")
+    c.ok(".start()" in resize,
+         "through the timer, so a drag is not thirty rebuilds a second")
+
+    # The name is not lost, only shortened.
+    body = (ast.get_source_segment(src, view) or "").split("elidedText")
+    c.ok(len(body) > 1 and "setToolTip" in body[1],
+         "and the whole name is still on the card, one hover away")
+
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -715,4 +847,6 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_the_window_has_a_floor,
           check_the_chevron_is_a_character,
           check_the_controls_stay_near_their_line,
-          check_the_feed_can_be_resized)
+          check_the_feed_can_be_resized,
+          check_a_cards_corner_survives_a_long_client,
+          check_a_card_cuts_its_client_to_the_room_it_has)

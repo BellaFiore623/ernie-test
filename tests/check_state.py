@@ -462,6 +462,120 @@ def check_closing_knows_about_the_shared_board() -> bool:
     return c.report()
 
 
+def check_a_card_says_it_holds_an_unsent_change() -> bool:
+    """
+    The mark on a card, and the warning on close, count the same two debts.
+
+    `unsent` is events waiting out their undo window before Ernie posts them
+    to the customer thread. `unshared` is the card having moved since the
+    shared board was last published -- and a reorder, or any band move that is
+    not in or out of critical, is silent by design and appears only there. A
+    mark that read the first alone would leave a card somebody had just
+    dragged looking as though it had already gone out, while the close warning
+    said otherwise. One of the two would be lying.
+    """
+    c = Check("a card says when it holds a change that has not left here")
+
+    with Board() as b:
+        api.DB = b.path
+        quiet = b.card("PROD: Penn Hills - 02Sep26 - EReel-1220 respool")
+        edited = b.card("OPS: Munhall - 26Aug26 - 1k reel", "high", 1000.0)
+        dragged = b.card("OPS: Baldwin - 02Sep26 - Gooseneck 10in", "high", 2000.0)
+
+        # Everything settled: the cards were written, then published.
+        b.con.execute("UPDATE cards SET updated_at=?", (iso(-120),))
+        for tid in (quiet, edited, dragged):
+            b.con.execute(
+                """INSERT INTO state_sync (thread_id, message_id, base_json,
+                                           synced_at) VALUES (?,?,?,?)""",
+                (tid, f"msg-{tid}", "{}", iso(-60)))
+        b.con.commit()
+
+        def board():
+            return {x["thread_id"]: x for x in
+                    api.cards(queue=None, client=None,
+                              include_completed=False)["cards"]}
+
+        c.equal(bert.unsent_mark(board()[quiet]), None,
+                "a card owing nothing wears nothing")
+
+        # An edit, still inside its undo window.
+        b.event(edited, verb="edited", dispatch_after=iso(+40))
+        # A drag. Silent by design -- no dispatch_after at all -- so the card
+        # row moving is the only trace of it.
+        b.event(dragged, verb="reordered", old="high:5", new="high:3")
+        b.con.execute("UPDATE cards SET updated_at=? WHERE thread_id=?",
+                      (iso(), dragged))
+        b.con.commit()
+
+        seen = board()
+        c.equal((bert.unsent_mark(seen[edited]) or [None])[0], "*",
+                "an edit waiting to post is marked")
+        c.equal(seen[dragged]["unsent"], 0,
+                "a reorder queues nothing for the thread")
+        c.equal((bert.unsent_mark(seen[dragged]) or [None])[0], "*",
+                "and is marked anyway, off the shared board it has not reached")
+
+        # The board-wide warning has to agree with what the cards are wearing.
+        owed = bert.Bert._owed(api.health())
+        c.equal(owed, (1, 1), "the close warning owes the same two")
+
+        # Sent and published: both clear.
+        b.con.execute("UPDATE events SET posted_at=? WHERE thread_id=?",
+                      (iso(), edited))
+        b.con.execute("UPDATE state_sync SET synced_at=? WHERE thread_id=?",
+                      (iso(), dragged))
+        b.con.commit()
+        seen = board()
+        c.ok(all(bert.unsent_mark(seen[t]) is None
+                 for t in (quiet, edited, dragged)),
+             "and every mark clears once it has gone out")
+
+    return c.report()
+
+
+def check_a_given_up_change_is_not_about_to_send() -> bool:
+    """
+    A card the outbox has given up on must not wear the waiting mark.
+
+    /health already keeps `stuck` apart from `queued`, because leaving the
+    stack running will not send those and a warning saying "wait a moment"
+    would be advising the one thing that cannot help. A star that never
+    cleared would be making exactly that promise on the card instead.
+    """
+    c = Check("a given-up change is not drawn as about to send")
+
+    with Board() as b:
+        api.DB = b.path
+        tid = b.card("PROD: Penn Hills - 02Sep26 - EReel-1220 respool")
+        b.con.execute("UPDATE cards SET updated_at=?", (iso(-120),))
+        b.con.execute(
+            """INSERT INTO state_sync (thread_id, message_id, base_json,
+                                       synced_at) VALUES (?,?,?,?)""",
+            (tid, "msg-1", "{}", iso(-60)))
+        eid = b.event(tid, verb="edited", dispatch_after=iso(-600))
+        b.con.commit()
+
+        def mark():
+            card = api.cards(queue=None, client=None,
+                             include_completed=False)["cards"][0]
+            return bert.unsent_mark(card)
+
+        c.equal((mark() or [None])[0], "*", "while it is still being tried")
+
+        b.con.execute("UPDATE events SET attempts=? WHERE event_id=?",
+                      (api.OUTBOX_MAX_ATTEMPTS, eid))
+        b.con.commit()
+        got = mark()
+        c.equal((got or [None])[0], "!", "past the limit it reads differently")
+        c.ok("not retry" in (got[2] if got else ""),
+             "and says it will not go on its own")
+        c.equal(api.health()["queued"]["count"], 0,
+                "matching /health, which stops counting it as owed")
+
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -469,4 +583,6 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_publish_leaves_a_card_the_channel_moved,
           check_publish_still_sends_our_own_changes,
           check_a_long_board_keeps_every_row,
-          check_the_pages_follow_the_board)
+          check_the_pages_follow_the_board,
+          check_a_card_says_it_holds_an_unsent_change,
+          check_a_given_up_change_is_not_about_to_send)

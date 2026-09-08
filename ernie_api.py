@@ -477,9 +477,49 @@ def cards(
         items.setdefault(r["thread_id"], []).append(
             {"item_id": r["item_id"], "body": r["body"]})
 
+    # What this machine still owes on each card, so a card can say it holds a
+    # change that has not left here yet.
+    #
+    # The same two debts Bert._owed() counts for the close warning, and they
+    # have to stay the same two: a card wearing no mark under a warning that
+    # says changes are unsent would be worse than no mark at all.
+    unsent: dict[str, int] = {}
+    for r in con.execute(
+            """SELECT thread_id, COUNT(*) AS n FROM events
+               WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+                 AND undone_at IS NULL AND attempts < ?
+               GROUP BY thread_id""", (OUTBOX_MAX_ATTEMPTS,)):
+        unsent[r["thread_id"]] = r["n"]
+
+    # Given up on, and counted apart for the reason /health keeps them apart:
+    # the outbox will not pick these up again, so a mark that means "wait a
+    # moment" would be telling the reader to do the one thing that cannot
+    # help. Not hidden either -- just said differently.
+    stuck: dict[str, int] = {}
+    for r in con.execute(
+            """SELECT thread_id, COUNT(*) AS n FROM events
+               WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+                 AND undone_at IS NULL AND attempts >= ?
+               GROUP BY thread_id""", (OUTBOX_MAX_ATTEMPTS,)):
+        stuck[r["thread_id"]] = r["n"]
+
+    # The second debt. A reorder, and every band move that is not in or out of
+    # critical, is silent by design and carries no dispatch_after at all -- it
+    # appears here and nowhere else. Same comparison /health makes, both sides
+    # written by this machine, so the other laptop's clock has no say in it.
+    unshared: set[str] = set()
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                   "AND name='state_sync'").fetchone():
+        unshared = {r["thread_id"] for r in con.execute(
+            """SELECT c.thread_id FROM cards c JOIN state_sync s USING (thread_id)
+               WHERE datetime(c.updated_at) > datetime(s.synced_at)""")}
+
     # equipment and open issues per card
     for c in out:
         c["work_items"] = items.get(c["thread_id"], [])
+        c["unsent"] = unsent.get(c["thread_id"], 0)
+        c["stuck"] = stuck.get(c["thread_id"], 0)
+        c["unshared"] = c["thread_id"] in unshared
         c["title_pending"] = False
         proposed = pending.get(c["thread_id"])
         if proposed:
