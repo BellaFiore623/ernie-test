@@ -378,6 +378,15 @@ def apply_theme(choice: str) -> None:
     pal.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(T.MUTED))
     app.setPalette(pal)
 
+    # Tooltips need saying twice. Qt draws them itself and, on Windows, ignores
+    # ToolTipBase/ToolTipText above -- they came out the system's pale yellow
+    # in the middle of a dark board. Stating it as a rule also settles it
+    # against any container stylesheet that would otherwise cascade into one,
+    # which is how the rail's rows came to have black-on-black tooltips.
+    app.setStyleSheet(
+        f"QToolTip {{ color:{T.INK}; background-color:{T.SURFACE};"
+        f" border:1px solid {T.LINE}; padding:4px 6px; }}")
+
 # Issues that mean the thread itself couldn't be read properly.
 BLOCKING = {"title_none", "title_unparseable", "title_prefix_only",
             "title_loose", "title_nonstandard"}
@@ -2429,7 +2438,13 @@ class Rail(QWidget):
         self.setMinimumWidth(RAIL_MIN_W)
         self.setMaximumWidth(RAIL_MAX_W)
         self.resize(RAIL_WIDTH, self.height())
-        self.setStyleSheet(f"background:{T.CANVAS};")
+        # Scoped to the rail itself. Unscoped, a background rule cascades to
+        # every descendant *and* to the tooltip a descendant owns, so hovering
+        # a row produced a box the right size for its three lines, painted the
+        # canvas colour, with the text the same colour as the box. Measured
+        # against a plain widget in the same process: readable there, solid
+        # black here.
+        self.setStyleSheet(f"Rail {{ background:{T.CANVAS}; }}")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 4, 8)

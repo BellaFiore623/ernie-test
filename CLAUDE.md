@@ -581,6 +581,17 @@ amber on amber in High. `tests/check_palette.py` reads this off the source
 rather than building a `Band`: a widget built with no QApplication does not
 raise, it aborts the process, and the checks deliberately never make one.
 
+**A container's stylesheet must name the container.** `setStyleSheet("background: ...")`
+with no selector applies to the widget *and everything under it*, including
+the tooltip a child owns. `Rail` did that, so hovering a row in the running
+order produced a box the right size for its three lines, painted the canvas
+colour, with the text the same colour as the box -- measured against a plain
+`QWidget` in the same process: readable there, solid black here. Scope it:
+`Rail { background: ... }`. And `apply_theme` states `QToolTip` on the
+application, which settles it whatever else cascades and is needed anyway --
+Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
+in the palette, so they came out the system's pale yellow on a dark board.
+
 **Hide a widget before unparenting it.** The teardowns unparent before
 `deleteLater()` on purpose -- one still parented to the panel keeps painting at
 the geometry it had, and a rebuild mid-drag left the old rows on screen under

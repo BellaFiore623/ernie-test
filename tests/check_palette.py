@@ -561,6 +561,51 @@ def check_nothing_is_unparented_while_it_is_visible() -> bool:
     return c.report()
 
 
+def check_a_tooltip_is_readable() -> bool:
+    """A container's stylesheet must not cascade into its tooltips.
+
+    Rail set `background: <canvas>` with no selector. In Qt that applies to
+    the widget *and everything under it*, including the tooltip a child owns
+    -- so hovering a row in the running order produced a box the right size
+    for its three lines, painted near-black, with the text the same colour as
+    the box. Measured against a plain QWidget in the same process: readable
+    there, solid black here.
+
+    Two things fix it and both are worth keeping. Scoping the rule to `Rail`
+    stops the cascade. Stating QToolTip on the application settles it whatever
+    else cascades -- and is needed anyway, because Qt draws tooltips itself
+    and ignores the ToolTipBase/ToolTipText already in the palette, so they
+    came out the system's pale yellow in the middle of a dark board.
+    """
+    c = Check("a tooltip is readable")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    rail = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.ClassDef) and n.name == "Rail"), None)
+    init = next((n for n in rail.body if isinstance(n, ast.FunctionDef)
+                 and n.name == "__init__"), None) if rail else None
+    body = (ast.get_source_segment(src, init) or "") if init else ""
+    c.ok("Rail {{ background:" in body,
+         "the rail's background rule names the rail")
+    # The rail's own rule, not its children's. A leaf like the drop marker
+    # can carry a bare background safely -- it has nothing under it and owns
+    # no tooltip. A container cannot.
+    c.ok('self.setStyleSheet(f"background:' not in body,
+         "and the container's own rule is not left to fall on everything")
+
+    theme = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+                  and n.name == "apply_theme"), None)
+    tbody = (ast.get_source_segment(src, theme) or "") if theme else ""
+    c.ok("QToolTip" in tbody, "the theme states what a tooltip looks like")
+    c.ok("app.setStyleSheet" in tbody, "on the application, so it always wins")
+    for token in ("T.INK", "T.SURFACE"):
+        c.ok(token in tbody.split("QToolTip")[-1] if "QToolTip" in tbody else False,
+             f"in {token}, not a hex typed into the rule")
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
@@ -569,4 +614,5 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_the_queues_the_board_can_draw,
           check_only_the_header_is_tinted,
           check_a_band_leaves_no_stray_windows,
-          check_nothing_is_unparented_while_it_is_visible)
+          check_nothing_is_unparented_while_it_is_visible,
+          check_a_tooltip_is_readable)
