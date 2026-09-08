@@ -404,10 +404,18 @@ so the name is *picked* in Bert instead of typed.
   edits an issue. It runs inside `ernie_sync`'s loop for the same reason the
   state-channel pull does -- that loop is the one that reads into SQLite -- on
   its own hourly heartbeat, because the roster changes about never.
-- **The query has to be checked, not assumed.** `--check` fails if the JQL
-  misses a client the board already uses. The obvious narrow query returns only
-  the first page: the client CRs in production run `PIP-2136`..`PIP-9450`, and
-  the first page alone would have missed 39 of the 43.
+- **The query is `parent = PIP-2132`** -- the *Client Tracker* issue. Its 105
+  children are the customer list; `project = PIP AND issuetype = "Customer
+  Requirement"` returns 129, and the extra 24 are product capabilities (*Video
+  Capture Capability*, *Tether Reel*), trade shows, and rejected junk (*invalid
+  ticket*, *DUPE*) that carry the type without being customers. Verified 105/105
+  against the list and 43/43 against the board.
+- **`--check` fails if the JQL misses a client, and judges a miss by what it
+  is.** A key it did not return is only a finding when that key is a Customer
+  Requirement; the sandbox's seeded threads carry CR keys that are real issues
+  of the wrong kind -- `PIP-4902` is a Build Request, `PIP-4940` a Bug -- and no
+  query could or should reach those. Testing mere existence called all seven a
+  failure and advised widening a query that was already right.
 - **`clients.short_name` is what a title calls them; `name` is the Jira
   summary.** The summary carries the account note as well as the customer --
   `IPI : El Paso`, `SCI Infrastructure LLC. **PURCHASE** (Should Have 3
@@ -453,6 +461,16 @@ so the name is *picked* in Bert instead of typed.
   reads the same function -- those two are the same statement twice and have to
   stay that way. Nothing new is stored on `cards`, so `ernie_state.py` is
   untouched and no derived name enters the three-way comparison.
+- **The board types a shortening, and the roster should match it.** Measured
+  against production: 24 of the 65 offered clients are typed shorter in titles
+  than their Jira name -- `Trekk` for *Trekk Design Group* on 18 threads, `SCI`
+  for *SCI Infrastructure LLC.* on 15, `Precision` for *Precision Trenchless* on
+  8. Offering the long form would have every new title disagree with the
+  existing ones, so the fix for typos would create a fresh inconsistency. The 17
+  where the typed form is a **word subsequence** of the Jira name were adopted
+  as `short_name`. The rest were not, and the reason matters: `Dukes Root
+  Control` appears on 9 threads and is a *misspelling* of `Duke's Root Control`,
+  not a shortening. Adopting by popularity would have made the typo canonical.
 - The dropdown is **pick-or-type**. A customer exists before Jira hears about
   them, and a card already carrying an unoffered client keeps it.
 

@@ -359,6 +359,40 @@ def check_no_jira_means_no_change():
     return c.report()
 
 
+def check_a_missing_key_is_judged_by_what_it_is():
+    """--check must tell a narrow query from a key that was never a client.
+
+    The sandbox's seeded threads carry Client CR keys that are real Jira
+    issues of the wrong kind -- PIP-4902 is a Build Request, PIP-4940 a Bug,
+    PIP-4931 a Task. No widening of a client query would ever reach those, or
+    should. Testing that the key merely *exists* called all seven a failure
+    and told the reader to widen a query that was already right.
+    """
+    c = Check("a key the query missed is judged by what it is")
+
+    import ast
+    import pathlib
+    src = pathlib.Path(J.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+               and n.name == "check"), None)
+    body = (ast.get_source_segment(src, fn) or "") if fn else ""
+    c.ok("is_client" in body,
+         "the coverage report asks whether the key is a client")
+    c.ok("issue_exists" not in body,
+         "and not merely whether the issue exists")
+
+    meth = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+                 and n.name == "is_client"), None)
+    mbody = (ast.get_source_segment(src, meth) or "") if meth else ""
+    c.ok("CLIENT_ISSUE_TYPE" in mbody,
+         "which it decides on the issue type, from one named constant")
+    c.equal(J.CLIENT_ISSUE_TYPE, "Customer Requirement",
+            "and that constant is what Jira calls a client")
+    return c.report()
+
+
 CHECKS = (
     check_the_short_name_cuts_the_note_not_the_name,
     check_only_the_starred_marker_retires_a_client,
@@ -372,6 +406,7 @@ CHECKS = (
     check_picking_a_client_does_not_vouch_for_the_card,
     check_the_editor_offers_the_roster_and_still_takes_anything,
     check_no_jira_means_no_change,
+    check_a_missing_key_is_judged_by_what_it_is,
 )
 
 

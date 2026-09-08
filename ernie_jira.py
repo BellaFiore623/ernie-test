@@ -52,6 +52,11 @@ SYNC_EVERY_S = 3600   # the roster changes about never; don't ask every minute
 # for if the marker convention ever drifts from the workflow.
 FIELDS = ["summary", "status", "issuetype", "parent"]
 
+# What a client is, in Jira's words. The roster query has to select these and
+# nothing else, and --check uses it to tell a query that is too narrow from a
+# CR key that was never a client in the first place.
+CLIENT_ISSUE_TYPE = "Customer Requirement"
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -159,6 +164,19 @@ class Jira:
 
     def myself(self) -> dict:
         return self._call("GET", "/rest/api/3/myself") or {}
+
+    def is_client(self, key: str) -> bool:
+        """Whether this key is a client, rather than merely a real issue.
+
+        _call returns None on a 404. But existing is not the question: the
+        sandbox's seeded threads carry CR keys that are real issues of the
+        wrong kind -- PIP-4902 is a Build Request, PIP-4940 is a Bug -- and no
+        widening of a client query would ever, or should ever, reach those.
+        """
+        d = self._call("GET", f"/rest/api/3/issue/{key}",
+                       params={"fields": "issuetype"}) or {}
+        t = ((d.get("fields") or {}).get("issuetype") or {}).get("name")
+        return t == CLIENT_ISSUE_TYPE
 
     def search(self, jql: str) -> list[dict]:
         """Every issue the query matches, following the page tokens."""
@@ -402,8 +420,24 @@ def check(con, cfg: dict) -> int:
     missing = sorted(used - have)
     print(f"coverage : {len(used) - len(missing)}/{len(used)} "
           f"of the client CRs on this board")
-    if missing:
-        print(f"  MISSING: {', '.join(missing)}")
+
+    # A key the query missed is only a finding if it is a client. The sandbox
+    # is seeded with threads whose Client CR points at a real issue of the
+    # wrong kind, so most of these can never be in a client roster however the
+    # query is written. The ones that are Customer Requirements are the
+    # finding: real clients this query is too narrow to reach.
+    unreachable, not_clients = [], []
+    for key in missing:
+        (unreachable if j.is_client(key) else not_clients).append(key)
+
+    if not_clients:
+        print(f"  not clients at all ({len(not_clients)}), so no query could "
+              f"reach them -- seeded threads carry CR keys that are Build "
+              f"Requests, Tasks and Bugs:")
+        print(f"    {', '.join(not_clients)}")
+    if unreachable:
+        print(f"  MISSING and real ({len(unreachable)}): "
+              f"{', '.join(unreachable)}")
         print('  widen JIRA_CLIENT_JQL -- try '
               'project = PIP AND issuetype = "Customer Requirement"')
         return 1
