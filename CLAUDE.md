@@ -187,7 +187,16 @@ activity feed, undo, and the outbox.
   Centring them puts the five on one line. The padding is what stops the
   button touching the hairline under the row -- without it the button is
   exactly as tall as the row, so the rule that ties a line to its buttons was
-  resting on one. It costs density: rows went from 29px to 37px.
+  resting on one. It costs density: rows went from 29px to 38px.
+- **Two pixels decide whether a row looks centred, and both are the rule's.**
+  `feed_lay` has **no spacing**: a layout gap falls above a row's contents but
+  below the rule above them, so it counts entirely against the top -- measured
+  14px above the text and 10 below in a band meant to be even. The rule is the
+  separator now, so the gap was a second one throwing off the first. And the
+  bottom padding is `FEED_ROW_PAD + 1`, because the hairline is drawn in the
+  row's own last pixel: pad both sides equally and everything centres against
+  a box a pixel shorter than it looks. With both: text 11px above and 11
+  below, rule to rule.
 - **Each feed row carries a hairline under it**, in `T.LINE`, so an entry and
   its buttons read as one row. `FEED_ROW_MAX_W` caps how far apart the two
   ends can get; the rule closes the rest, and it was still not obvious which

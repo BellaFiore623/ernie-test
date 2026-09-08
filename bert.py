@@ -3127,7 +3127,13 @@ class Bert(QMainWindow):
         inner.setStyleSheet("background:transparent;")
         self.feed_lay = QVBoxLayout(inner)
         self.feed_lay.setContentsMargins(0, 0, FEED_GUTTER, 0)
-        self.feed_lay.setSpacing(3)
+        # No gap between rows: each one draws a hairline at its own bottom
+        # edge, and that is the separator. A layout gap on top of it is a
+        # second one -- and because it falls above a row's contents but below
+        # the rule above them, everything in the row read as sitting low in
+        # the band between the two rules. Measured: 40px rule to rule, with
+        # the text 14px below the one above and 10px above its own.
+        self.feed_lay.setSpacing(0)
         self.feed_scroll.setWidget(inner)
         # The cap lives on the scroll area, not on the rows and not on the
         # widget inside it. Two things follow, and both are the point:
@@ -4253,8 +4259,11 @@ class Bert(QMainWindow):
             row = FeedRow()
             h = QHBoxLayout(row)
             # Room above and below, so the Undo button is not sitting on the
-            # hairline under the row.
-            h.setContentsMargins(0, FEED_ROW_PAD, 0, FEED_ROW_PAD)
+            # hairline under the row. One more at the bottom than the top,
+            # because the hairline is drawn in the row's own last pixel: pad
+            # both sides equally and the contents centre against a box that
+            # is really a pixel shorter, which reads as sitting low.
+            h.setContentsMargins(0, FEED_ROW_PAD, 0, FEED_ROW_PAD + 1)
             h.setSpacing(8)
 
             when = QLabel(self._clock(e["occurred_at"]))

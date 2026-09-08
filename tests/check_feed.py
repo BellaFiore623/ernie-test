@@ -935,6 +935,19 @@ def check_a_feed_row_sits_on_one_line() -> bool:
     # are flush on purpose -- the row is what carries the padding for them.
     c.ok("h.setContentsMargins(0, 0, 0, 0)" not in block,
          "rather than the row sitting flush against its own edges")
+
+    # One pixel more at the bottom: the hairline is drawn in the row's own
+    # last pixel, so equal padding centres against a box a pixel shorter than
+    # it looks, and everything reads as sitting low.
+    c.ok("FEED_ROW_PAD + 1" in block,
+         "with the hairline's own pixel allowed for at the bottom")
+
+    # And no layout gap. It falls above a row's contents but below the rule
+    # above them, so it counted entirely against the top: measured 14px above
+    # the text and 10 below, in a band that is meant to be even.
+    panel = ast.get_source_segment(src, _method("_feed_panel")) or ""
+    c.ok("feed_lay.setSpacing(0)" in panel,
+         "and no gap between rows -- the rule is the separator")
     return c.report()
 
 
