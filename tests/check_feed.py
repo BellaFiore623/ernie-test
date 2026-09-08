@@ -828,6 +828,42 @@ def check_a_card_cuts_its_client_to_the_room_it_has() -> bool:
     return c.report()
 
 
+def check_an_open_row_keeps_the_spacing() -> bool:
+    """Opening a row must not close the gap under its last line.
+
+    A closed row is _feed_row_h tall around a single line: the height comes
+    from the taller Undo column beside it, and the label is top-aligned, so
+    there is room under the words. An open row set to exactly what its label
+    needs has none of that, and its last line sits that much nearer the row
+    below than every other line in the feed -- which reads as the row being
+    squeezed into the gap rather than the list making space for it.
+
+    Measured on a real feed: closed rows left 16px under their text, the open
+    one 3px. With the slack added, every row leaves 16.
+    """
+    c = Check("an open row keeps the spacing")
+
+    src = _bert_src()
+    fit = _method("_fit_feed")
+    body = ast.get_source_segment(src, fit) or ""
+
+    c.ok("slack" in body, "_fit_feed works out what a closed row leaves spare")
+    c.ok("need + slack" in body,
+         "and an open row is given its text plus that same room")
+
+    # Off the rows, not off a font metric: the height being matched is
+    # whatever the tallest closed row wanted, which no font knows.
+    slack = body.split("slack =")[1].split(chr(10))[0] if "slack =" in body else ""
+    c.ok("_feed_row_h" in slack,
+         f"measured against the height rows are held to  ({slack.strip()!r})")
+
+    # And it is still floored at the closed height, which is the older rule:
+    # a row with no Undo button must not shrink when opened.
+    c.ok("max(self._feed_row_h" in body,
+         "while never coming out shorter than it was closed")
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -849,4 +885,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_the_controls_stay_near_their_line,
           check_the_feed_can_be_resized,
           check_a_cards_corner_survives_a_long_client,
-          check_a_card_cuts_its_client_to_the_room_it_has)
+          check_a_card_cuts_its_client_to_the_room_it_has,
+          check_an_open_row_keeps_the_spacing)

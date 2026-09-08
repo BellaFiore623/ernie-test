@@ -211,6 +211,15 @@ activity feed, undo, and the outbox.
   changes nothing or adds exactly the lines the text needs. Holding the height
   steady is only safe because closed rows never wrap, which is the invariant
   above.
+- **An open row keeps the room a closed one leaves.** A closed row is
+  `_feed_row_h` tall around a single line -- the height comes from the taller
+  Undo column beside it, and the label is top-aligned, so there is space under
+  the words. An open row set to exactly what its label needs has none of it,
+  and its last line sat 13px nearer the row below than every other line did:
+  measured on a real feed, 16px under a closed row and 3px under the open one.
+  It read as the row squeezing into the gap rather than the list making space
+  for it. The slack is measured off the closed rows rather than a font metric,
+  because the height being matched is whatever the tallest of them wanted.
 - **The clip scales with the window, capped at half of it.** A closed row is
   cut to 46 characters of thread and 44 of detail at the narrowest, and those
   widths are scaled up together by `_feed_scale()` so a full-screen board is

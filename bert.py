@@ -3282,6 +3282,14 @@ class Bert(QMainWindow):
         # every value going in here is bounded by one line plus a button.
         self._feed_row_h = max(getattr(self, "_feed_row_h", 0), tallest)
 
+        # What a closed row leaves under its one line of text, so an opened
+        # one can leave the same. Measured off the rows themselves rather than
+        # a font metric: the height they are held to is whatever the tallest
+        # closed row wanted, and that is the thing being matched.
+        line = max((r.text_label.height() for r in shut
+                    if getattr(r, "text_label", None) is not None), default=0)
+        slack = max(self._feed_row_h - line, 0)
+
         # Closed rows are all one height. A row that loses its Undo button is
         # shorter than one that has it, so without this every undo shifts
         # everything below it up by a few pixels while you are still looking
@@ -3306,7 +3314,17 @@ class Bert(QMainWindow):
                     # below it upward -- opening a line to read four more
                     # characters moved the list under the pointer. Opening
                     # either changes nothing or adds the lines it needs.
-                    r.setMinimumHeight(max(self._feed_row_h, need))
+                    #
+                    # Plus the slack a closed row carries. A closed row is
+                    # _feed_row_h tall around one line of text -- the height
+                    # comes from the taller Undo column beside it, and the
+                    # label is top-aligned, so there is room under the words.
+                    # An open row set to exactly what its label needs has
+                    # none, and its last line sits that much closer to the
+                    # row below than every other line on the board does. It
+                    # reads as the row squeezing into the gap rather than the
+                    # list making space for it.
+                    r.setMinimumHeight(max(self._feed_row_h, need + slack))
                     r.setMaximumHeight(UNCAPPED)
                 else:
                     r.setFixedHeight(self._feed_row_h)
