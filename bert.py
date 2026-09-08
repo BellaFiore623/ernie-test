@@ -4435,52 +4435,63 @@ class Bert(QMainWindow):
             bar = area.verticalScrollBar()
             kept.append((area, bar, bar.value(), anchor(area)))
 
-        def put_back(tries=4, first=True):
-            # Settle the geometry first. A rebuild posts its layout requests
-            # rather than doing the work there and then, so a position read
-            # before they are delivered is the old one -- measured: the board
-            # still reported its old maximum on the first pass and grew by
-            # 144px on the next, which is exactly how far the view was out.
-            # Twice, because activating a band posts fresh requests to the
-            # cards inside it.
+        def measure():
+            """The geometry, with the scroll position taken out of it.
+
+            A card's offset inside the scrolled widget does not move when the
+            bar does, so this can be read as often as we like without our own
+            correction disturbing the reading.
+            """
+            out = []
+            for area, bar, _was, held in kept:
+                y = None
+                if held is not None:
+                    y = next((w.mapTo(area.widget(), QPoint(0, 0)).y()
+                              for w in in_order(area)
+                              if w.thread_id == held[0]), None)
+                out.append((bar.maximum(), y))
+            return tuple(out)
+
+        def put_back(tries=6, seen=None):
+            # A rebuild posts its layout requests rather than doing the work
+            # there and then, so a position read before they are delivered is
+            # the old one -- measured: the board still reported its old
+            # maximum on the first pass and grew by 144px on the next. Drain
+            # them twice, because activating a band posts fresh requests to
+            # the cards inside it.
             for _ in range(2):
                 QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
                 for band in self.bands.values():
                     band.lay.activate()
                 self.rail.lay.activate()
 
-            drifted = False
+            now = measure()
+            if now != seen and tries > 1:
+                # Still settling. Wait for it rather than correct against it:
+                # a correction worked out from geometry that is still moving
+                # is wrong, and the next pass taking it back is a visible
+                # jump. Measured on a resize -- which rebuilds the board
+                # through the same timer the rail handle uses -- the bar went
+                # +496px and returned 75ms later, twice per drag.
+                QTimer.singleShot(16, lambda: put_back(tries - 1, now))
+                return
+
+            # Settled, so each bar is moved once and lands where it belongs.
             for area, bar, was, held in kept:
-                # A board that got shorter -- the last bubble ticked off a
-                # card, say -- has a smaller maximum than the value we took.
-                # Only on the way in: a later pass corrects what is left over
-                # from the one before it, and putting the raw number back
-                # first would throw that away and re-derive it every time.
-                if first:
-                    bar.setValue(min(was, bar.maximum()))
-                if held is None:
-                    continue
                 vp = area.viewport()
-                for w in in_order(area):
-                    if w.thread_id != held[0]:
-                        continue
-                    moved = w.mapTo(vp, QPoint(0, 0)).y() - held[1]
-                    if moved:
-                        bar.setValue(
-                            max(0, min(bar.value() + moved, bar.maximum())))
-                        drifted = True
-                    break
-            # Again until it stops moving, rather than a fixed number of
-            # passes -- too few for a big board, wasted work on a small one.
-            # `or first` is the one that matters: a first pass measuring no
-            # movement means the rebuild had not landed yet, not that there
-            # was nothing to do, and stopping there was the bug. Measured, a
-            # board whose cards above the view each gained four bubbles read
-            # as unmoved on the first pass and 144px out on the next, and the
-            # view was left a card and a half from where it had been.
-            # Bounded, so a layout that never settles cannot loop.
-            if tries > 1 and (drifted or first):
-                QTimer.singleShot(16, lambda: put_back(tries - 1, first=False))
+                w = None if held is None else next(
+                    (x for x in in_order(area) if x.thread_id == held[0]), None)
+                if w is None:
+                    # The card the view was on has gone -- completed, or
+                    # filtered out by a search. The number is all that is left
+                    # of the place, clamped because a board that got shorter
+                    # has a smaller maximum than the value we took off it.
+                    bar.setValue(min(was, bar.maximum()))
+                    continue
+                moved = w.mapTo(vp, QPoint(0, 0)).y() - held[1]
+                if moved:
+                    bar.setValue(
+                        max(0, min(bar.value() + moved, bar.maximum())))
 
         # Not yet: the layout hasn't settled, so maximum() is still the old one.
         QTimer.singleShot(0, put_back)

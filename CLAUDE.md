@@ -192,14 +192,26 @@ activity feed, undo, and the outbox.
   same height; the number is the fallback for when that card has gone. It
   walks the band and rail layouts rather than `findChildren`, which answers in
   the order Qt happens to hold the widgets and not the order they are drawn.
-  The correction repeats **until it stops moving**, not a fixed number of
-  passes and not only while it can see movement: a rebuild posts its layout
-  requests rather than doing the work there and then, so a first pass measuring
-  nothing means the rebuild had not landed yet -- it read as unmoved and 144px
-  out one turn later. Bounded, so a layout that never settles cannot loop.
   Hitting Edit does not itself rebuild the board -- a card builds its own
   editor -- so the jump somebody sees there is a poll, or the other editor's
   save, landing on the same click.
+- **Nothing touches a scrollbar until the geometry has stopped moving.** A
+  rebuild posts its layout requests rather than doing the work there and then,
+  so the first reading after one is the *old* geometry: measured, the board
+  reported its old maximum on the first pass and was 144px out on the next.
+  The correction is worked out from where the anchor landed, so a pass run
+  against a layout still settling computes the wrong one -- and correcting on
+  every pass until the answer stops changing means each wrong one is applied
+  and then taken back, which is a visible glitch rather than a held place.
+  **A resize is where that shows**, because `resizeEvent` rebuilds the board
+  through the same timer the rail handle uses: the bar went +496px and returned
+  75ms later, twice for every drag of the window edge. So `_hold_scroll`
+  *waits* instead -- it reads the anchor's offset inside the scrolled widget,
+  which does not move when the bar does and so can be read without being
+  disturbed by its own correction, and only once that reading repeats does it
+  move each bar, exactly once. Bounded, so a layout that never settles cannot
+  loop. Measured after: 30 rebuilds held to the pixel with at most one bar
+  move each, and five resizes across both axes moved no bar at all.
 
 - **A feed row stops growing at `FEED_ROW_MAX_W`.** The status chip and Undo
   are right-aligned in fixed columns, which is what makes them a column you can

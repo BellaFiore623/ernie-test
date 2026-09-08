@@ -256,27 +256,38 @@ def check_the_place_is_a_card_not_a_number() -> bool:
              for n in ast.walk(hold)),
          "the geometry is settled before anything is measured")
 
-    # And the correction repeats until it stops moving: one pass lands against
-    # geometry that is still changing.
+    # And nothing is moved until the geometry has stopped moving. The
+    # correction is worked out from where the anchor has landed, so a pass
+    # run against a layout that is still settling computes the wrong one --
+    # and the pass after it taking that back is what somebody sees as the
+    # scrollbar glitching. Measured on a resize, which rebuilds the board
+    # through the same timer the rail handle uses: +496px, back 75ms later,
+    # twice for every drag of the window edge.
     inner = next((n for n in ast.walk(hold) if isinstance(n, ast.FunctionDef)
                   and any(isinstance(x, ast.Name) and x.id == n.name
                           for x in ast.walk(n))), None)
-    c.ok(inner is not None, "the correction runs again after itself")
+    c.ok(inner is not None, "the correction can run again after itself")
 
     if inner is not None:
-        again = [n for n in ast.walk(inner) if isinstance(n, ast.If)
-                 and any(isinstance(x, ast.Name) and x.id == inner.name
-                         for x in ast.walk(n))]
-        # The guard that matters. A first pass measuring no movement means the
-        # rebuild had not landed yet, not that there was nothing to do, and
-        # stopping there was the bug: the board read as unmoved on the first
-        # pass and 144px out on the next.
-        c.ok(any(any(isinstance(x, ast.Name) and x.id == "first"
-                     for x in ast.walk(n.test)) for n in again),
-             "and never trusts a first reading that says nothing moved")
-        c.ok(any(any(isinstance(x, ast.Name) and x.id == "tries"
-                     for x in ast.walk(n.test)) for n in again),
-             "bounded, so a layout that never settles cannot loop")
+        # The bail-out: while this reading differs from the one before it,
+        # come back later instead of correcting.
+        wait = next((i for i, n in enumerate(inner.body)
+                     if isinstance(n, ast.If)
+                     and any(isinstance(x, ast.Return) for x in ast.walk(n))
+                     and any(isinstance(x, ast.Name) and x.id == inner.name
+                             for x in ast.walk(n))), None)
+        c.ok(wait is not None,
+             "it waits for the geometry rather than correcting against it")
+
+        if wait is not None:
+            before = [x for n in inner.body[:wait] for x in ast.walk(n)]
+            c.ok(not any(isinstance(x, ast.Attribute) and x.attr == "setValue"
+                         for x in before),
+                 "and touches no scrollbar until it has stopped moving")
+            guard = inner.body[wait]
+            c.ok(any(isinstance(x, ast.Name) and x.id == "tries"
+                     for x in ast.walk(guard.test)),
+                 "bounded, so a layout that never settles cannot loop")
 
     return c.report()
 
