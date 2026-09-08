@@ -381,6 +381,14 @@ a ticket with no home yet is the ordinary case rather than an exception.
   into a band -- starting a ticket, `reveal()`, and a drag arriving -- and all
   three have to open a folded one. `tests/check_board_order.py` holds them
   together.
+- **A ticket with no thread has not left the board.** Every poll checks that
+  the card under an open editor is still in the payload and warns if it has
+  gone -- and `NEW_TICKET` is never in the payload, because the thread does not
+  exist yet. So pressing `+ New Ticket` raised "this ticket has left the board
+  ... saving will probably fail" within a poll, over a blank form, and again on
+  every poll after it. `_flag_edited_underneath` exempts the sentinel and
+  nothing else: a real card that has genuinely gone still says so, which is
+  the half of it worth keeping.
 - **Starting one is not editing one, and the words follow.** `NEW_TICKET` is
   the sentinel a ticket with no thread stands under. It goes through the same
   one-editor rule, but the dialog offers *Create it* rather than *Save*, says

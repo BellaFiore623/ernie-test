@@ -292,7 +292,78 @@ def check_the_place_is_a_card_not_a_number() -> bool:
     return c.report()
 
 
+class Warned:
+    """A card that records what it was warned about."""
+
+    def __init__(self, base=None):
+        self._edit_base = base if base is not None else {"title": "PROD: x"}
+        self.warnings = []
+
+    def warn_changed(self, msg):
+        self.warnings.append(msg)
+
+
+class Editing:
+    """Enough of Bert for _flag_edited_underneath, which is what is tested.
+
+    The method only reads editing_card and asks for the widget, so it can be
+    called with a stand-in self -- no QApplication, no display.
+    """
+
+    def __init__(self, tid, card):
+        self.editing_card = tid
+        self._card = card
+
+    def _card_widget(self, _tid):
+        return self._card
+
+
+def check_a_ticket_with_no_thread_has_not_left_the_board() -> bool:
+    """
+    Pressing + New Ticket warned that the ticket had left the board.
+
+    _flag_edited_underneath looks the card being edited up in the incoming
+    poll and says it has gone if it is not there. A ticket being started has
+    no thread yet, so it is not on the board and never can be found -- the
+    warning arrived within a poll of pressing the button, about a blank form,
+    and said saving would probably fail. It came back on every poll after
+    that, because every poll asks the same question.
+
+    The check is on both sides: the new ticket is exempt, and a real card that
+    genuinely has gone still says so.
+    """
+    c = Check("a ticket with no thread yet has not left the board")
+
+    flag = bert.Bert._flag_edited_underneath
+
+    # A ticket being started, against a board that of course does not hold it.
+    card = Warned()
+    flag(Editing(bert.NEW_TICKET, card), [])
+    c.equal(card.warnings, [], "starting a ticket warns about nothing")
+
+    # And with other cards in the payload, which is the real case.
+    card = Warned()
+    flag(Editing(bert.NEW_TICKET, card), [{"thread_id": "123", "name": "PROD: x"}])
+    c.equal(card.warnings, [], "nor when the board has other cards on it")
+
+    # The protection itself is untouched: a card that has really gone says so.
+    card = Warned()
+    flag(Editing("999", card), [{"thread_id": "123", "name": "PROD: x"}])
+    c.equal(len(card.warnings), 1,
+            "a real card that has gone still says it has left the board")
+    c.ok(any("left the board" in m for m in card.warnings),
+         "and says it in those words")
+
+    # An editor that has typed nothing yet has no base, and is left alone.
+    card = Warned(base={})
+    flag(Editing("999", card), [])
+    c.equal(card.warnings, [], "an editor with no base is not warned at all")
+
+    return c.report()
+
+
 CHECKS = (check_free_board, check_editor_holds, check_drag_still_holds,
           check_other_hold_reparks, check_stale_hold_dropped,
           check_render_keeps_your_place,
-          check_the_place_is_a_card_not_a_number)
+          check_the_place_is_a_card_not_a_number,
+          check_a_ticket_with_no_thread_has_not_left_the_board)

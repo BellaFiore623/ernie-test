@@ -3727,6 +3727,12 @@ class Bert(QMainWindow):
         return None
 
     def _flag_edited_underneath(self, incoming):
+        # A ticket being started has no thread yet, so it is not on the board
+        # and the poll can only ever answer that it is missing. Warning that
+        # it "has left the board" is both wrong and alarming -- it arrived
+        # within a poll of pressing + New Ticket, about a blank form.
+        if self.editing_card == NEW_TICKET:
+            return
         w = self._card_widget(self.editing_card)
         base = getattr(w, "_edit_base", None) if w else None
         if not base:
