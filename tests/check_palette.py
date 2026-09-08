@@ -699,13 +699,14 @@ def check_starting_a_ticket_is_not_editing_one() -> bool:
          "the collision dialog knows which case it is in")
     c.ok("Keep writing" in busy and "Keep editing" in busy,
          "and says keep writing rather than keep editing")
-    c.ok("Create it, then open" in busy,
+    c.ok("Create it, then" in busy,
          "offers to create it rather than save it")
     c.ok("would be lost" in busy,
          "and says plainly that discarding loses the whole thing")
 
     start = meth("Bert", "start_ticket")
-    c.ok("editor_is_busy(NEW_TICKET)" in start,
+    after = start.split("editor_is_busy(")[1][:100] if "editor_is_busy(" in start else ""
+    c.ok("NEW_TICKET" in after,
          "starting one goes through the same one-editor rule")
     c.ok("self.editing_card = NEW_TICKET" in start,
          "and holds the poll off, so the board is not redrawn over it")

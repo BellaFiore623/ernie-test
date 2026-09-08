@@ -16,10 +16,13 @@ the bottom of its band, while Bert had been showing it at the top since the
 moment it became real.
 """
 
+import ast
 import json
+import pathlib
 
 from support import Board, Check, FakeDiscord, GUILD, PARENT, iso
 
+import bert
 import ernie_extract as ex
 import ernie_load as load
 import ernie_outbox as outbox
@@ -170,7 +173,75 @@ def check_one_writer_decides_what_a_title_row_holds() -> bool:
     return c.report()
 
 
+def check_a_second_new_ticket_meets_the_one_editor_rule() -> bool:
+    """
+    Pressing + twice made two tickets, and nothing asked about the first.
+
+    One editor at a time, and the second click offers to finish the first --
+    but the guard let a card through when the one already open was the same
+    card, and NEW_TICKET is a sentinel rather than an identity, so a second +
+    matched it and walked straight past. Two placeholder cards, two open
+    editors, and one editing_card naming both: _card_widget answered with the
+    first while somebody typed into the second, so clicking Edit on a real
+    ticket offered to save a draft other than the one on screen.
+
+    The dialog for it already existed and could not be reached. It needs the
+    band named, because "a new ticket" alone does not tell the one already
+    open from the one being asked for.
+    """
+    c = Check("a second new ticket meets the one-editor rule")
+
+    tree = ast.parse(pathlib.Path(bert.__file__).read_text(encoding="utf-8"))
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+
+    def method(name):
+        return next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == name), None)
+
+    busy = method("editor_is_busy")
+    c.ok(busy is not None, "editor_is_busy is there")
+    if busy is None:
+        return c.report()
+
+    # The short-circuit that means "you are already editing this very card".
+    early = next((n for n in busy.body if isinstance(n, ast.If)
+                  and len(n.body) == 1 and isinstance(n.body[0], ast.Return)
+                  and getattr(n.body[0].value, "value", None) is False), None)
+    c.ok(early is not None, "it still lets the card already open through")
+    c.ok(early is not None
+         and any(isinstance(x, ast.Name) and x.id == "NEW_TICKET"
+                 for x in ast.walk(early.test)),
+         "but not the new-ticket sentinel, which is not an identity")
+
+    # The caller says what it is about to open, or the buttons cannot name it.
+    start = method("start_ticket")
+    call = next((n for n in ast.walk(start) if isinstance(n, ast.Call)
+                 and getattr(n.func, "attr", None) == "editor_is_busy"), None)
+    c.ok(call is not None, "start_ticket asks whether an editor is in the way")
+    c.ok(call is not None and (len(call.args) + len(call.keywords)) >= 2,
+         "and names what it would open, so both tickets can be told apart")
+
+    # Two tickets nobody has created yet is its own sentence.
+    both = [n for n in ast.walk(busy) if isinstance(n, ast.Assign)
+            and any(isinstance(x, ast.Name) and x.id == "NEW_TICKET"
+                    for x in ast.walk(n.value))
+            and any(isinstance(x, ast.Name) and x.id == "tid"
+                    for x in ast.walk(n.value))]
+    c.ok(both, "it works out whether both of them are uncreated")
+    if both:
+        name = getattr(both[0].targets[0], "id", None)
+        c.ok(any(isinstance(x, ast.Name) and x.id == name
+                 for n in ast.walk(busy) if isinstance(n, ast.IfExp)
+                 for x in ast.walk(n.test)),
+             "and lets that choose the words, so nothing says \"open\" "
+             "about a ticket there is nothing to open")
+
+    return c.report()
+
+
 CHECKS = (check_the_title_is_read_when_the_thread_is_made,
           check_a_new_ticket_lands_where_the_board_showed_it,
           check_the_first_band_ticket_still_gets_a_rank,
-          check_one_writer_decides_what_a_title_row_holds)
+          check_one_writer_decides_what_a_title_row_holds,
+          check_a_second_new_ticket_meets_the_one_editor_rule)

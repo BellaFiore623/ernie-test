@@ -411,6 +411,25 @@ a ticket with no home yet is the ordinary case rather than an exception.
   `is_dirty()` compares against the template, so pressing `+` and changing
   your mind costs no dialog.
 
+- **`NEW_TICKET` is a sentinel, not an identity.** `editor_is_busy` lets a card
+  through when the editor already open is that same card -- there is no
+  decision to put to anybody -- and every ticket being started shares the one
+  sentinel, so a second `+` matched it and walked straight past the one-editor
+  rule. Two placeholder cards, two open editors, and one `editing_card` naming
+  both: `_card_widget` answered with the first while somebody typed into the
+  second, so clicking Edit on a real ticket offered to save a draft other than
+  the one on the screen. The dialog for the collision already existed and
+  simply could not be reached.
+- **Two tickets nobody has created yet is its own sentence.** "Opening a new
+  ticket" reads as though there were something there to open, when the choice
+  is whether to start a second, so the wording turns on `another` and the verb
+  becomes *start*. `start_ticket` passes the band it is about to open one in --
+  "a new ticket in Medium" -- because every button here has to name both
+  tickets and "a new ticket" alone does not tell the one already open from the
+  one being asked for. A blank draft is still closed without asking and simply
+  moves to the band whose `+` was pressed: `is_dirty()` compares against the
+  template, so nothing was lost.
+
 ## The state channel
 
 So two people on two machines share one board without either hosting the

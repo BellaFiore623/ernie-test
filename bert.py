@@ -4167,7 +4167,7 @@ class Bert(QMainWindow):
             QMessageBox.warning(self, "Couldn't undo", str(e))
         self.refresh()
 
-    def editor_is_busy(self, tid):
+    def editor_is_busy(self, tid, going=None):
         """True if another card's editor is in the way and stays there.
 
         One at a time: two open editors mean two unsaved drafts, and a
@@ -4181,7 +4181,15 @@ class Bert(QMainWindow):
         put to anybody.
         """
         busy = self.editing_card
-        if not busy or busy == tid:
+        # NEW_TICKET is a sentinel, not an identity: two tickets being started
+        # are two different tickets. Letting it match itself here meant a
+        # second + walked straight past the one-editor rule -- two placeholder
+        # cards, two open editors, and one editing_card naming both, so
+        # _card_widget answered with the first while somebody typed into the
+        # second. Everything that asks "which card is being edited" then had
+        # the wrong one: clicking Edit on a real ticket offered to save a draft
+        # other than the one on the screen.
+        if not busy or (busy == tid and tid != NEW_TICKET):
             return False
         w = self._card_widget(busy)
         if w is None or not getattr(w, "editing", False):
@@ -4193,7 +4201,7 @@ class Bert(QMainWindow):
             return False
 
         self.reveal(busy)
-        going = self._short_name(tid)
+        going = going or self._short_name(tid)
         held = w.data.get("name") or busy
         if busy == NEW_TICKET:
             held = w.f_title.text().strip() or "an untitled ticket"
@@ -4203,13 +4211,17 @@ class Bert(QMainWindow):
         # wrong words, and discarding loses the whole thing rather than an
         # edit to something that will still be there.
         starting = busy == NEW_TICKET
+        # Both of them being tickets nobody has created yet needs its own
+        # wording: "opening" one reads as though there were something there to
+        # open, when what is being offered is starting a second.
+        another = starting and tid == NEW_TICKET
         box = QMessageBox(self)
         if starting:
             box.setWindowTitle("A ticket you haven't created yet")
             box.setText(f"You're partway through starting a ticket:\n\n{held}")
             box.setInformativeText(
-                f"Opening {going} will close it, and nothing has been created "
-                f"yet -- it would be lost.")
+                f"{'Starting' if another else 'Opening'} {going} will close "
+                f"it, and nothing has been created yet -- it would be lost.")
         else:
             box.setWindowTitle("Unsaved changes on another ticket")
             box.setText(f"You have unsaved changes on:\n\n{held}")
@@ -4217,11 +4229,12 @@ class Bert(QMainWindow):
         # Each button says what happens to both tickets. "this ticket" was
         # the one word that could not be used here: the ticket being closed
         # is not the one just clicked on.
+        verb = "start" if another else "open"
         save = box.addButton(
-            f"Create it, then open {going}" if starting
+            f"Create it, then {verb} {going}" if starting
             else f"Save and open {going}", QMessageBox.AcceptRole)
         drop = box.addButton(
-            f"Discard it and open {going}" if starting
+            f"Discard it and {verb} {going}" if starting
             else f"Discard and open {going}", QMessageBox.DestructiveRole)
         stay = box.addButton("Keep writing" if starting else "Keep editing",
                              QMessageBox.RejectRole)
@@ -4248,7 +4261,11 @@ class Bert(QMainWindow):
         """
         if not self._guard():
             return
-        if self.editor_is_busy(NEW_TICKET):
+        # Named, because the dialog has to say which of two tickets each button
+        # acts on, and "a new ticket" alone does not tell the one already open
+        # from the one being asked for.
+        if self.editor_is_busy(
+                NEW_TICKET, f"a new ticket in {BAND_LABEL[priority]}"):
             return
 
         today = datetime.now(timezone.utc).date()
