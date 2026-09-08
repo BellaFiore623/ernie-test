@@ -180,6 +180,16 @@ activity feed, undo, and the outbox.
   it take its own `sizeHint`, which is small -- 432px, cap or no cap.
   `_feed_scale()` measures against the capped width too, or the line would be
   sized for room the row is never given.
+- **Each feed row carries a hairline under it**, in `T.LINE`, so an entry and
+  its buttons read as one row. `FEED_ROW_MAX_W` caps how far apart the two
+  ends can get; the rule closes the rest, and it was still not obvious which
+  Undo went with which line without it. Every row has one, not only the ones
+  that open -- a rule on some entries and not others groups them wrongly.
+  `FeedRow.paintEvent` draws it rather than the layout holding a separator
+  widget: `_fit_feed` walks every widget in `feed_lay`, measures it, and holds
+  it to a row height, so a separator would have to be excluded from all of
+  that and from every count the panel height is worked out from. A line costs
+  nothing in that accounting.
 - **In a feed row the text is what gives way, never the controls.** An
   unwrapped `QLabel` cannot be made narrower than its text, so the row's
   minimum width was the whole line plus every fixed column -- 1644px inside a

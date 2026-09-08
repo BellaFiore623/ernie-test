@@ -893,6 +893,29 @@ class ClickableWidget(QWidget):
         super().mousePressEvent(e)
 
 
+class FeedRow(ClickableWidget):
+    """One line of the activity feed, with a hairline under it.
+
+    The status chip and Undo are right-aligned in fixed columns, which is what
+    makes them a column you can run down and click -- but the line they belong
+    to ends a long way to the left of them, and it was not clear which button
+    went with which entry. FEED_ROW_MAX_W caps how far apart they can get; the
+    rule closes the rest of the distance by making the pair read as one row.
+
+    Drawn, not added to the layout. A separator widget would be another item
+    for _fit_feed to walk, measure, and hold to a row height, and it would
+    have to be kept out of every count the panel height is worked out from.
+    A line costs nothing in that accounting.
+    """
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        p = QPainter(self)
+        p.setPen(QColor(T.LINE))
+        y = self.height() - 1
+        p.drawLine(0, y, self.width(), y)
+
+
 class ClickableLabel(QLabel):
     """Double-click jumps straight into edit mode on that field.
 
@@ -4221,7 +4244,11 @@ class Bert(QMainWindow):
             # affordance teaches people to click rows that never change.
             more = short != whole
 
-            row = ClickableWidget() if more else QWidget()
+            # Every row, whether or not there is more of it to read: the rule
+            # is what groups a line with its buttons, and a feed where only
+            # some entries had one would group them wrongly. Only a row with
+            # something behind it gets the cursor and the click, below.
+            row = FeedRow()
             h = QHBoxLayout(row)
             h.setContentsMargins(0, 0, 0, 0)
             h.setSpacing(8)

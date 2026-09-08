@@ -864,6 +864,45 @@ def check_an_open_row_keeps_the_spacing() -> bool:
     return c.report()
 
 
+def check_a_feed_row_reads_as_a_row() -> bool:
+    """A rule under each entry ties its line to its buttons.
+
+    The status chip and Undo are right-aligned in fixed columns, and the line
+    they belong to ends a long way to their left -- FEED_ROW_MAX_W caps how
+    far that can get, and it was still not clear which button went with which
+    entry. The rule closes the rest of the distance.
+
+    Drawn rather than added to the layout, because a separator widget would be
+    another item for _fit_feed to walk, measure and hold to a row height, and
+    would have to be kept out of every count the panel height comes from.
+    """
+    c = Check("a feed row reads as a row")
+
+    src = _bert_src()
+    tree = ast.parse(src)
+    cls = next((n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "FeedRow"), None)
+    c.ok(cls is not None, "there is a row class of its own")
+    body = (ast.get_source_segment(src, cls) or "") if cls else ""
+    c.ok("paintEvent" in body, "which paints the rule itself")
+    c.ok("T.LINE" in body, "in the palette's hairline, not a hex")
+    c.ok("drawLine" in body, "as a line rather than a border on a stylesheet")
+
+    # Every row, or the grouping is wrong for the ones without it.
+    render = ast.get_source_segment(src, _method("_render_feed")) or ""
+    c.ok("row = FeedRow()" in render, "and every entry gets one")
+    c.ok("ClickableWidget() if more else QWidget()" not in render,
+         "rather than only the ones you can open")
+
+    # It must not have become a layout item -- _fit_feed walks every widget in
+    # feed_lay and holds it to a row height.
+    c.ok("feed_lay.addWidget(row)" in render,
+         "rows are still what goes into the layout")
+    c.ok("addWidget(QFrame" not in render and "separator" not in render.lower(),
+         "and no separator widget was added beside them")
+    return c.report()
+
+
 CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
@@ -886,4 +925,5 @@ CHECKS = (check_a_work_item_added, check_a_work_item_removed,
           check_the_feed_can_be_resized,
           check_a_cards_corner_survives_a_long_client,
           check_a_card_cuts_its_client_to_the_room_it_has,
-          check_an_open_row_keeps_the_spacing)
+          check_an_open_row_keeps_the_spacing,
+          check_a_feed_row_reads_as_a_row)
