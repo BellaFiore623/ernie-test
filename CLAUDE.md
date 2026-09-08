@@ -581,6 +581,18 @@ amber on amber in High. `tests/check_palette.py` reads this off the source
 rather than building a `Band`: a widget built with no QApplication does not
 raise, it aborts the process, and the checks deliberately never make one.
 
+**Hide a widget before unparenting it.** The teardowns unparent before
+`deleteLater()` on purpose -- one still parented to the panel keeps painting at
+the geometry it had, and a rebuild mid-drag left the old rows on screen under
+the new ones. But `setParent(None)` on a *visible* widget makes it a visible
+**top-level window**, and `deleteLater()` only queues the deletion, so it stays
+one until the event loop catches up. Rebuilding the feed threw away 151 rows
+and put 151 blank windows on the desktop for ~1.2s each, titled `python3`
+because that is the name Qt takes for the application -- counted with
+`EnumWindows` during a real `./run.sh test bert`: 152 new windows, 151 of them
+that, all from Bert's own pid. `w.hide()` first, at every one of those sites;
+`tests/check_palette.py` holds the line above each of them.
+
 **No colour literals in Bert.** Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 both `LIGHT` and `DARK`. A hex typed into a stylesheet works in one theme and

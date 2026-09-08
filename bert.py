@@ -1331,6 +1331,7 @@ class WorkBar(QWidget):
             w = self.flow.takeAt(0).widget()
             if w is not None:
                 # Unparent before deleteLater.
+                w.hide()
                 w.setParent(None)
                 w.deleteLater()
         for row in self._rows:
@@ -1444,6 +1445,7 @@ class Card(QFrame):
 
         def drop(w):
             # Unparent before deleteLater.
+            w.hide()
             w.setParent(None)
             w.deleteLater()
 
@@ -1796,6 +1798,7 @@ class Card(QFrame):
         while self._warn_label.layout().count():
             w = self._warn_label.layout().takeAt(0).widget()
             if w is not None:
+                w.hide()
                 w.setParent(None)
                 w.deleteLater()
         self._warn_label.layout().addWidget(warning_row(msg, T.AMBER_FG))
@@ -2070,10 +2073,18 @@ class Band(QWidget):
             it = self.lay.takeAt(0)
             w = it.widget()
             if w is not None and w not in (self.marker, self.empty_hint):
-                # Unparent first. deleteLater() only queues the deletion, and
-                # a card that is still a child of the panel keeps painting at
-                # the geometry it had -- so a rebuild mid-drag leaves the old
-                # rows on screen underneath the new ones.
+                # Hide, then unparent. deleteLater() only queues the deletion,
+                # and a card still parented to the panel keeps painting at the
+                # geometry it had -- so a rebuild mid-drag left the old rows on
+                # screen underneath the new ones.
+                #
+                # But setParent(None) on a *visible* widget makes it a visible
+                # top-level window, and it stays one until the event loop gets
+                # round to deleting it. Rebuilding the feed threw away 151 rows
+                # and put 151 blank windows on the desktop for 1.2s each,
+                # titled "python3" because that is what Qt calls the
+                # application. Hiding first costs nothing and is the whole fix.
+                w.hide()
                 w.setParent(None)
                 w.deleteLater()
         # takeAt() above pulled the marker out along with the cards. Leaving it
@@ -2541,6 +2552,7 @@ class Rail(QWidget):
             w = it.widget()
             if w is not None and w is not self.marker:
                 # Unparent first -- see Band.set_cards.
+                w.hide()
                 w.setParent(None)
                 w.deleteLater()
         self.marker.hide()
@@ -4145,6 +4157,7 @@ class Bert(QMainWindow):
         while self.feed_lay.count():
             w = self.feed_lay.takeAt(0).widget()
             if w is not None:
+                w.hide()
                 w.setParent(None)
                 w.deleteLater()
 

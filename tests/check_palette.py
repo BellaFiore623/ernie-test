@@ -534,6 +534,33 @@ def check_a_band_leaves_no_stray_windows() -> bool:
     return c.report()
 
 
+def check_nothing_is_unparented_while_it_is_visible() -> bool:
+    """setParent(None) on a visible widget makes it a visible window.
+
+    The teardown here unparents before deleteLater on purpose -- a widget
+    still parented to the panel keeps painting at the geometry it had, and a
+    rebuild mid-drag left the old rows on screen under the new ones. But
+    deleteLater only queues the deletion, so between the unparenting and the
+    event loop catching up, every one of those widgets is a top-level window.
+
+    Rebuilding the feed threw away 151 rows and put 151 blank windows on the
+    desktop for about 1.2 seconds each, titled "python3" because that is the
+    name Qt takes for the application. Counted with EnumWindows during a real
+    ./run.sh test bert: 152 new windows, 151 of them that. Hiding first is the
+    whole fix, and it has to hold at every one of these sites.
+    """
+    c = Check("nothing is unparented while it is still visible")
+
+    lines = pathlib.Path(bert.__file__).read_text(encoding="utf-8").splitlines()
+    sites = [n for n, l in enumerate(lines) if l.strip() == "w.setParent(None)"]
+    c.ok(sites, f"there are still teardown sites to check ({len(sites)})")
+    for n in sites:
+        before = lines[n - 1].strip()
+        c.ok(before == "w.hide()",
+             f"bert.py:{n + 1} hides before unparenting  (line above is {before!r})")
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
@@ -541,4 +568,5 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_the_other_skins, check_choosing_a_theme,
           check_the_queues_the_board_can_draw,
           check_only_the_header_is_tinted,
-          check_a_band_leaves_no_stray_windows)
+          check_a_band_leaves_no_stray_windows,
+          check_nothing_is_unparented_while_it_is_visible)
