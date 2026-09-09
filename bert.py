@@ -4246,7 +4246,7 @@ class Bert(QMainWindow):
             QMessageBox.warning(self, "Couldn't undo", str(e))
         self.refresh()
 
-    def editor_is_busy(self, tid, going=None):
+    def editor_is_busy(self, tid):
         """True if another card's editor is in the way and stays there.
 
         One at a time: two open editors mean two unsaved drafts, and a
@@ -4280,7 +4280,13 @@ class Bert(QMainWindow):
             return False
 
         self.reveal(busy)
-        going = going or self._short_name(tid)
+        # Not "a new ticket in Medium": the band was decided by which + was
+        # pressed, so saying it again on all three buttons is the longest
+        # thing in the box and the part that was never in question. What the
+        # buttons have to keep apart is the two tickets, and "it" against
+        # "a new ticket" already does that -- the one being closed is named in
+        # the body above them.
+        going = self._short_name(tid)
         held = w.data.get("name") or busy
         if busy == NEW_TICKET:
             held = w.f_title.text().strip() or "an untitled ticket"
@@ -4340,11 +4346,7 @@ class Bert(QMainWindow):
         """
         if not self._guard():
             return
-        # Named, because the dialog has to say which of two tickets each button
-        # acts on, and "a new ticket" alone does not tell the one already open
-        # from the one being asked for.
-        if self.editor_is_busy(
-                NEW_TICKET, f"a new ticket in {BAND_LABEL[priority]}"):
+        if self.editor_is_busy(NEW_TICKET):
             return
 
         today = datetime.now(timezone.utc).date()

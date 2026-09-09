@@ -219,8 +219,24 @@ def check_a_second_new_ticket_meets_the_one_editor_rule() -> bool:
     call = next((n for n in ast.walk(start) if isinstance(n, ast.Call)
                  and getattr(n.func, "attr", None) == "editor_is_busy"), None)
     c.ok(call is not None, "start_ticket asks whether an editor is in the way")
-    c.ok(call is not None and (len(call.args) + len(call.keywords)) >= 2,
-         "and names what it would open, so both tickets can be told apart")
+    c.ok(call is not None and any(isinstance(a, ast.Name) and a.id == "NEW_TICKET"
+                                  for a in call.args),
+         "under the sentinel, which is what makes the guard fire")
+    # And nothing else. The band was decided by which + was pressed, so naming
+    # it again was the longest thing in the box and the part never in
+    # question: "Save and open a new ticket in Needs Attention" carried 22
+    # characters of answer to a question nobody was asking, three times over.
+    c.equal((len(call.args) + len(call.keywords)) if call else 0, 1,
+            "and says nothing about which band it would land in")
+
+    # What the buttons do have to keep apart is the two tickets, and the one
+    # being closed is named in the body above them, so "it" against "a new
+    # ticket" is enough.
+    class NoCards:
+        cards = []
+
+    c.equal(bert.Bert._short_name(NoCards(), bert.NEW_TICKET), "a new ticket",
+            "a ticket with no thread is named the same way everywhere")
 
     # Two tickets nobody has created yet is its own sentence.
     both = [n for n in ast.walk(busy) if isinstance(n, ast.Assign)

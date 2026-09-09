@@ -461,12 +461,17 @@ a ticket with no home yet is the ordinary case rather than an exception.
 - **Two tickets nobody has created yet is its own sentence.** "Opening a new
   ticket" reads as though there were something there to open, when the choice
   is whether to start a second, so the wording turns on `another` and the verb
-  becomes *start*. `start_ticket` passes the band it is about to open one in --
-  "a new ticket in Medium" -- because every button here has to name both
-  tickets and "a new ticket" alone does not tell the one already open from the
-  one being asked for. A blank draft is still closed without asking and simply
+  becomes *start*. A blank draft is still closed without asking and simply
   moves to the band whose `+` was pressed: `is_dirty()` compares against the
   template, so nothing was lost.
+- **The dialog does not name the band.** It said "a new ticket in Needs
+  Attention" on all three buttons, which was the longest thing in the box and
+  the one part never in question -- the band was decided by which `+` was
+  pressed. What the buttons have to keep apart is the two *tickets*, and the
+  one being closed is named in the body above them, so "it" against "a new
+  ticket" carries it. `editor_is_busy(tid)` takes no label: `_short_name()`
+  answers "a new ticket" for the sentinel already, so there is one place a
+  ticket is named rather than two.
 
 ## The state channel
 
