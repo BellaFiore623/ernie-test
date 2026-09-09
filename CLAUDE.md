@@ -464,6 +464,14 @@ a ticket with no home yet is the ordinary case rather than an exception.
   becomes *start*. A blank draft is still closed without asking and simply
   moves to the band whose `+` was pressed: `is_dirty()` compares against the
   template, so nothing was lost.
+- **The box says each thing once.** The title said "Unsaved changes on another
+  ticket", the body said "You have unsaved changes on:" under it, and the line
+  below said the editor would close -- three sentences carrying one fact, above
+  buttons that then said it a fourth time. It is a title, the ticket's name,
+  and what the button will do: *Unsaved changes* / the name / "Opening a new
+  ticket will close it." Nothing is lost by dropping "on another ticket",
+  because the ticket named is the one being closed and it is visibly not the
+  one just clicked.
 - **The dialog does not name the band.** It said "a new ticket in Needs
   Attention" on all three buttons, which was the longest thing in the box and
   the one part never in question -- the band was decided by which `+` was

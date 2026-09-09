@@ -4308,9 +4308,14 @@ class Bert(QMainWindow):
                 f"{'Starting' if another else 'Opening'} {going} will close "
                 f"it, and nothing has been created yet -- it would be lost.")
         else:
-            box.setWindowTitle("Unsaved changes on another ticket")
-            box.setText(f"You have unsaved changes on:\n\n{held}")
-            box.setInformativeText(f"Opening {going} will close that editor.")
+            # The title says what happened, the text says which ticket, and
+            # the line under it says what the button will do. Saying
+            # "unsaved changes" in the title and again in the body, and
+            # "that editor" for a thing already named twice above, was
+            # three sentences to carry one fact.
+            box.setWindowTitle("Unsaved changes")
+            box.setText(held)
+            box.setInformativeText(f"Opening {going} will close it.")
         # Each button says what happens to both tickets. "this ticket" was
         # the one word that could not be used here: the ticket being closed
         # is not the one just clicked on.
