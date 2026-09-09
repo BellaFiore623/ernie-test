@@ -83,7 +83,7 @@ def clip(value: str) -> str:
     return value if len(value) <= FIELD_MAX else value[:FIELD_MAX - 1] + "\u2026"
 
 
-def render(card: ernie_state.Card) -> dict:
+def render(card: ernie_state.Card, facts: dict | None = None) -> dict:
     """The status, as an embed.
 
     An embed rather than a message of text, for one thing text cannot do: the
@@ -132,6 +132,21 @@ def render(card: ernie_state.Card) -> dict:
             {"name": "Done", "inline": True,
              "value": clip("\n".join("~~" + i.body + "~~" for i in done))})
 
+    # What the thread is about, for the two thirds of threads that have a
+    # ticket behind them and the third that do not. Inline, so they pack into
+    # a row rather than running down the message, and after the work: what is
+    # left to do is the question being asked, and this is the answer to
+    # "which job is this".
+    facts = facts or {}
+    for name, value in (("Equipment", ", ".join(facts.get("equipment", []))),
+                        ("Ticket", ", ".join(facts.get("tickets", []))),
+                        ("Client CR", facts.get("client_cr") or ""),
+                        ("Assignee", ", ".join(
+                            dict.fromkeys(facts.get("assignees", []))))):
+        if value:
+            embed["fields"].append(
+                {"name": name, "inline": True, "value": clip(value)})
+
     if card.updated_at:
         # Its own field rather than the footer: Discord renders <t:...:R> in a
         # description or a field value and *not* in footer text, and the
@@ -144,6 +159,50 @@ def render(card: ernie_state.Card) -> dict:
             {"name": "Last updated", "inline": False, "value": value})
 
     return embed
+
+
+def ticket_facts(con) -> dict:
+    """What Ernie knows about each thread besides its work, by thread_id.
+
+    Only 230 of 889 production threads carry a Build Request embed -- those
+    come from Python-Interface-Bot and Ernie has never posted one, nor should
+    it: an embed that looks like a ticket with no PIP key behind it is worse
+    than no embed. But the facts it parses out of the ones that exist can go
+    in the status message, which *is* on every thread, so a reader has one
+    place to look whether or not a ticket was ever raised.
+
+    Nothing is invented. A thread with none of this gets none of these lines.
+    """
+    out = {}
+    for r in con.execute(
+            """SELECT thread_id, pip_key, kind, assignee, client_cr
+               FROM tickets ORDER BY created_at"""):
+        f = out.setdefault(r["thread_id"], {})
+        f.setdefault("tickets", []).append(
+            f"{r['pip_key']} ({r['kind']})" if r["kind"] else r["pip_key"])
+        if r["assignee"]:
+            f.setdefault("assignees", []).append(r["assignee"])
+        if r["client_cr"]:
+            f["client_cr"] = r["client_cr"]
+
+    # The readable form, not the PIP key the ticket carries: EReel-1085 is
+    # what the job is called out loud. Pending ones are left out -- a "####"
+    # is the parser saying it could not read a number, and repeating that in
+    # every thread is noise rather than news.
+    for r in con.execute(
+            "SELECT thread_id, raw FROM thread_equipment "
+            "WHERE state = 'resolved' ORDER BY raw"):
+        out.setdefault(r["thread_id"], {}).setdefault(
+            "equipment", []).append(r["raw"])
+
+    # A client CR is a key; the roster knows what it is called.
+    names = {r["client_id"]: (r["short_name"] or r["name"]) for r in
+             con.execute("SELECT client_id, name, short_name FROM clients")}
+    for f in out.values():
+        cr = f.get("client_cr")
+        if cr and names.get(cr):
+            f["client_cr"] = f"{cr} ({names[cr]})"
+    return out
 
 
 def as_body(embed: dict) -> str:
@@ -188,8 +247,9 @@ def publish(d: Discord, con, db: str) -> dict:
     counts = {"posted": 0, "edited": 0, "failed": 0}
     have = stored(con)
 
+    facts = ticket_facts(con)
     for card in wanted(con, ernie_state.load_board(db)):
-        embed = render(card)
+        embed = render(card, facts.get(card.thread_id))
         body = as_body(embed)
         was = have.get(card.thread_id)
         if was is not None and was["body"] == body:
@@ -281,11 +341,12 @@ def main() -> None:
     if a.dry_run:
         cards = ernie_state.load_board(a.db)
         keep = wanted(con, cards)
+        facts = ticket_facts(con)
         print(f"{len(keep)} of {len(cards)} cards would carry a status message"
               f" ({len(cards) - len(keep)} inherited or archived)\n")
         for card in keep:
             print(f"-- {card.thread_id}")
-            e = render(card)
+            e = render(card, facts.get(card.thread_id))
             print(f"   [{e['color']:#08x}] {e['title']}")
             if e.get("description"):
                 print(f"   {e['description']}")

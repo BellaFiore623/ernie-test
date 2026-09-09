@@ -566,6 +566,25 @@ has been done, when it last moved and who moved it.
   there would lose the self-updating clock that keeps the stored body still.
 - **`thread_status.body` is the embed serialised with sorted keys**, so "would
   this read differently" survives the dict being built in another order.
+- **It carries what the thread is *about*, because most threads say it
+  nowhere else.** The Build Request and Return embeds come from
+  `Python-Interface-Bot`, and only **230 of 889** threads have one -- 18 of the
+  50 open cards have none at all, and of those 18 not one has a parsed
+  proposal and exactly one has any equipment recorded. Ernie has never posted
+  such an embed and must not start: one that looks like a ticket with no PIP
+  key behind it is worse than none. But the facts parsed *out* of the ones
+  that exist belong here, because this message is on every thread -- so there
+  is one place to look whether or not a ticket was ever raised. Equipment,
+  ticket, client CR, assignee, each **only when known**: a thread with none of
+  it draws none of those lines, because a format kept at the cost of the truth
+  is not worth keeping.
+- **The readable form, not the key.** Equipment is `thread_equipment.raw`
+  (`EReel-1060`), which is what the job is called out loud, rather than the
+  `equipment_master` PIP key the ticket carries; and a client CR is named off
+  the roster -- `PIP-7468 (Clinton MS)` -- falling back to the bare key where
+  Jira has never run, which is production today. A `####` number is **left
+  out**: it is the parser saying it could not read one, which is worth amber
+  on a card and is noise repeated in every thread.
 - **Not the ticket's name.** That is the thread's own name, shown directly
   above the message in every client. It carries the date and the client, which
   is exactly why repeating it puts the same string on screen twice.

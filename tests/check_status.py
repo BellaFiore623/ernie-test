@@ -355,6 +355,114 @@ def check_the_band_colours_match_the_board() -> bool:
     return c.report()
 
 
+def a_ticket(b, tid, pip="PIP-9467", kind="build", assignee="Brett Buttenfield",
+             client_cr="PIP-7468"):
+    # The embed it was read off has to exist: tickets.message_id references it,
+    # which is what keeps a ticket tied to the message that announced it.
+    b.con.execute(
+        """INSERT INTO messages (message_id, thread_id, author_id, author_name,
+                                 is_bot, created_at, first_seen_at)
+           VALUES (?,?,?,?,1,?,?)""",
+        (f"m-{pip}", tid, "bot-1", "Python-Interface-Bot", iso(-60), iso(-60)))
+    b.con.execute(
+        """INSERT INTO tickets (pip_key, thread_id, message_id, kind,
+                                created_at, assignee, client_cr)
+           VALUES (?,?,?,?,?,?,?)""",
+        (pip, tid, f"m-{pip}", kind, iso(-60), assignee, client_cr))
+    b.con.commit()
+
+
+def check_it_carries_what_the_thread_is_about() -> bool:
+    """
+    Only 230 of 889 threads have a Build Request embed to read this off.
+
+    Those come from Python-Interface-Bot, and Ernie has never posted one nor
+    should it: an embed that looks like a ticket with no PIP key behind it is
+    worse than no embed. But the facts parsed out of the ones that exist can
+    go here, because this message *is* on every thread -- so there is one
+    place to look whether or not a ticket was ever raised.
+    """
+    c = Check("the status carries what the thread is about")
+
+    with Board() as b:
+        tid = a_card(b)
+        a_ticket(b, tid)
+        b.con.execute(
+            """INSERT INTO thread_equipment (thread_id, eq_type, eq_number,
+                                             state, raw)
+               VALUES (?,?,?,?,?)""", (tid, "EReel", "1060", "resolved",
+                                       "EReel-1060"))
+        b.con.execute(
+            """INSERT INTO clients (client_id, name, name_key, short_name,
+                                    offered, synced_at)
+               VALUES (?,?,?,?,1,?)""",
+            ("PIP-7468", "Clinton, MS: PURCHASE", "clinton ms", "Clinton MS",
+             iso(-60)))
+        b.con.commit()
+
+        facts = st.ticket_facts(b.con)
+        card = card_for(b, tid)
+        got = {f["name"]: f["value"] for f in st.render(card, facts[tid])["fields"]}
+
+        c.equal(got.get("Equipment"), "EReel-1060",
+                "the equipment, in the form it is called out loud")
+        c.equal(got.get("Ticket"), "PIP-9467 (build)",
+                "the ticket, with what kind it is")
+        c.equal(got.get("Client CR"), "PIP-7468 (Clinton MS)",
+                "the client CR, named off the roster rather than left a key")
+        c.equal(got.get("Assignee"), "Brett Buttenfield", "and who has it")
+
+    return c.report()
+
+
+def check_nothing_is_invented_for_a_thread_without_a_ticket() -> bool:
+    """
+    Eighteen of fifty open cards have no ticket behind them at all.
+
+    Measured on those eighteen: none has a parsed proposal and one has any
+    equipment. There is nothing to surface, so the message says nothing --
+    empty fields would be a format kept at the cost of the truth.
+    """
+    c = Check("nothing is invented for a thread with no ticket")
+
+    with Board() as b:
+        tid = a_card(b)
+        work(b, tid, "swap the drum")
+        facts = st.ticket_facts(b.con)
+        c.equal(facts.get(tid), None, "no facts are found")
+        names = [f["name"] for f in st.render(card_for(b, tid),
+                                              facts.get(tid))["fields"]]
+        for absent in ("Equipment", "Ticket", "Client CR", "Assignee"):
+            c.ok(absent not in names, f"and no {absent} line is drawn")
+        c.ok("To do" in names, "the work is still there, which is the point")
+
+    return c.report()
+
+
+def check_a_pending_equipment_number_is_left_out() -> bool:
+    """
+    "####" is the parser saying it could not read a number.
+
+    It is a pending state rather than an error, and worth amber on the card --
+    but repeating it in every thread is noise rather than news.
+    """
+    c = Check("an unreadable equipment number is left out")
+
+    with Board() as b:
+        tid = a_card(b)
+        b.con.execute(
+            """INSERT INTO thread_equipment (thread_id, eq_type, eq_number,
+                                             state, raw)
+               VALUES (?,?,?,?,?)""", (tid, "ODE", "####", "pending",
+                                       "ODE-####"))
+        b.con.commit()
+        facts = st.ticket_facts(b.con)
+        c.ok("equipment" not in (facts.get(tid) or {}),
+             "a pending number is not offered as equipment")
+
+    return c.report()
+
+
 CHECKS = (check_the_message_says_what_is_left,
           check_an_empty_ticket_says_so,
           check_a_closed_ticket_does_not_say_it_twice,
@@ -363,4 +471,7 @@ CHECKS = (check_the_message_says_what_is_left,
           check_it_posts_once_then_edits,
           check_an_inherited_thread_is_never_posted_to,
           check_pinning_is_tried_again,
-          check_the_band_colours_match_the_board)
+          check_the_band_colours_match_the_board,
+          check_it_carries_what_the_thread_is_about,
+          check_nothing_is_invented_for_a_thread_without_a_ticket,
+          check_a_pending_equipment_number_is_left_out)
