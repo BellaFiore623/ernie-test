@@ -556,12 +556,18 @@ has been done, when it last moved and who moved it.
 - **It is pinned, and pinning is retried.** "The first message" is what was
   wanted, and a bot cannot be the first message of a thread somebody else
   opened -- a pin is one click from the thread header, which is the same thing
-  to a reader. Pinning needs **Manage Messages**, which the sandbox bot did not
-  have: measured on the first real run, all 29 messages posted and all 29 pins
-  came back 403. So it is never fatal -- the status is there either way -- and
-  `thread_status.pinned` records it so every later pass tries the ones still
-  outstanding. Attempted only once at posting time, granting the permission
-  afterwards would have changed nothing.
+  to a reader. Pinning needs the bot's own **Pin Messages** permission, and
+  **not Manage Messages** -- worth writing down, because every symptom points
+  at Manage Messages and the bot already had it: bit 13 set in its effective
+  permissions, no overwrite on the channel or its category, the thread neither
+  archived nor locked, and Discord still answering `50013 Missing Permissions`
+  in the thread *and* in the parent channel, on both the old and new pin
+  endpoints. It is its own toggle on the role. So pinning is never fatal --
+  the status is there either way -- and `thread_status.pinned` records it so
+  every later pass tries the ones still outstanding. Attempted only once at
+  posting time, granting the permission afterwards would have changed nothing;
+  as it went, the grant plus one more pass pinned all five with no reposting
+  and no editing, confirmed against Discord's own pin list.
 - **Every thread gets one, work items or not.** A third of open tickets have
   none, and the trigger being "a card exists" is what puts the message near the
   top of the thread rather than fifty replies down. With nothing to list it

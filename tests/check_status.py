@@ -286,12 +286,16 @@ def check_an_inherited_thread_is_never_posted_to() -> bool:
 
 def check_pinning_is_tried_again() -> bool:
     """
-    Pinning needs Manage Messages, and the bot may not have it.
+    The bot may not be allowed to pin yet.
 
     Measured against the sandbox on the first real run: all 29 messages posted
     and all 29 pins came back 403. That is survivable -- the status is there
     either way -- but attempted only once at posting time it would also be
-    permanent, so granting the permission afterwards would change nothing.
+    permanent. Granting the permission and running one more pass was the whole
+    fix, which only works because the pin is retried.
+
+    The permission is Pin Messages, its own toggle on the role, not Manage
+    Messages: the bot already had that one and Discord still refused.
     """
     c = Check("a pin that was refused is tried again")
 

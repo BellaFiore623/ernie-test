@@ -231,11 +231,19 @@ def pin_pending(d: Discord, con) -> int:
     message of a thread somebody else opened -- a pin is one click from the
     thread header, which is the same thing to a reader.
 
-    It is tried on every pass rather than once at posting time, because it
-    needs Manage Messages and the bot may not have it: measured against the
-    sandbox, all 29 pins came back 403 while every message posted fine. Left
-    at one attempt, granting the permission afterwards would have changed
-    nothing. Never fatal -- a thread at the 50-pin cap still gets its status.
+    It is tried on every pass rather than once at posting time, because the
+    bot may not be allowed to pin yet: measured against the sandbox, all 29
+    pins came back 403 while every message posted fine. Left at one attempt,
+    granting the permission afterwards would have changed nothing -- as it
+    happened, granting it and running one more pass was the whole fix.
+
+    The permission is **Pin Messages**, its own toggle on the bot's role, and
+    *not* Manage Messages: the bot already had that one -- bit 13 was set in
+    its effective permissions, with no overwrite on the channel or its
+    category -- and Discord still answered 50013. Worth knowing before
+    debugging this again, because every symptom points at Manage Messages.
+
+    Never fatal: a thread at the 50-pin cap still gets its status.
     """
     done = 0
     for r in con.execute("SELECT * FROM thread_status WHERE pinned = 0"):
