@@ -575,19 +575,13 @@ def stats(months: int = 6, ageing: int = 5):
         # 4. Open tickets with no build or return raised against them. Only
         #    230 of 889 threads ever get one, so this is invisible today and
         #    is the one number here somebody can act on directly.
-        open_now = con.execute(
-            "SELECT COUNT(*) FROM cards WHERE completed_at IS NULL"
-        ).fetchone()[0]
-        without = con.execute(
-            """SELECT COUNT(*) FROM cards c
-               WHERE c.completed_at IS NULL
-                 AND NOT EXISTS (SELECT 1 FROM tickets t
-                                 WHERE t.thread_id = c.thread_id)"""
-        ).fetchone()[0]
-
+        # There was a fourth: open tickets with no Build Request or Return
+        # raised against them. It was dropped after Julian read the panel --
+        # a figure nobody acts on is furniture, and it is the same standard
+        # the other three earn their place by. The query goes with it rather
+        # than being left to run every refresh for a field nothing reads.
         return {"completed_by_month": by_month, "ageing": oldest,
-                "time_to_complete": took,
-                "no_ticket": {"open": open_now, "without": without}}
+                "time_to_complete": took}
     finally:
         con.close()
 

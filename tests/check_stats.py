@@ -1,10 +1,12 @@
 """
 The board over time, which the board itself cannot say.
 
-Four figures, and each earns its place by answering something no other view
-does: whether closing is keeping up, which tickets have been open since April,
-how long one takes end to end, and how many have no build or return raised
-against them at all.
+Each figure earns its place by answering something no other view does:
+whether closing is keeping up, which tickets have been open since April, and
+how long one takes end to end. There was a fourth -- open tickets with no
+build or return raised against them -- and it was dropped after Julian read
+the panel, which is that standard being applied rather than an exception to
+it.
 
 Two rules shape what is in here. Nothing is derived from `events`, because
 production's is empty and every completion there reads as "imported" -- a
@@ -77,9 +79,6 @@ def check_the_figures_are_what_they_claim() -> bool:
         c.ok(took["slowest_days"] >= took["median_days"],
              "and the slowest, which is where the story usually is")
 
-        c.equal(s["no_ticket"], {"open": 2, "without": 2},
-                "and every open ticket here has nothing raised against it")
-
     return c.report()
 
 
@@ -139,32 +138,6 @@ def check_it_says_nothing_rather_than_something_wrong() -> bool:
         c.equal(s["ageing"], [], "nothing ageing")
         c.equal(s["time_to_complete"], None,
                 "and no time to close, rather than a zero that reads as instant")
-        c.equal(s["no_ticket"], {"open": 0, "without": 0}, "and nothing open")
-
-    return c.report()
-
-
-def check_a_ticket_with_a_build_is_not_counted_as_missing() -> bool:
-    """The fourth figure is the one somebody can act on, so it has to be right."""
-    c = Check("a ticket with a build raised is not counted as missing one")
-
-    with Board() as b:
-        has = opened(b, "PROD: has one - 01Jan26 - x", 5)
-        opened(b, "PROD: has none - 01Jan26 - x", 5)
-        b.con.execute(
-            """INSERT INTO messages (message_id, thread_id, author_id,
-                                     author_name, is_bot, created_at,
-                                     first_seen_at)
-               VALUES (?,?,?,?,1,?,?)""",
-            ("m-1", has, "bot", "Python-Interface-Bot", iso(-60), iso(-60)))
-        b.con.execute(
-            """INSERT INTO tickets (pip_key, thread_id, message_id, kind,
-                                    created_at)
-               VALUES (?,?,?,?,?)""", ("PIP-1", has, "m-1", "build", iso(-60)))
-        b.con.commit()
-        api.DB = b.path
-        c.equal(api.stats()["no_ticket"], {"open": 2, "without": 1},
-                "one of the two is missing one")
 
     return c.report()
 
@@ -261,7 +234,6 @@ def check_it_folds_the_way_the_rail_folds() -> bool:
 CHECKS = (check_the_figures_are_what_they_claim,
           check_the_middle_not_the_mean,
           check_it_says_nothing_rather_than_something_wrong,
-          check_a_ticket_with_a_build_is_not_counted_as_missing,
           check_the_month_label_reads_in_a_narrow_column,
           check_the_figures_ride_the_slow_lane,
           check_it_folds_the_way_the_rail_folds)

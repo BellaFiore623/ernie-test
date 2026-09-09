@@ -1624,6 +1624,31 @@ class WorkBar(QWidget):
                 b.btn.setEnabled(ok)
 
 
+def queue_counts(cards):
+    """How many open tickets wear each tag.
+
+    Over every card the board holds, **not** the filtered view: a number that
+    moved with the search would be answering "how many did you find", which
+    the board is already showing, and unchecking PROD would change the figure
+    beside OPS, which is nonsense. This says what there is.
+
+    A card with no tag, or one carrying a retired queue, is counted under no
+    heading -- `T.QUEUE` holds exactly the offered ones and only those have a
+    box to put a number on.
+    """
+    out = {q: 0 for q in T.QUEUE}
+    for c in cards:
+        q = c.get("queue") or ""
+        if q in out:
+            out[q] += 1
+    return out
+
+
+def queue_label(queue, count):
+    """`OPS` until the board has loaded, `OPS (5)` after."""
+    return queue if count is None else f"{queue} ({count})"
+
+
 class QueueBox(QCheckBox):
     """A queue filter that wears its queue's own colours.
     """
@@ -1633,15 +1658,36 @@ class QueueBox(QCheckBox):
     def __init__(self, queue):
         super().__init__(queue)
         self.stripe, self.tint, self.ink = T.QUEUE.get(queue, T.NEUTRAL)
+        self.count = None
         self.setCursor(Qt.PointingHandCursor)
         f = QFont()
         f.setPointSize(9)
         f.setWeight(QFont.DemiBold)
         self.setFont(f)
 
+    def label(self):
+        return queue_label(self.text(), self.count)
+
+    def set_count(self, n):
+        """How many open tickets wear this tag.
+
+        Guarded, because `render()` runs on every poll and every drag, and
+        `updateGeometry` on four boxes relays the toolbar each time. The
+        number changes when a ticket is made, closed or retagged; nothing
+        else needs the layout touched.
+        """
+        if n == self.count:
+            return
+        self.count = n
+        self.setToolTip(f"{n} open ticket{'' if n == 1 else 's'} tagged "
+                        f"{self.text()}. Counted across the whole board, so "
+                        f"it does not move with the search.")
+        self.updateGeometry()
+        self.update()
+
     def sizeHint(self):
         fm = QFontMetrics(self.font())
-        return QSize(self.SIDE + 7 + fm.horizontalAdvance(self.text()) + 10,
+        return QSize(self.SIDE + 7 + fm.horizontalAdvance(self.label()) + 10,
                      max(self.SIDE, fm.height()) + 10)
 
     def hitButton(self, pos):
@@ -1674,7 +1720,7 @@ class QueueBox(QCheckBox):
         p.setFont(self.font())
         p.drawText(QRect(box.right() + 7, 0,
                          self.width() - box.right() - 7, self.height()),
-                   Qt.AlignVCenter | Qt.AlignLeft, self.text())
+                   Qt.AlignVCenter | Qt.AlignLeft, self.label())
 
 
 class Card(QFrame):
@@ -3154,10 +3200,11 @@ class Stats(QWidget):
 
     The board says what is on the plate now. None of it says whether that is
     getting better or worse, how long a ticket takes, or which ones have been
-    open since April. Four figures, and each earns its place by answering
-    something the board cannot: a page of statistics nobody acts on is
-    furniture, and the first one that turns out to be wrong takes the
-    credibility of the others with it.
+    open since April. Each figure earns its place by answering something the
+    board cannot: a page of statistics nobody acts on is furniture, and the
+    first one that turns out to be wrong takes the credibility of the others
+    with it. There were four; "no ticket raised" was dropped after Julian
+    read it, which is the same standard the other three are kept to.
 
     Sized like the running order and for the same reasons -- a range rather
     than a fixed width, so the splitter handle has something to move; folded
@@ -3195,7 +3242,7 @@ class Stats(QWidget):
         outer.setContentsMargins(4, 10, 10, 8)
         outer.setSpacing(6)
 
-        self.head = QLabel("Data")
+        self.head = QLabel("Stats")
         f = QFont()
         f.setPointSize(10)
         f.setWeight(QFont.DemiBold)
@@ -3367,17 +3414,6 @@ class Stats(QWidget):
             self.body.addWidget(self._line(
                 f"slowest {took['slowest_days']} days", T.MUTED))
 
-        # 4. Open tickets with nothing raised against them. Only 230 of 889
-        #    threads ever get one, so this is invisible anywhere else.
-        nt = data.get("no_ticket") or {}
-        if nt.get("open"):
-            self.body.addWidget(self._heading("No ticket raised"))
-            self.body.addWidget(self._line(
-                f"{nt.get('without') or 0} of {nt['open']} open",
-                T.AMBER_FG if nt.get("without") else T.MUTED,
-                tip="Open tickets with no Build Request or Return behind "
-                    "them. Those come from Python-Interface-Bot, and most "
-                    "threads never get one."))
 
     # -- folding, the way the rail folds -----------------------------------
 
@@ -3666,12 +3702,14 @@ class Bert(QMainWindow):
 
         # So the first filter can never end up against the box before it.
         lay.addSpacing(8)
+        self.qboxes = {}
         for q in T.QUEUE:
             cb = QueueBox(q)
             cb.setChecked(True)
             cb.stateChanged.connect(
                 lambda s, k=q: (self.filters.__setitem__(k, bool(s)), self.render()))
             lay.addWidget(cb)
+            self.qboxes[q] = cb
 
         lay.addStretch()
 
@@ -5214,6 +5252,10 @@ class Bert(QMainWindow):
     def render(self):
         self._hold_scroll()
         term = self.search.text().strip().lower()
+
+        # Before any of the filtering below, deliberately -- see queue_counts.
+        for q, n in queue_counts(self.cards).items():
+            self.qboxes[q].set_count(n)
 
         def keep(c):
             if not self.filters.get(c.get("queue") or "", True):

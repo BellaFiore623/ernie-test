@@ -655,11 +655,17 @@ has been done, when it last moved and who moved it.
 says what is on the plate now; none of it says whether that is getting better
 or worse, how long a ticket takes, or which ones have been open since April.
 
-- **Four figures, not a survey.** Completed per month, the open ones that have
-  been open longest, how long one takes end to end, and how many open tickets
-  have no build or return raised against them. Each answers something no other
-  view does. A page of statistics nobody acts on is furniture, and the first
-  one that turns out to be wrong takes the credibility of the others with it.
+- **A few figures, not a survey.** Completed per month, the open ones that
+  have been open longest, and how long one takes end to end. Each answers
+  something no other view does. A page of statistics nobody acts on is
+  furniture, and the first one that turns out to be wrong takes the
+  credibility of the others with it.
+- **There was a fourth, and it was dropped.** Open tickets with no build or
+  return raised against them: true, interesting, and nothing anybody did
+  differently for having read it. Julian read the panel and said so, which is
+  the standard above being applied rather than an exception to it -- the query
+  went with it rather than being left to run every refresh for a field nothing
+  reads. The panel is headed **Stats**, which is what people call it.
 - **Nothing is derived from `events`.** Production's is **empty**, and all 313
   of its completions read `completed_by = "imported"` -- they were inferred
   from archived threads, not recorded by anyone using Bert. So per-person and
@@ -703,6 +709,18 @@ or worse, how long a ticket takes, or which ones have been open since April.
   aggregates off the poll the board depends on would make each of them a fresh
   way for that poll to fail. An Ernie too old to serve `/stats` answers `None`
   and the board carries on.
+
+- **A filter says how many it holds.** `PROD (3)`, `OPS (4)`. The checkboxes
+  said which tags exist and nothing about how much was behind each, so the
+  answer to "how much OPS work is there" was to click three boxes off and
+  count. `queue_counts()` is a pure function over the board's cards for the
+  two ways this goes wrong, both of which read as a bug rather than a
+  different reading: counted after the filtering, unchecking PROD changes the
+  number beside OPS; counted against the search, it answers "how many did you
+  find", which is what the board itself is already showing. It is the whole
+  board, always. `set_count` is guarded because `render()` runs on every poll
+  and every drag, and `updateGeometry` on four boxes relays the toolbar each
+  time.
 
 ## The state channel
 

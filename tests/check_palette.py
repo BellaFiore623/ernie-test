@@ -952,6 +952,67 @@ def check_the_ink_follows_the_ground() -> bool:
     return c.report()
 
 
+
+def check_a_filter_says_how_many_it_holds() -> bool:
+    """
+    `OPS (5)`, counted over the board rather than over what is on screen.
+
+    Asked for after Julian read the toolbar: the checkboxes said which tags
+    exist and nothing about how much was behind each. The count has to be the
+    whole board's, and the two ways of getting that wrong are the reason this
+    is a function rather than a comprehension inside `render()` -- counted
+    after the filtering, unchecking PROD would change the number beside OPS,
+    and with a search on it would answer "how many did you find", which the
+    board is already showing.
+    """
+    c = Check("a filter says how many tickets it holds")
+
+    board = [{"queue": "PROD"}, {"queue": "PROD"}, {"queue": "OPS"},
+             {"queue": "ENG"}, {"queue": None}, {"queue": "DATA"},
+             {"queue": ""}]
+    got = bert.queue_counts(board)
+
+    c.equal(got.get("PROD"), 2, "two PROD tickets are counted as two")
+    c.equal(got.get("OPS"), 1, "and one OPS as one")
+    c.equal(got.get("CS"), 0, "a tag with nothing on it says nothing, not blank")
+    c.equal(set(got), set(bert.T.QUEUE),
+            "every offered tag gets a number and no others do")
+    # A retired queue parses and is never offered, so it has no box to put a
+    # number on -- and must not raise on the way past.
+    c.ok("DATA" not in got, "a retired queue is not given a heading of its own")
+
+    # The whole board, whatever is on screen. This is the assertion the
+    # feature is: the same cards filtered down must count the same.
+    c.equal(bert.queue_counts([x for x in board if x["queue"] == "OPS"]),
+            {"PROD": 0, "OPS": 1, "ENG": 0, "CS": 0},
+            "counting a narrowed list is a different answer -- which is why "
+            "render() must hand it self.cards and not the filtered ones")
+
+    c.equal(bert.queue_label("OPS", 5), "OPS (5)", "the label carries it")
+    c.equal(bert.queue_label("OPS", 0), "OPS (0)",
+            "including nought, which is a fact rather than a gap")
+    c.equal(bert.queue_label("OPS", None), "OPS",
+            "and says nothing at all before the board has loaded, rather "
+            "than claiming zero")
+
+    # render() has to pass the unfiltered list, which is the half a pure
+    # function cannot defend on its own.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+    render = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "render")
+    body = ast.get_source_segment(src, render) or ""
+    c.ok("queue_counts(self.cards)" in body,
+         "render counts the board it holds, not the list it is about to draw")
+    head, _, tail = body.partition("queue_counts")
+    c.ok("shown =" not in head,
+         "and does it before the filtering, so the two cannot be confused")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
@@ -967,5 +1028,6 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_starting_a_ticket_is_not_editing_one,
           check_a_card_stands_off_the_board_it_sits_on,
           check_a_card_is_edged_in_its_own_tag,
+          check_a_filter_says_how_many_it_holds,
           check_a_band_header_is_accented_not_filled,
           check_the_ink_follows_the_ground)
