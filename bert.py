@@ -2063,9 +2063,15 @@ class Card(QFrame):
             "work_undone": self.f_work.undone(),
         }
         base = getattr(self, "_edit_base", None)
-        # Put the card back in view mode before the write.
-        self.exit_edit()
-        return self.board.save_edits(self.thread_id, fields, base)
+        # The write first, and the editor closes only if there is nothing left
+        # to keep. It used to go back to view mode before the write, so a save
+        # that failed redrew the card from server data and everything typed
+        # was gone -- the error box explained the failure over the top of work
+        # that had already been thrown away.
+        ok = self.board.save_edits(self.thread_id, fields, base)
+        if ok:
+            self.exit_edit()
+        return ok
 
     def _tick_off(self, item_id):
         self.board.finish_item(self.thread_id, item_id)
@@ -4194,11 +4200,10 @@ class Bert(QMainWindow):
     def save_edits(self, tid, fields, base=None) -> bool:
         """Write the edit. False if it did not land, so a caller can wait.
 
-        Closing Bert is the caller that needs it: "Save and close" must not
-        close on top of a save that failed, or the error box goes with the
-        window and the change is gone without anyone reading why. A conflict
-        counts as not landed even when it is resolved -- somebody is being
-        asked a question, and the window must not disappear underneath it.
+        Closing Bert is one caller: "Save and close" must not close on top of
+        a save that failed, or the error box goes with the window and nobody
+        reads why. The editor is the other -- it stays open, with the typing
+        in it, so the write can be tried again.
         """
         if not self._guard():
             return False
@@ -4206,15 +4211,22 @@ class Bert(QMainWindow):
         try:
             self.api.edit(tid, fields, self.name(), base=base)
         except Conflict as e:
-            self._edit_conflict(tid, fields, base, e)
-            ok = False
+            ok = self._edit_conflict(tid, fields, base, e)
         except Exception as e:
             QMessageBox.warning(self, "Couldn't save", str(e))
             ok = False
         self.refresh()
         return ok
 
-    def _edit_conflict(self, tid, fields, base, e):
+    def _edit_conflict(self, tid, fields, base, e) -> bool:
+        """Settle a write the server refused. True if nothing is left to keep.
+
+        Not quite "did it land": choosing to discard settles it too. What the
+        callers are really asking is whether the editor may be closed, and
+        after "keep theirs" or "discard my changes" the answer is yes even
+        though nothing was written. Backing out of the question -- closing the
+        dialog, or a retry that fails -- leaves the typing where it is.
+        """
         if e.code == "completed":
             box = QMessageBox(self)
             box.setWindowTitle("Already closed")
@@ -4230,11 +4242,13 @@ class Bert(QMainWindow):
                     self.api.edit(tid, fields, self.name(), base=base, force=True)
                 except Exception as err:
                     QMessageBox.warning(self, "Couldn't save", str(err))
-            return
+                    return False
+                return True
+            return True         # they chose to discard, which settles it
 
         if e.code != "stale":
             QMessageBox.warning(self, "Couldn't save", str(e))
-            return
+            return False
 
         dlg = ConflictDialog(self, e.detail)
         dlg.exec()
@@ -4243,6 +4257,11 @@ class Bert(QMainWindow):
                 self.api.edit(tid, fields, self.name(), base=base, force=True)
             except Exception as err:
                 QMessageBox.warning(self, "Couldn't save", str(err))
+                return False
+            return True
+        # "Keep theirs" discards what was typed and says so on the button.
+        # Closing the dialog any other way answers nothing, so nothing is lost.
+        return dlg.choice == "keep"
 
     def finish_item(self, tid, item_id):
         """Tick one work item off from the card, without opening the editor."""
@@ -4402,10 +4421,12 @@ class Bert(QMainWindow):
         box.exec()
 
         if box.clickedButton() is save:
-            # save() closes the editor itself, and refresh() is a thread, so
-            # the board is not redrawn under the card about to be opened.
-            w.save()
-            return False
+            # save() closes the editor itself when the write lands, and
+            # refresh() is a thread, so the board is not redrawn under the
+            # card about to be opened. If it did not land the editor is still
+            # open with the typing in it, and opening the other one would put
+            # two on screen -- which is the thing this guard exists to stop.
+            return not w.save()
         if box.clickedButton() is drop:
             w.exit_edit()
             return False
@@ -4460,13 +4481,17 @@ class Bert(QMainWindow):
             QMessageBox.information(self, "A ticket needs a title",
                                     "Give it a title before creating it.")
             return False
-        card.exit_edit()          # drops the placeholder, releases the board
         ok = True
         try:
             self.api.new_ticket(fields, self.name())
         except Exception as e:
             QMessageBox.warning(self, "Couldn't start that ticket", str(e))
             ok = False
+        else:
+            # Only once Ernie has it. Dropping the placeholder first meant a
+            # request that failed took the whole ticket with it, and there is
+            # nothing behind a new one to fall back to.
+            card.exit_edit()      # drops the placeholder, releases the board
         self.refresh()
         return ok
 

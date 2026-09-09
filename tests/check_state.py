@@ -1029,6 +1029,75 @@ def check_a_write_says_whether_it_landed() -> bool:
     return c.report()
 
 
+def check_a_failed_write_keeps_what_was_typed() -> bool:
+    """
+    A save that did not land used to throw the typing away anyway.
+
+    Card.save() put the card back in view mode *before* the write, so a failed
+    write was followed by refresh() redrawing the card from server data --
+    everything typed was gone, and the error box explaining the failure sat on
+    top of work that had already been discarded. The same held for a ticket
+    being started, where there is nothing behind the placeholder at all: the
+    request failed and took the whole ticket with it.
+
+    So the editor closes only once there is nothing left to keep.
+    """
+    c = Check("a write that did not land keeps what was typed")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def fn(cls_name, name):
+        cls = next((n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
+                    and n.name == cls_name), None)
+        return next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == name), None) if cls else None
+
+    # The editor is closed under a condition, not on the way past.
+    save = fn("Card", "save")
+    save_src = ast.get_source_segment(src, save) or "" if save else ""
+    c.ok(save is not None, "Card.save is there")
+    if save:
+        exits = [n for n in ast.walk(save) if isinstance(n, ast.Call)
+                 and getattr(n.func, "attr", None) == "exit_edit"]
+        c.equal(len(exits), 1, "it leaves the editor in one place")
+        guarded = [n for n in ast.walk(save) if isinstance(n, ast.If)
+                   and any(isinstance(x, ast.Call)
+                           and getattr(x.func, "attr", None) == "exit_edit"
+                           for x in ast.walk(n))]
+        c.ok(guarded, "and only when something says it may")
+        c.ok(save_src.index("save_edits") < save_src.index("exit_edit"),
+             "the write happens first, so its answer can be waited for")
+
+    # Same for a ticket being started: the placeholder is all there is.
+    new = fn("Bert", "create_ticket")
+    if new is not None:
+        drops = [n for n in ast.walk(new) if isinstance(n, ast.Try)
+                 and any(isinstance(x, ast.Call)
+                         and getattr(x.func, "attr", None) == "exit_edit"
+                         for x in ast.walk(ast.Module(body=n.orelse,
+                                                      type_ignores=[])))]
+        c.ok(drops,
+             "the placeholder is dropped in the try's else, so only on success")
+
+    # And a save that did not land must not let a second editor open.
+    busy = fn("Bert", "editor_is_busy")
+    busy_src = ast.get_source_segment(src, busy) or "" if busy else ""
+    c.ok("not w.save()" in busy_src,
+         "a failed save keeps the one-editor rule rather than opening another")
+
+    # A conflict answers what it settled, so "keep theirs" still closes.
+    conflict = fn("Bert", "_edit_conflict")
+    rets = [n for n in ast.walk(conflict) if isinstance(n, ast.Return)] if conflict else []
+    c.ok(rets and all(r.value is not None for r in rets),
+         "the conflict path answers on every branch")
+    c.ok(any(isinstance(r.value, ast.Constant) and r.value.value is True
+             for r in rets),
+         "including the ones that settle it without writing anything")
+
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -1050,4 +1119,5 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_bert_says_who_has_to_update,
           check_closing_asks_about_an_unsaved_editor,
           check_a_write_says_whether_it_landed,
+          check_a_failed_write_keeps_what_was_typed,
           check_a_ticket_started_in_bert_becomes_a_thread)
