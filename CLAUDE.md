@@ -560,7 +560,13 @@ has been done, when it last moved and who moved it.
   PySide6 where the outbox has no display. `tests/check_status.py` holds the
   two together, the way `check_palette.py` holds the two themes together. A
   closed ticket goes `OK_FG` green, which is what done looks like everywhere
-  else.
+  else. **Needs Attention and Critical share a bar, and that is left alone on
+  purpose** -- `band_text` gives both `#F5AAA2`, so five bands produce four
+  colours. On the board they are told apart by position and by the header's
+  own label; in a thread there is neither, so the two most urgent states do
+  look alike. Asked and answered 2026-09-09: fine as it is. Giving Critical a
+  colour of its own here would mean a Discord palette that is no longer the
+  board's, which is the thing the check above exists to prevent.
 - **The time goes in a field, never the footer.** Discord renders `<t:...:R>`
   in a description or a field value and **not** in footer text, so putting it
   there would lose the self-updating clock that keeps the stored body still.
