@@ -21,6 +21,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
 | `ernie_jira.py` | Customer list, Jira → SQLite. Read-only against Jira. Off unless configured. |
 | `ernie_version.py` | The version number, and which build is answering. Imported by everything that says one. |
+| `ernie_status.py` | The ticket's status, as a pinned message in its own thread. Rides with the outbox. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
@@ -506,6 +507,50 @@ a ticket with no home yet is the ordinary case rather than an exception.
   ticket" carries it. `editor_is_busy(tid)` takes no label: `_short_name()`
   answers "a new ticket" for the sentinel already, so there is one place a
   ticket is named rather than two.
+
+## The status message in the thread
+
+The board knows what a ticket still needs and the thread is where the work is
+discussed, and the two only met by somebody opening Bert. `ernie_status.py`
+puts what is left where the conversation is: band, what is still to do, what
+has been done, when it last moved and who moved it.
+
+- **New threads only, and there is no backfill.** `witnessed_start()` -- the
+  same predicate the `started` feed line uses -- asks whether Ernie saw the
+  thread appear rather than inheriting it. A first sync makes a card for every
+  thread there has ever been, 889 of them in production, and posting into all
+  of those is not a thing to do to a channel people are working in.
+- **One message, edited in place.** The state channel's design, for the reason
+  measured there: an edit recovers from its rate limit in 0.67s and announces
+  nothing, so the status can follow every tick without the thread becoming a
+  notification feed. `thread_status.body` holds what was last written and a
+  pass rewrites **only when the rendering would differ**, or a quiet board
+  would edit every message every cycle for nothing.
+- **Nothing in it may move on its own.** The time is Discord's `<t:...:R>`
+  markup, so the reader's client renders "2 hours ago" and keeps it current
+  while the source text stays fixed at the moment the card changed. A written
+  out "2h ago" differs on every pass and rewrites the message for ever, which
+  is the trap `ernie_state.without_stamp()` exists for.
+- **Not the ticket's name.** That is the thread's own name, shown directly
+  above the message in every client. It carries the date and the client, which
+  is exactly why repeating it puts the same string on screen twice.
+- **It is pinned.** "The first message" is what was wanted, and a bot cannot be
+  the first message of a thread somebody else opened -- a pin is one click from
+  the thread header, which is the same thing to a reader. Pinning failing does
+  not fail the status: a thread at the 50-pin cap still gets its message.
+- **Every thread gets one, work items or not.** A third of open tickets have
+  none, and the trigger being "a card exists" is what puts the message near the
+  top of the thread rather than fifty replies down. With nothing to list it
+  says *No work items yet*, because a message that stops after the band reads
+  as one that failed to load.
+- **Priority is shown, which bends a rule on purpose.** Band moves are silent
+  in customer threads because posting each nudge is noise -- but an edit
+  notifies nobody, so this makes priority *visible* without *announcing* it.
+  Checked before doing it: `#customer-threads` is internal, 36 human authors
+  with the busiest posting across 645, 655 and 591 of the 889 threads.
+- An archived thread is skipped. Discord refuses a post to one, and
+  unarchiving to say "closed" would drag a finished ticket back into
+  everybody's sidebar.
 
 ## The state channel
 

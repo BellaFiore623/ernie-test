@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 import ernie_changelog
 import ernie_load as load
 import ernie_state
+import ernie_status
 import ernie_version
 from ernie_sync import Discord, GuildMismatch, load_env
 
@@ -405,6 +406,19 @@ def main() -> None:
             except Exception as e:
                 print(f"[{now()[:19]}] state publish failed: {e}",
                       file=sys.stderr)
+
+        # The ticket's own status, in its own thread. No channel to
+        # configure: it goes to the threads the board already knows about,
+        # and only the ones Ernie watched open -- so a machine that has just
+        # inherited a server posts nothing.
+        if d.writes_allowed:
+            try:
+                st = ernie_status.publish(d, con, a.db)
+                if st["posted"] or st["edited"]:
+                    print(f"[{now()[:19]}] status: posted {st['posted']}, "
+                          f"edited {st['edited']}")
+            except Exception as e:
+                print(f"[{now()[:19]}] status failed: {e}", file=sys.stderr)
 
         # The durable record, if there is somewhere to keep it. Both boards
         # hold the whole history, so only one machine should set this -- two

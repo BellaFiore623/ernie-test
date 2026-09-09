@@ -321,6 +321,25 @@ CREATE TABLE IF NOT EXISTS state_sync (
 );
 
 
+-- The ticket-status message Ernie keeps in each thread, and what it last said.
+--
+-- One row per thread, like changelog_sent is one row per event: the message
+-- is edited in place for the life of the ticket, so its id has to survive
+-- restarts. `body` is what was last written, and a pass rewrites only when
+-- the rendering would differ -- the same rule the state channel follows, and
+-- what stops a quiet board editing every message every cycle for nothing.
+--
+-- Only threads Ernie watched appear get one. There is no backfill: a first
+-- sync inherits every thread there has ever been, and posting into all of
+-- them is not a thing to do to a channel people are working in.
+CREATE TABLE IF NOT EXISTS thread_status (
+    thread_id  TEXT PRIMARY KEY REFERENCES threads(thread_id),
+    message_id TEXT NOT NULL,
+    body       TEXT NOT NULL,              -- what the message currently says
+    sent_at    TEXT NOT NULL               -- when it was last written
+);
+
+
 -- The last pull that found a payload in #ernie-state it could not read.
 --
 -- Version skew between two machines, and the one failure here that does not

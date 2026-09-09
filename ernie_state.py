@@ -75,6 +75,10 @@ class Card:
     # whichever process happens to be publishing -- otherwise every change
     # arrives on the other board credited to Ernie.
     actor: str | None = None
+    # When this card last changed here. Outside payload() on purpose, like
+    # actor: it is not state to be agreed with the other board, it is a fact
+    # about this machine, and ernie_status reads it for its "last updated".
+    updated_at: str | None = None
 
     def payload(self) -> dict:
         """The half of the message that is state rather than decoration."""
@@ -201,7 +205,7 @@ def load_board(db: str) -> list[Card]:
         # the channel still claiming a priority for a card nobody can see.
         for r in con.execute(
                 """SELECT c.thread_id, c.priority, c.rank, c.completed_at,
-                          c.completed_by, v.name,
+                          c.completed_by, c.updated_at, v.name,
                           (SELECT e.actor_name FROM events e
                             WHERE e.thread_id = c.thread_id
                               AND e.undone_at IS NULL AND e.actor_name IS NOT NULL
@@ -222,7 +226,8 @@ def load_board(db: str) -> list[Card]:
                               r["priority"], r["rank"], items,
                               completed=bool(r["completed_at"]),
                               completed_by=r["completed_by"],
-                              actor=r["last_actor"]))
+                              actor=r["last_actor"],
+                              updated_at=r["updated_at"]))
         return cards
     finally:
         con.close()
