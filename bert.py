@@ -3278,12 +3278,14 @@ class Stats(QWidget):
         # and it went unnoticed for as long as this and the window
         # behind it were the same colour.
         self.setAttribute(Qt.WA_StyledBackground, True)
-        # The floor, not the canvas. The rail and the board are worked
-        # in -- dragged, dropped into, typed at -- and the figures are
-        # read. Putting it a step down leaves the work area as the one
-        # raised thing on the window and separates the two without a
-        # rule or a border to do it.
-        self.setStyleSheet(f"Stats {{ background:{T.WELL}; }}" + tip_css())
+        # The canvas, the same as the running order. It was put on the floor
+        # on the reasoning that the rail and the board are worked in and the
+        # figures are only read -- which is true and is not what the eye does
+        # with it: a panel the same value as the space around it stops being
+        # a panel, and the three sections stopped matching each other for a
+        # distinction nobody was asking the layout to draw. Every section
+        # with content in it is the canvas; the floor is what they stand on.
+        self.setStyleSheet(f"Stats {{ background:{T.CANVAS}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 10, 10, 8)

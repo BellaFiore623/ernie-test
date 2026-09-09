@@ -1195,10 +1195,16 @@ Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
 **Three levels, and the floor is one of them.** `well` is what everything
-sits on -- the window, the toolbar, and the space a folded panel leaves
-behind. The sections with content in them -- the board column, the rail, the
-figures, the feed -- are `canvas`, one step above it, and the cards are above
-that again. Without the floor every one of those met the space around it at
+sits on -- the window, the toolbar, the space a folded panel leaves behind,
+and the room either side of the centred board column. The sections with
+content in them -- the board column, the rail, the figures, the feed -- are
+`canvas`, one step above it, and the cards are above that again. **All of
+them, with no exceptions for how a section is used.** The figures panel was
+put on the floor on the reasoning that the rail and the board are worked in
+while the figures are only read: true, and not what the eye does with it. A
+panel the same value as the space around it stops reading as a panel at all,
+and the three sections stopped matching each other to draw a distinction
+nobody had asked the layout for. Without the floor every one of those met the space around it at
 the same value and the window read as one flat field, most obviously with a
 panel folded away, where the gap it left looked like more board. `beside`
 could not do this job: it is *under* the canvas in light and *over* it in
