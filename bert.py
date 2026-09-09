@@ -700,8 +700,7 @@ class SettingsDialog(QDialog):
         form.addRow("Theme", self.theme)
         note = QLabel("Your name is added to thread updates so the team can see "
                       "who made each change. Changes are blocked until it's "
-                      "set. Following the desktop tracks it as it changes, so "
-                      "a machine that darkens at sunset takes Bert with it.")
+                      "set.")
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
 
