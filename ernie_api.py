@@ -489,163 +489,171 @@ def cards(
     include_completed: bool = False,
 ):
     """The board. Sorted by priority band, then manual rank within it."""
+    # try/finally like its neighbours: without it a request that raised
+    # part-way left its connection open, and on Windows that is a file
+    # handle nothing gives back.
     con = db()
-    sql = """
-        SELECT c.thread_id, c.priority, c.rank, c.build_state, c.return_state,
-               c.direction, c.action_item, c.client_override, c.updated_at,
-               c.completed_at, c.completed_by,
-               v.name, v.queue, v.client_raw, v.client_key, v.thread_date,
-               v.summary, v.confidence, v.archived,
-               (SELECT COUNT(*) FROM tickets t
-                WHERE t.thread_id = c.thread_id) AS ticket_count,
-               (SELECT MAX(m.created_at) FROM messages m
-                WHERE m.thread_id = c.thread_id AND m.is_bot = 0) AS last_human_at
-        FROM cards c
-        JOIN v_thread_current v ON v.thread_id = c.thread_id
-        WHERE 1=1
-    """
-    args: list = []
-    if not include_completed:
-        sql += " AND c.completed_at IS NULL"
-    if queue:
-        sql += " AND v.queue = ?"
-        args.append(queue.upper())
-    if client:
-        sql += " AND v.client_key LIKE ?"
-        args.append(f"%{client.lower()}%")
+    try:
+        sql = """
+            SELECT c.thread_id, c.priority, c.rank, c.build_state, c.return_state,
+                   c.direction, c.action_item, c.client_override, c.updated_at,
+                   c.completed_at, c.completed_by,
+                   v.name, v.queue, v.client_raw, v.client_key, v.thread_date,
+                   v.summary, v.confidence, v.archived,
+                   (SELECT COUNT(*) FROM tickets t
+                    WHERE t.thread_id = c.thread_id) AS ticket_count,
+                   (SELECT MAX(m.created_at) FROM messages m
+                    WHERE m.thread_id = c.thread_id AND m.is_bot = 0) AS last_human_at
+            FROM cards c
+            JOIN v_thread_current v ON v.thread_id = c.thread_id
+            WHERE 1=1
+        """
+        args: list = []
+        if not include_completed:
+            sql += " AND c.completed_at IS NULL"
+        if queue:
+            sql += " AND v.queue = ?"
+            args.append(queue.upper())
+        if client:
+            sql += " AND v.client_key LIKE ?"
+            args.append(f"%{client.lower()}%")
 
-    out = rows(con.execute(sql, args))
+        out = rows(con.execute(sql, args))
 
-    # A title the board has changed but Discord hasn't confirmed yet. Showing
-    # the old one means the queue tag stays "--" and the card stays red for the
-    # couple of minutes it takes the rename to post and the sync to read it
-    # back. One query for the lot rather than one per card.
-    pending = {}
-    for r in con.execute(
-            """SELECT thread_id, new_value FROM events
-               WHERE verb='renamed' AND undone_at IS NULL AND posted_at IS NULL
-               ORDER BY occurred_at"""):
-        pending[r["thread_id"]] = r["new_value"]      # newest wins
+        # A title the board has changed but Discord hasn't confirmed yet. Showing
+        # the old one means the queue tag stays "--" and the card stays red for the
+        # couple of minutes it takes the rename to post and the sync to read it
+        # back. One query for the lot rather than one per card.
+        pending = {}
+        for r in con.execute(
+                """SELECT thread_id, new_value FROM events
+                   WHERE verb='renamed' AND undone_at IS NULL AND posted_at IS NULL
+                   ORDER BY occurred_at"""):
+            pending[r["thread_id"]] = r["new_value"]      # newest wins
 
-    # One query for every card's bubbles rather than one per card; the board
-    # is redrawn on every poll and this sits in that path.
-    # Ticked ones come too, flagged rather than filtered. A bubble that
-    # vanished the moment it was ticked took the only record of the work with
-    # it -- the card went quiet and said nothing about what had been done on
-    # it. Removed ones stay gone: an x in the editor says "this should not be
-    # here", which is a different statement from "this is finished".
-    items: dict[str, list] = {}
-    for r in con.execute(
-            """SELECT thread_id, item_id, body, done_at FROM work_items
-               WHERE removed_at IS NULL
-               ORDER BY thread_id, position"""):
-        items.setdefault(r["thread_id"], []).append(
-            {"item_id": r["item_id"], "body": r["body"],
-             "done": r["done_at"] is not None})
+        # One query for every card's bubbles rather than one per card; the board
+        # is redrawn on every poll and this sits in that path.
+        # Ticked ones come too, flagged rather than filtered. A bubble that
+        # vanished the moment it was ticked took the only record of the work with
+        # it -- the card went quiet and said nothing about what had been done on
+        # it. Removed ones stay gone: an x in the editor says "this should not be
+        # here", which is a different statement from "this is finished".
+        items: dict[str, list] = {}
+        for r in con.execute(
+                """SELECT thread_id, item_id, body, done_at FROM work_items
+                   WHERE removed_at IS NULL
+                   ORDER BY thread_id, position"""):
+            items.setdefault(r["thread_id"], []).append(
+                {"item_id": r["item_id"], "body": r["body"],
+                 "done": r["done_at"] is not None})
 
-    # What this machine still owes on each card, so a card can say it holds a
-    # change that has not left here yet.
-    #
-    # The same two debts Bert._owed() counts for the close warning, and they
-    # have to stay the same two: a card wearing no mark under a warning that
-    # says changes are unsent would be worse than no mark at all.
-    unsent: dict[str, int] = {}
-    for r in con.execute(
-            """SELECT thread_id, COUNT(*) AS n FROM events
-               WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
-                 AND undone_at IS NULL AND attempts < ?
-               GROUP BY thread_id""", (OUTBOX_MAX_ATTEMPTS,)):
-        unsent[r["thread_id"]] = r["n"]
+        # What this machine still owes on each card, so a card can say it holds a
+        # change that has not left here yet.
+        #
+        # The same two debts Bert._owed() counts for the close warning, and they
+        # have to stay the same two: a card wearing no mark under a warning that
+        # says changes are unsent would be worse than no mark at all.
+        unsent: dict[str, int] = {}
+        for r in con.execute(
+                """SELECT thread_id, COUNT(*) AS n FROM events
+                   WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+                     AND undone_at IS NULL AND attempts < ?
+                   GROUP BY thread_id""", (OUTBOX_MAX_ATTEMPTS,)):
+            unsent[r["thread_id"]] = r["n"]
 
-    # Given up on, and counted apart for the reason /health keeps them apart:
-    # the outbox will not pick these up again, so a mark that means "wait a
-    # moment" would be telling the reader to do the one thing that cannot
-    # help. Not hidden either -- just said differently.
-    stuck: dict[str, int] = {}
-    for r in con.execute(
-            """SELECT thread_id, COUNT(*) AS n FROM events
-               WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
-                 AND undone_at IS NULL AND attempts >= ?
-               GROUP BY thread_id""", (OUTBOX_MAX_ATTEMPTS,)):
-        stuck[r["thread_id"]] = r["n"]
+        # Given up on, and counted apart for the reason /health keeps them apart:
+        # the outbox will not pick these up again, so a mark that means "wait a
+        # moment" would be telling the reader to do the one thing that cannot
+        # help. Not hidden either -- just said differently.
+        stuck: dict[str, int] = {}
+        for r in con.execute(
+                """SELECT thread_id, COUNT(*) AS n FROM events
+                   WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+                     AND undone_at IS NULL AND attempts >= ?
+                   GROUP BY thread_id""", (OUTBOX_MAX_ATTEMPTS,)):
+            stuck[r["thread_id"]] = r["n"]
 
-    # The second debt. A reorder, and every band move that is not in or out of
-    # critical, is silent by design and carries no dispatch_after at all -- it
-    # appears here and nowhere else. Same comparison /health makes, both sides
-    # written by this machine, so the other laptop's clock has no say in it.
-    unshared: set[str] = set()
-    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                   "AND name='state_sync'").fetchone():
-        unshared = {r["thread_id"] for r in con.execute(
-            """SELECT c.thread_id FROM cards c JOIN state_sync s USING (thread_id)
-               WHERE datetime(c.updated_at) > datetime(s.synced_at)""")}
+        # The second debt. A reorder, and every band move that is not in or out of
+        # critical, is silent by design and carries no dispatch_after at all -- it
+        # appears here and nowhere else. Same comparison /health makes, both sides
+        # written by this machine, so the other laptop's clock has no say in it.
+        unshared: set[str] = set()
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='state_sync'").fetchone():
+            unshared = {r["thread_id"] for r in con.execute(
+                """SELECT c.thread_id FROM cards c JOIN state_sync s USING (thread_id)
+                   WHERE datetime(c.updated_at) > datetime(s.synced_at)""")}
 
-    # equipment and open issues per card
-    for c in out:
-        c["work_items"] = items.get(c["thread_id"], [])
-        c["unsent"] = unsent.get(c["thread_id"], 0)
-        c["stuck"] = stuck.get(c["thread_id"], 0)
-        c["unshared"] = c["thread_id"] in unshared
-        c["title_pending"] = False
-        proposed = pending.get(c["thread_id"])
-        if proposed:
-            t = ex.parse_title(proposed)
-            c["name"] = proposed
-            c["queue"] = t.queue
-            c["client_raw"] = t.client_raw
-            c["client_key"] = ex.normalise_client(t.client_raw or "") or None
-            c["thread_date"] = t.date.isoformat() if t.date else None
-            c["summary"] = t.summary
-            c["confidence"] = t.confidence
-            c["title_pending"] = True
+        # equipment and open issues per card
+        for c in out:
+            c["work_items"] = items.get(c["thread_id"], [])
+            c["unsent"] = unsent.get(c["thread_id"], 0)
+            c["stuck"] = stuck.get(c["thread_id"], 0)
+            c["unshared"] = c["thread_id"] in unshared
+            c["title_pending"] = False
+            proposed = pending.get(c["thread_id"])
+            if proposed:
+                t = ex.parse_title(proposed)
+                c["name"] = proposed
+                c["queue"] = t.queue
+                c["client_raw"] = t.client_raw
+                c["client_key"] = ex.normalise_client(t.client_raw or "") or None
+                c["thread_date"] = t.date.isoformat() if t.date else None
+                c["summary"] = t.summary
+                c["confidence"] = t.confidence
+                c["title_pending"] = True
 
-        c["equipment"] = rows(con.execute(
-            "SELECT eq_type, eq_number, state, raw FROM thread_equipment "
-            "WHERE thread_id=?", (c["thread_id"],)))
-        issues = con.execute(
-            "SELECT issues_json FROM ticket_proposals WHERE thread_id=?",
-            (c["thread_id"],)).fetchall()
-        merged: list[str] = []
-        for i in issues:
-            merged += json.loads(i["issues_json"])
-        if c["confidence"] in ("loose", "prefix_only", "none"):
-            merged.append(f"title_{c['confidence']}")
-        c["issues"] = sorted(set(merged))
-    # Tickets started here whose thread does not exist yet. They belong on the
-    # board straight away -- somebody just made one -- and they carry the
-    # unsent mark for the same reason every other queued change does. Not
-    # cards yet, so nothing that keys on a thread_id will find them: Bert
-    # shows them and leaves them alone until the outbox has made the thread.
-    for d in con.execute(
-            """SELECT draft_id, title, priority, work_json, attempts, created_at
-               FROM new_threads WHERE posted_at IS NULL
-               ORDER BY created_at"""):
-        t = ex.parse_title(d["title"])
-        out.append({
-            "thread_id": d["draft_id"], "pending": True,
-            "priority": d["priority"], "rank": 0.0,
-            "name": d["title"], "queue": t.queue, "client_raw": t.client_raw,
-            "client_key": ex.normalise_client(t.client_raw or "") or None,
-            "thread_date": t.date.isoformat() if t.date else None,
-            "summary": t.summary, "confidence": t.confidence,
-            "archived": 0, "completed_at": None, "completed_by": None,
-            "client_override": None, "updated_at": d["created_at"],
-            "ticket_count": 0, "last_human_at": None, "title_pending": False,
-            "equipment": [], "issues": [],
-            "work_items": [{"item_id": None, "body": b, "done": False}
-                           for b in json.loads(d["work_json"])],
-            "unsent": 0 if d["attempts"] >= OUTBOX_MAX_ATTEMPTS else 1,
-            "stuck": 1 if d["attempts"] >= OUTBOX_MAX_ATTEMPTS else 0,
-            "unshared": False,
-        })
+            c["equipment"] = rows(con.execute(
+                "SELECT eq_type, eq_number, state, raw FROM thread_equipment "
+                "WHERE thread_id=?", (c["thread_id"],)))
+            issues = con.execute(
+                "SELECT issues_json FROM ticket_proposals WHERE thread_id=?",
+                (c["thread_id"],)).fetchall()
+            merged: list[str] = []
+            for i in issues:
+                merged += json.loads(i["issues_json"])
+            if c["confidence"] in ("loose", "prefix_only", "none"):
+                merged.append(f"title_{c['confidence']}")
+            c["issues"] = sorted(set(merged))
+        # Tickets started here whose thread does not exist yet. They belong on the
+        # board straight away -- somebody just made one -- and they carry the
+        # unsent mark for the same reason every other queued change does. Not
+        # cards yet, so nothing that keys on a thread_id will find them: Bert
+        # shows them and leaves them alone until the outbox has made the thread.
+        for d in con.execute(
+                """SELECT draft_id, title, priority, work_json, attempts, created_at
+                   FROM new_threads WHERE posted_at IS NULL
+                     -- Closed already, so it goes the moment the button is
+                     -- pressed rather than lingering until the thread exists.
+                     AND complete_on_arrival = 0
+                   ORDER BY created_at"""):
+            t = ex.parse_title(d["title"])
+            out.append({
+                "thread_id": d["draft_id"], "pending": True,
+                "priority": d["priority"], "rank": 0.0,
+                "name": d["title"], "queue": t.queue, "client_raw": t.client_raw,
+                "client_key": ex.normalise_client(t.client_raw or "") or None,
+                "thread_date": t.date.isoformat() if t.date else None,
+                "summary": t.summary, "confidence": t.confidence,
+                "archived": 0, "completed_at": None, "completed_by": None,
+                "client_override": None, "updated_at": d["created_at"],
+                "ticket_count": 0, "last_human_at": None, "title_pending": False,
+                "equipment": [], "issues": [],
+                "work_items": [{"item_id": None, "body": b, "done": False}
+                               for b in json.loads(d["work_json"])],
+                "unsent": 0 if d["attempts"] >= OUTBOX_MAX_ATTEMPTS else 1,
+                "stuck": 1 if d["attempts"] >= OUTBOX_MAX_ATTEMPTS else 0,
+                "unshared": False,
+            })
 
-    con.close()
 
-    out.sort(key=lambda c: (PRIORITY_ORDER.index(c["priority"])
-                            if c["priority"] in PRIORITY_ORDER else 99,
-                            c["rank"]))
-    return {"count": len(out), "cards": out,
-            "as_of": datetime.now(timezone.utc).isoformat()}
+        out.sort(key=lambda c: (PRIORITY_ORDER.index(c["priority"])
+                                if c["priority"] in PRIORITY_ORDER else 99,
+                                c["rank"]))
+        return {"count": len(out), "cards": out,
+                "as_of": datetime.now(timezone.utc).isoformat()}
+    finally:
+        con.close()
 
 
 @app.get("/cards/{thread_id}")
@@ -1004,6 +1012,27 @@ def complete(thread_id: str, body: ActorBody):
         cached = replay(con, body.key)
         if cached:
             return cached
+
+        # A ticket still waiting for its thread has no cards row, so the
+        # lookup below would answer "no such card" -- true, and useless. The
+        # person meant to close it; the wait is Ernie's problem, not theirs.
+        # The flag is acted on by make_threads the moment the thread exists,
+        # so nothing is lost and nothing has to be remembered.
+        draft = con.execute(
+            "SELECT draft_id FROM new_threads WHERE draft_id=? "
+            "AND posted_at IS NULL AND complete_on_arrival = 0",
+            (thread_id,)).fetchone()
+        if draft:
+            con.execute(
+                "UPDATE new_threads SET complete_on_arrival=1, completed_by=? "
+                "WHERE draft_id=?", (actor, thread_id))
+            # No event yet, so no undo yet: there is nothing in the thread to
+            # take back until the thread is there. One is written when it is.
+            result = {"thread_id": thread_id, "event_id": None,
+                      "pending": True, "undo_until": None}
+            remember(con, body.key, result)
+            con.commit()
+            return result
 
         card = load_card(con, thread_id)
         guard_open(card, "close")

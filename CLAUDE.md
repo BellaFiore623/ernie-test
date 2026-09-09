@@ -445,6 +445,22 @@ a ticket with no home yet is the ordinary case rather than an exception.
   the order and the only one, so it has to say what the board says. It goes to
   `MIN - RANK_STEP` of the band whose `+` was pressed, the same idiom
   `ensure_card` uses to rank an unreadable thread to the top.
+- **A ticket can be closed before Discord has it.** Completing looks up a
+  `cards` row and a ticket still waiting in `new_threads` has none, so it
+  answered `no such card` -- true, and useless: the person meant to close it,
+  and the wait for the thread is Ernie's problem rather than theirs.
+  `complete_on_arrival` records the intent, the card leaves the board the
+  moment the button is pressed, and `make_threads` closes it as soon as the
+  thread exists -- writing the `completed` event with a `dispatch_after`, so
+  the thread says so the same way every other closure does and it becomes
+  undoable from the feed at the first moment there is anything to undo. Until
+  then the API answers `event_id: None`, because there is nothing in a thread
+  to take back.
+  **Closing a card never cuts off what it still owes.** `v_outbox_due` filters
+  on dispatch, posted, undone, claimed and attempts, and never looks at
+  `completed_at` -- measured, an edit queued behind its undo window is still
+  due to post after the card is closed. So a change made seconds before
+  closing still goes out.
 - **Ernie opens the thread and then says whose it is.** There is no map from a
   Bert install to a Discord account, so the bot is the author and the name
   from `settings` goes in as plain text -- the same way every other name this

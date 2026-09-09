@@ -23,6 +23,7 @@ import pathlib
 from support import Board, Check, FakeDiscord, GUILD, PARENT, iso
 
 import bert
+import ernie_api as api
 import ernie_extract as ex
 import ernie_load as load
 import ernie_outbox as outbox
@@ -256,8 +257,82 @@ def check_a_second_new_ticket_meets_the_one_editor_rule() -> bool:
     return c.report()
 
 
+def check_closing_a_ticket_that_has_no_thread_yet() -> bool:
+    """
+    "No such card" was true and useless.
+
+    Completing looks up a cards row, and a ticket still waiting in
+    new_threads has none -- so pressing Close on a ticket you had just
+    started answered with an error. The person meant to close it; the wait
+    for Discord is Ernie's problem, not theirs.
+
+    The intent is recorded instead, and make_threads acts on it the moment
+    the thread exists. Nothing has to be remembered and come back to.
+    """
+    c = Check("a ticket can be closed before Discord has it")
+
+    with Board() as b:
+        draft(b)
+        api.DB = b.path
+
+        # The card is on the board while it waits.
+        before = {x["thread_id"] for x in api.cards(queue=None, client=None,
+                                     include_completed=False)["cards"]}
+        c.ok("draft-1" in before, "the waiting ticket is on the board")
+
+        # Caught rather than allowed to propagate: refusing is precisely the
+        # bug, and a check that dies on it takes the whole run with it instead
+        # of saying which line failed.
+        try:
+            r = api.complete("draft-1", api.ActorBody(actor="Bella Fiore",
+                                                      key="k-close-1"))
+        except api.HTTPException as e:
+            r = {}
+            c.ok(False, f"closing it is accepted rather than refused "
+                        f"(refused with {e.status_code}: {e.detail})")
+        else:
+            c.ok(r.get("pending"), "closing it is accepted rather than refused")
+        c.ok(r.get("event_id") is None,
+             "with no event yet -- there is nothing in a thread to take back")
+
+        after = {x["thread_id"] for x in api.cards(queue=None, client=None,
+                                     include_completed=False)["cards"]}
+        c.ok("draft-1" not in after,
+             "and it leaves the board at once, not when the thread arrives")
+
+        # Idempotent, like every other write here.
+        try:
+            again = api.complete("draft-1", api.ActorBody(actor="Bella Fiore",
+                                                          key="k-close-1"))
+        except api.HTTPException:
+            again = None
+        c.equal(again, r or None, "asking twice with one key answers once")
+
+        # Now the outbox catches up.
+        outbox.make_threads(b.con, FakeDiscord())
+        made = made_card(b)
+        c.ok(made is not None, "the thread is still made")
+        row = b.con.execute(
+            """SELECT c.completed_at, c.completed_by FROM cards c
+               WHERE c.thread_id = (SELECT thread_id FROM new_threads
+                                    WHERE draft_id='draft-1')""").fetchone()
+        c.ok(row is not None and row["completed_at"],
+             "and the card arrives closed")
+        c.equal(row["completed_by"], "Bella Fiore", "by whoever closed it")
+
+        ev = b.con.execute(
+            "SELECT verb, dispatch_after FROM events WHERE verb='completed'"
+        ).fetchone()
+        c.ok(ev is not None, "a completed event is written")
+        c.ok(ev is not None and ev["dispatch_after"],
+             "with a dispatch, so the thread says so and it can be undone")
+
+    return c.report()
+
+
 CHECKS = (check_the_title_is_read_when_the_thread_is_made,
           check_a_new_ticket_lands_where_the_board_showed_it,
           check_the_first_band_ticket_still_gets_a_rank,
           check_one_writer_decides_what_a_title_row_holds,
-          check_a_second_new_ticket_meets_the_one_editor_rule)
+          check_a_second_new_ticket_meets_the_one_editor_rule,
+          check_closing_a_ticket_that_has_no_thread_yet)

@@ -22,7 +22,7 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import ernie_changelog
 import ernie_load as load
@@ -33,6 +33,13 @@ from ernie_sync import Discord, GuildMismatch, load_env
 
 POLL_SECONDS = 30
 MAX_ATTEMPTS = 5
+# Matches ernie_api.UNDO_WINDOW_S. Duplicated rather than imported, because
+# importing the API here would pull FastAPI into the outbox for one integer --
+# the same trade MAX_ATTEMPTS already makes. Only make_threads needs it, for a
+# ticket closed before its thread existed: every other event arrives with a
+# dispatch_after the API has already worked out. tests/check_state.py holds
+# the two together.
+UNDO_WINDOW_S = 60
 CLAIM_STALE_S = 300    # a claim older than this belonged to a process that died
 
 
@@ -309,6 +316,24 @@ def make_threads(con, d: Discord) -> dict:
                        VALUES (?,?,?,?,?,?)""",
                     (str(uuid.uuid4()), tid, body, float(n + 1), ts, row["actor"]))
 
+            if row["complete_on_arrival"]:
+                # Closed while it was still a draft. Done here rather than
+                # left to Bert, which has nothing to press by then -- the card
+                # left the board when the button was pressed.
+                who = row["completed_by"] or row["actor"]
+                con.execute(
+                    "UPDATE cards SET completed_at=?, completed_by=?, "
+                    "updated_at=? WHERE thread_id=?", (ts, who, ts, tid))
+                # With a dispatch, so the thread says it closed the same way
+                # every other closure does. It is undoable from the feed from
+                # here on, which is the first moment there is anything to undo.
+                con.execute(
+                    """INSERT INTO events (event_id, occurred_at, actor_name,
+                                           thread_id, verb, dispatch_after)
+                       VALUES (?,?,?,?,?,?)""",
+                    (str(uuid.uuid4()), ts, who, tid, "completed",
+                     (datetime.now(timezone.utc)
+                      + timedelta(seconds=UNDO_WINDOW_S)).isoformat()))
             con.execute("UPDATE new_threads SET thread_id=?, posted_at=? "
                         "WHERE draft_id=?", (tid, ts, row["draft_id"]))
             counts["made"] += 1

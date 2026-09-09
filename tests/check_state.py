@@ -435,6 +435,14 @@ def check_the_attempt_limit_is_one_number() -> bool:
     c.ok(f"attempts < {api.OUTBOX_MAX_ATTEMPTS}" in view,
          f"and so does v_outbox_due ({api.OUTBOX_MAX_ATTEMPTS})")
 
+    # The undo window is duplicated for the same reason and has to hold the
+    # same way. Only make_threads needs it in the outbox -- for a ticket
+    # closed before its thread existed, where there was no API call to work
+    # out a dispatch_after -- but a copy that drifts would give that one
+    # closure a different window from every other change on the board.
+    c.equal(outbox.UNDO_WINDOW_S, api.UNDO_WINDOW_S,
+            "the undo window agrees between the API and the outbox")
+
     return c.report()
 
 

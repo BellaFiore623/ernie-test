@@ -267,7 +267,15 @@ CREATE TABLE IF NOT EXISTS new_threads (
     thread_id     TEXT,                      -- filled once Discord has it
     posted_at     TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
-    last_error    TEXT
+    last_error    TEXT,
+    -- Closed before Discord had it. Completing a ticket looks up a cards row
+    -- and a draft has none, so it used to answer "no such card" -- which is
+    -- true and useless: the person meant to close it, and making them wait
+    -- for the thread and remember to come back is the wrong half of the
+    -- answer. Flagged here instead, and make_threads closes it the moment the
+    -- thread exists, so the intent survives the wait.
+    complete_on_arrival INTEGER NOT NULL DEFAULT 0,
+    completed_by  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_new_threads_due ON new_threads(posted_at, attempts);
