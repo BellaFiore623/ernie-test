@@ -3078,7 +3078,7 @@ class Stats(QWidget):
         outer.setContentsMargins(4, 10, 10, 8)
         outer.setSpacing(6)
 
-        self.head = QLabel("How it's going")
+        self.head = QLabel("Data")
         f = QFont()
         f.setPointSize(10)
         f.setWeight(QFont.DemiBold)
@@ -3088,7 +3088,7 @@ class Stats(QWidget):
         self.fold_btn = QPushButton(GLYPH_RIGHT)
         self.fold_btn.setFixedSize(24, 24)
         self.fold_btn.setCursor(Qt.PointingHandCursor)
-        self.fold_btn.setToolTip("Hide the figures")
+        self.fold_btn.setToolTip("Hide the data")
         self.fold_btn.setStyleSheet(
             f"QPushButton {{ border:1px solid {T.LINE}; border-radius:3px;"
             f" background:{T.SURFACE}; color:{T.MUTED}; font-size:11px; }}"
@@ -3283,8 +3283,8 @@ class Stats(QWidget):
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (4, 10, 10, 8)))
         self.fold_btn.setText(GLYPH_LEFT if yes else GLYPH_RIGHT)
-        self.fold_btn.setToolTip("Show the figures" if yes
-                                 else "Hide the figures")
+        self.fold_btn.setToolTip("Show the data" if yes
+                                 else "Hide the data")
 
         # Folded, the block that was absorbing the spare height is hidden and
         # the button drifts to the middle of the spine.
