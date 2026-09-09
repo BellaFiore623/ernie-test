@@ -1170,12 +1170,15 @@ half was wrong: the fills carried chroma 26.6 against dark's 23.6, so
 desaturating alone would have flattened the board without touching the cause.
 The cause was that light had no brightness separation to lose. Against the well
 the cards sit in, the weakest of them stood at a contrast ratio of **1.01** and
-the strongest at 1.16, where the same cards in dark run 1.19 to 1.41. Eyes read
+the strongest at 1.16, where the same cards in dark run 1.19 to 1.36. Eyes read
 a ratio, so at 1.01 a card was not standing off its board at all and colour was
 doing the whole structural job alone -- colour shouting to be the only thing
 telling a card from the space around it is what "overwhelming" was. The floor,
-the columns and the chips came down and the cards stayed up: every band is 1.34
-now, inside dark's range. With brightness carrying part of the separation the
+the columns and the chips came down and the cards stayed up: 1.33 to 1.35 now,
+inside dark's range. Measure the fill a card actually wears, which is its
+**tag's** tint and not `band_card` -- `card_skin` reaches for `T.QUEUE` first,
+and `band_card` only for unassigned, so checking that dict alone would be
+holding the one fill most cards never get. With brightness carrying part of the separation the
 fills could give up 28% of their chroma -- 26.6 to 19.2, quieter than dark --
 and nothing became harder to find. Two invariants come out of it, both held by
 `tests/check_palette.py`: **a card stands off the well in both themes**, by a

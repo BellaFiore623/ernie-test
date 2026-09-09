@@ -786,14 +786,21 @@ def check_a_card_stands_off_the_board_it_sits_on() -> bool:
     c = Check("a card stands off the board it sits on")
 
     # Below this a card reads as a tint of the board rather than a thing on
-    # it. Dark's weakest band is 1.19 and light is 1.34; the floor is under
+    # it. Dark's weakest fill is 1.19 and light's is 1.33; the floor is under
     # both, so it catches a palette going flat rather than policing taste.
     CARD_MIN = 1.15
 
     for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
         well = palette["well"]
-        for band, skin in palette["band_card"].items():
-            fill = skin[0]
+        # Every fill a card can wear, taken the way card_skin takes them: the
+        # tag's tint for an ordinary card, neutral for one with no tag, and
+        # band_card's unassigned for one in Needs Attention. Checking only
+        # band_card would have measured the one fill most cards never get.
+        fills = {f"{q} tag": v[1] for q, v in palette["queue"].items()}
+        fills["no tag"] = palette["neutral"][1]
+        fills.update({f"{b} card": v[0]
+                      for b, v in palette["band_card"].items()})
+        for band, fill in fills.items():
             c.ok(contrast(fill, well) >= CARD_MIN,
                  f"{name}: a {band} card stands off the well "
                  f"({contrast(fill, well):.2f} >= {CARD_MIN})")
@@ -826,9 +833,14 @@ def check_the_ink_follows_the_ground() -> bool:
                 got = contrast(palette[ink], palette[ground])
                 c.ok(got >= TEXT_MIN,
                      f"{name}: {ink} on {ground} is {got:.1f}:1")
-        # Ink on every card fill, which is the text people actually read.
-        for band, skin in palette["band_card"].items():
-            got = contrast(palette["ink"], skin[0])
+        # Ink on every fill a card can wear, which is the text people
+        # actually read -- the tag tints included, not just band_card.
+        fills = {f"{q} tag": v[1] for q, v in palette["queue"].items()}
+        fills["no tag"] = palette["neutral"][1]
+        fills.update({f"{b} card": v[0]
+                      for b, v in palette["band_card"].items()})
+        for band, fill in fills.items():
+            got = contrast(palette["ink"], fill)
             c.ok(got >= TEXT_MIN,
                  f"{name}: ink on a {band} card is {got:.1f}:1")
 
