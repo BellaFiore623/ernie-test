@@ -1189,28 +1189,60 @@ now and recede; the rule under the toolbar is what separates it. That is a
 change to both themes on purpose: dark had the same two slabs sitting proud of
 everything around them.
 
-**Light mode separates by brightness; colour is the second signal, not the
-only one.** It was reported as too bright and too saturated, and the second
-half was wrong: the fills carried chroma 26.6 against dark's 23.6, so
-desaturating alone would have flattened the board without touching the cause.
-The cause was that light had no brightness separation to lose. Against the well
-the cards sit in, the weakest of them stood at a contrast ratio of **1.01** and
-the strongest at 1.16, where the same cards in dark run 1.19 to 1.36. Eyes read
-a ratio, so at 1.01 a card was not standing off its board at all and colour was
-doing the whole structural job alone -- colour shouting to be the only thing
-telling a card from the space around it is what "overwhelming" was. The floor,
-the columns and the chips came down and the cards stayed up: 1.33 to 1.35 now,
-inside dark's range. Measure the fill a card actually wears, which is its
-**tag's** tint and not `band_card` -- `card_skin` reaches for `T.QUEUE` first,
-and `band_card` only for unassigned, so checking that dict alone would be
-holding the one fill most cards never get. With brightness carrying part of the separation the
-fills could give up 28% of their chroma -- 26.6 to 19.2, quieter than dark --
-and nothing became harder to find. Two invariants come out of it, both held by
-`tests/check_palette.py`: **a card stands off the well in both themes**, by a
-ratio with a floor rather than by hue, and the ink follows the ground when the
-ground moves. `muted` was measured against every surface it is drawn on, not
-just the obvious one: its worst pairing had slipped to 4.2:1 on `beside`,
-and it went two steps darker to bring the whole set back over 4.5:1.
+**Light mode's job is the same one dark already does, arrived at from the
+other end.** It was reported as overwhelming twice, and the first answer was
+wrong in a way worth keeping written down. The reasoning was that light's cards
+had no brightness separation from what they sat on, so colour was carrying the
+whole structural job -- and the measurement behind it was taken against `well`,
+which is the floor *beside* the board column and not what a card is drawn on.
+`#boardColumn` takes `T.CANVAS` and `#bandPanel` inside it is transparent, so
+the ground under every card is the canvas; read off a screenshot to settle it,
+every pixel between two cards is `T.CANVAS`. Measured there, light's fills stood
+at 1.19x their ground where dark's stand at 1.18-1.26. They were never the
+problem. Deepening the neutrals to widen a gap that was already the right size
+is how light came to look like it was drawn on slate.
+
+**The gap was the border, not the fill.** The stripe that edges a card is one
+hex shared by both themes, and a colour chosen to blaze on a near-black card is
+a pastel on a near-white one: dark's borders stand at **4.96-7.00x** their own
+fill, light's stood at **1.64-2.34x**. That is the whole of it. The card had an
+outline in dark and a suggestion of one in light, and a board of shapes with no
+edges is what "overwhelming" describes -- nothing tells you where anything
+stops, so the eye reads the colour instead.
+
+So the separation is spent the other way now. The ground is a clean light grey
+and the cards are near-white -- `well` the floor, `canvas` the sections,
+`surface` above that -- and the **border** carries the tag: same hue, same
+saturation, taken down in lightness until it holds an edge, which puts light at
+4.44-4.54x. Turning the saturation up instead would have been a different
+colour meaning the same thing, which is the one move not available here. With
+the border doing that work the fills came down to a whisper: **chroma 6-12,
+against 15-29 before and 17-25 in dark.** Worst text pairing anywhere is 5.7:1.
+
+Three rules come out of it, all held by `tests/check_palette.py`:
+
+- **A card stands off the canvas** -- the canvas, because that is the ground it
+  is actually drawn on. The floor flatters both themes by a step no card ever
+  sits next to.
+- **A card is edged in its own tag**, at a ratio with a floor, and it is the
+  same hue in both themes. That pairing is the invariant: a fill may be as
+  quiet as it likes as long as the border is loud, and the check says so.
+- **The band header is accented, not filled.** The colour is a 4px bar down
+  its left and the heading's ink; the strip behind them is barely tinted, and
+  must never carry more colour than the cards under it. That last is measured
+  against the theme's own fills rather than a flat number -- 17 levels of
+  chroma on a near-black strip is not the amount of colour 17 is on a
+  near-white one, so a shared cap would let light shout or fail dark for a
+  tint nobody can see.
+
+**A control drawn by the style is drawn for somebody else's application.**
+`BTN_HIT` set the hit area and the type size and left the rest to Fusion, and
+what Fusion draws is a vertical grey gradient with a hard bevel -- measured down
+a card, the Edit button ran #F9FAFB to #C0C2C7 over 32 pixels, more range than
+anything else on the board, on the one control that appears twice per card.
+`btn_css()` is the flat version: the surface tone, the hairline every other edge
+uses, and the accent arriving only on hover. Both themes, because Fusion was
+doing it to both.
 
 **No colour literals in Bert.** Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to

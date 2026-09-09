@@ -17,12 +17,16 @@ that ships.
 """
 
 import ast
+import colorsys
 import pathlib
 
 from support import Check
 
 import bert
 import ernie_extract as ex
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def rgb(h):
@@ -47,6 +51,12 @@ def contrast(a, b):
         return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
     hi, lo = sorted((rel(a), rel(b)), reverse=True)
     return (hi + 0.05) / (lo + 0.05)
+
+
+def hue_of(h):
+    """Where a colour sits on the wheel, in degrees. Meaningless for a grey."""
+    r, g, b = (c / 255 for c in rgb(h))
+    return colorsys.rgb_to_hls(r, g, b)[0] * 360
 
 
 def hue_spread(h):
@@ -786,12 +796,20 @@ def check_a_card_stands_off_the_board_it_sits_on() -> bool:
     c = Check("a card stands off the board it sits on")
 
     # Below this a card reads as a tint of the board rather than a thing on
-    # it. Dark's weakest fill is 1.19 and light's is 1.33; the floor is under
-    # both, so it catches a palette going flat rather than policing taste.
-    CARD_MIN = 1.15
+    # it. Dark's weakest is its unassigned card at 1.12 -- the one with no
+    # colour of its own, which leans on its red outline -- and light's is
+    # 1.17. The floor is under both, so it catches a palette going flat
+    # rather than policing taste.
+    CARD_MIN = 1.10
 
     for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
-        well = palette["well"]
+        # The canvas, because that is what a card is actually drawn on:
+        # `#boardColumn` takes T.CANVAS and `#bandPanel` inside it is
+        # transparent. The well is the floor *under* the column and is only
+        # visible beside it -- measuring against that flattered both themes
+        # by a step neither card ever sits next to. Read off a screenshot to
+        # settle it: every pixel between two cards is the canvas.
+        well = palette["canvas"]
         # Every fill a card can wear, taken the way card_skin takes them: the
         # tag's tint for an ordinary card, neutral for one with no tag, and
         # band_card's unassigned for one in Needs Attention. Checking only
@@ -810,6 +828,93 @@ def check_a_card_stands_off_the_board_it_sits_on() -> bool:
             c.ok(lum(fill) > lum(well),
                  f"{name}: a {band} card is brighter than the well, as in "
                  f"the other theme")
+
+    return c.report()
+
+
+def check_a_card_is_edged_in_its_own_tag() -> bool:
+    """
+    The border has to stand off the fill it encloses, or it is decoration.
+
+    This is the half that was missing when light was reported as overwhelming.
+    Its fills separated from the board about as well as dark's -- 1.19 against
+    1.18-1.26 -- but its borders stood at 1.6-2.3 over their own fill where
+    dark's stand at 5-7. The same stripe hex was being used on both, and a
+    colour picked to blaze on a near-black card is a pastel on a near-white
+    one. So light's stripes go down in lightness and **not** in saturation:
+    same hue, same cast, dark enough to hold an edge.
+
+    With the border carrying the tag, the fill no longer has to, which is what
+    let the fills come down to a whisper.
+    """
+    c = Check("a card is edged in its own tag")
+
+    # Dark's weakest is 4.96 and light's 4.44. Under this the edge stops
+    # reading as a border and the card loses its outline.
+    EDGE_MIN = 3.5
+
+    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
+        for q, (stripe, fill, _) in palette["queue"].items():
+            got = contrast(stripe, fill)
+            c.ok(got >= EDGE_MIN, f"{name}: the {q} stripe stands off a {q} "
+                                  f"card ({got:.2f} >= {EDGE_MIN})")
+
+    # And it is the same colour in both themes, which is the rule that stops
+    # "deeper for light" turning into "a different colour for light". Hue
+    # only: the lightness is exactly what differs, on purpose.
+    for q in bert.LIGHT["queue"]:
+        a = hue_of(bert.LIGHT["queue"][q][0])
+        b = hue_of(bert.DARK["queue"][q][0])
+        gap = min(abs(a - b), 360 - abs(a - b))
+        c.ok(gap <= 12, f"{q} is the same colour in both themes "
+                        f"({a:.0f}deg and {b:.0f}deg)")
+
+    return c.report()
+
+
+def check_a_band_header_is_accented_not_filled() -> bool:
+    """
+    The band's colour belongs on its bar and its heading, not across its width.
+
+    A header washed in the band's colour put a second colour behind every
+    ticket in the run -- the thing `band_tint` was already cut back to the
+    header alone for. It was still a fill: chroma 24 at the top of the light
+    ramp, under cards whose own fills had come down to single figures, so the
+    heading strip was the most coloured thing on the board and the tickets
+    read as sitting inside it. The colour is in the 4px bar and the ink now.
+    """
+    c = Check("a band header is accented, not filled")
+
+    # Measured against the theme's own cards rather than a flat number:
+    # 17 levels of chroma on a near-black strip is not the same amount of
+    # colour as 17 on a near-white one, so a shared cap would either let light
+    # shout or call dark a failure for a tint nobody can see. The invariant
+    # that holds in both is the one that was actually broken -- the strip
+    # behind a run of cards was more coloured than the cards on it.
+    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
+        loudest = max(hue_spread(v[1]) for v in palette["queue"].values())
+        for band, tint in palette["band_tint"].items():
+            got = hue_spread(tint)
+            c.ok(got <= loudest,
+                 f"{name}: the {band} header carries less colour than the "
+                 f"cards under it ({got} <= {loudest})")
+            # The heading's own ink is where the colour goes instead, so it
+            # has to be the loud one.
+            c.ok(hue_spread(palette["band_text"][band]) >= got
+                 or hue_spread(palette["band_text"][band]) == 0,
+                 f"{name}: and the {band} heading's ink carries more of the "
+                 f"colour than the strip behind it")
+
+    # The bar itself, read off the source: a header that stopped drawing one
+    # would leave the band with no colour at all and no check would notice.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    band = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Band")
+    body = ast.get_source_segment(src, band) or ""
+    head = body.split("#bandHeader")[1].split("}}")[0]
+    c.ok("border-left" in head, "the header draws a bar down its left")
+    c.ok("accent" in head, "in the band's own colour")
 
     return c.report()
 
@@ -861,4 +966,6 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_a_finished_work_item_says_so,
           check_starting_a_ticket_is_not_editing_one,
           check_a_card_stands_off_the_board_it_sits_on,
+          check_a_card_is_edged_in_its_own_tag,
+          check_a_band_header_is_accented_not_filled,
           check_the_ink_follows_the_ground)

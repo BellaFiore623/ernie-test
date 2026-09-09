@@ -172,6 +172,13 @@ DIRECTIONS = [("", "\u2014"), ("leaving", "Leaving"), ("coming_back", "Coming ba
 # it is the same in both themes.
 BTN_HIT = "font-size:11px; padding:6px 14px; "
 
+# Softened corners, the one purely cosmetic number here. A card is the big
+# shape on the board and takes the larger radius; a rail row is 26px tall and
+# anything more than a hint of a curve on one eats its own corner.
+CARD_RADIUS = 5
+ROW_RADIUS = 4
+BTN_RADIUS = 5
+
 
 # --------------------------------------------------------------------------
 # Colour
@@ -183,64 +190,78 @@ BTN_HIT = "font-size:11px; padding:6px 14px; "
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    # Nothing here is pure white, and the light end sits a notch below where
-    # it started. `surface` was #FFFFFF -- luminance 1.000 -- with the canvas
-    # at 0.920 behind it and every card fill between 0.76 and 0.86, so the
-    # board was a field of near-white and reading it for an afternoon was
-    # tiring. Everything below came down together, which keeps the order that
-    # carries the meaning: surface above canvas above beside, and each card a
-    # shade deeper than the wash it sits on. The inks did not move, so every
-    # pairing got *more* contrast rather than less.
-    "ink": "#1F2124", "muted": "#484D51", "line": "#C0C6CD",
-    "surface": "#EFF1F3", "canvas": "#D2D5D8",
-    # Behind and to the right of the board column, a shade under the canvas.
-    "beside": "#C0C2C6",
+    # A light-grey floor, sections a step above it, and near-white cards -- the
+    # shape dark already had, arrived at from the other end. The earlier light
+    # palette put every one of those within a hair of the others and left the
+    # tag colours to say where a card began; deepening the floor to separate
+    # them worked, and made the application look like it was drawn on slate.
+    # This is the same separation spent the other way: the ground goes quiet
+    # and pale, and the *border* carries the tag. Measured against dark, whose
+    # borders stand at 5-7x their own fill where light's stood at 1.6-2.3.
+    "ink": "#1F2124", "muted": "#484D51", "line": "#CBD1D8",
+    "surface": "#FAFBFC", "canvas": "#E3E6EA",
+    # Under the canvas in light and over it in dark, because it doubles as a
+    # raised control there. It is the one token that means opposite things in
+    # the two themes, which is why it cannot be the floor.
+    "beside": "#CFD3D9",
     # The floor. Everything with content in it -- the board column, the rail,
     # the figures, the feed -- sits on the canvas one step above this, so a
     # section reads as a thing on a surface rather than as a region of one
-    # flat colour. `beside` cannot do this job: it is under the canvas in
-    # light and above it in dark, because it doubles as a raised control
-    # there, so it means opposite things in the two themes.
-    "well": "#C6C9CD",
-    "amber_bg": "#F7EBD4", "amber_fg": "#7C5107",
-    "red_bg": "#F6E2E2", "red_fg": "#8E2828", "red_edge": "#C43C3C",
-    "ok_fg": "#2A6130", "ok_bg": "#E3EDE3", "accent": "#2B6CB0",
-    "info_bg": "#DEE7F4", "info_fg": "#1B3A5C",
+    # flat colour.
+    "well": "#D8DBE1",
+    # The badge fills came up with the cards under them. A chip drawn for a
+    # 0.86 card is a smudge on a 0.94 one.
+    "amber_bg": "#FBF0DC", "amber_fg": "#7C5107",
+    "red_bg": "#FBE8E8", "red_fg": "#8E2828", "red_edge": "#C43C3C",
+    "ok_fg": "#2A6130", "ok_bg": "#E9F2E9", "accent": "#2B6CB0",
+    "info_bg": "#E6EDF7", "info_fg": "#1B3A5C",
     "grey_fg": "#555B60",
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#D8DADD",
+    "chip_bg": "#ECEEF1",
     # Text on an accent-filled button, and the wash under a hovered bubble.
-    "on_accent": "#FFFFFF", "hover_bg": "#CBDCF1",
-    "neutral": ("#8E949A", "#E3E6EA", "#33373A"),
+    "on_accent": "#FFFFFF", "hover_bg": "#DCE8F7",
+    "neutral": ("#6F757B", "#F8F8F8", "#33373A"),
+    # (stripe, fill, ink). The stripe is the tag colour taken down in
+    # lightness and **not** in saturation -- same hue, same cast, dark enough
+    # to hold an edge against a near-white card. Turning the saturation up
+    # instead would have made light's borders louder than dark's, which is a
+    # different colour meaning the same thing.
     "queue": {
-        "PROD": ("#EF9F27", "#F1E6D4", "#633806"),
-        "OPS":  ("#97C459", "#E1EAD6", "#27500A"),
-        "ENG":  ("#6F9BD1", "#E1E8F1", "#1B3A5C"),
-        "CS":   ("#B08BD4", "#ECE4F3", "#3D2154"),
+        "PROD": ("#A1660C", "#FCF7F0", "#633806"),
+        "OPS":  ("#5B7C2C", "#F6FAEE", "#27500A"),
+        "ENG":  ("#3C75BA", "#F5F8FD", "#1B3A5C"),
+        "CS":   ("#8F5AC2", "#FAF7FD", "#3D2154"),
     },
-    # A wash behind each band's cards. Unassigned is the one neutral in the
-    # ramp on purpose: it is not a priority, it is the absence of one, and
-    # wearing a near-critical red said the opposite of that across the room.
+    # The band header's strip, and only its strip -- a shade *above* the
+    # column, so the header reads as raised rather than as a coloured band
+    # across the board. The colour is in the 4px bar down its left and in the
+    # heading's ink; this is barely tinted (chroma 10 at most, against 24
+    # before) so that a card sitting under it wears the only real colour in
+    # the run. Dark's headers stand 1.12-1.20x over their column; these are
+    # 1.11x over theirs.
     "band_tint": {
-        "unassigned": "#EBDCDC", "critical": "#EBDCDC", "high": "#E7DFCF",
-        "medium": "#D9E0E8", "low": "#DEE0E2",
+        "unassigned": "#F7F0F0", "critical": "#F7F0F0", "high": "#F5F1EB",
+        "medium": "#EEF2F7", "low": "#F2F2F2",
     },
-    # The card, a shade deeper than its wash -- except unassigned, which is
-    # the plain surface, the other way about. A blank card reads as one
-    # nobody has picked up, and it leaves red to mean one thing on this
-    # board: a card that needs a person. Those keep their outline over it.
+    # (fill, outline). Near-white with a whisper of the band, and the outline
+    # is what says which band it is -- unchanged, because those are the
+    # severity marks. Unassigned is the plain neutral, the one card with no
+    # colour of its own: it is not a priority, it is the absence of one, and a
+    # blank card reads as one nobody has picked up. The red 2px outline over
+    # it is the thing asking for a person, and it is the only red on the board.
     "band_card": {
-        "unassigned": ("#F1E4E4", "#C43C3C"), "critical": ("#F8E2E2", "#C43C3C"),
-        "high": ("#F4E5CF", "#D19434"), "medium": ("#DFE8F3", "#7099CB"),
-        "low": ("#E5E7E9", "#B7BCC2"),
+        "unassigned": ("#F9F9FA", "#C43C3C"), "critical": ("#FDF4F4", "#C43C3C"),
+        "high": ("#FCF7F0", "#D19434"), "medium": ("#F5F8FD", "#7099CB"),
+        "low": ("#F8F8F8", "#B7BCC2"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
         "unassigned": "#8E2828", "critical": "#8E2828", "high": "#7C5107",
         "medium": "#265F9C", "low": "#4C5257",
     },
+
 }
 
 # The neutral ramp is lifted from the PortalBear prototype, which had already
@@ -585,6 +606,30 @@ def tip_css() -> str:
             f" border:1px solid {T.LINE}; padding:4px 6px; }}")
 
 
+def btn_css() -> str:
+    """A plain button, drawn from the palette rather than left to the style.
+
+    `BTN_HIT` sets the hit area and the type size and stops there, so Fusion
+    supplied the rest -- and what Fusion supplies is a vertical grey gradient
+    with a hard 1px bevel. Measured down a card, the Edit button ran from
+    #F9FAFB to #C0C2C7 over 32 pixels: a gradient with more range in it than
+    anything else on the board, on the one control that appears twice per
+    card. It read as an old dialog dropped onto a clean surface, and it did
+    the same to dark.
+
+    Flat, on the surface tone, with the accent arriving only on hover. The
+    border is the hairline every other edge on the board uses.
+    """
+    return (f"QPushButton {{ {BTN_HIT} background:{T.SURFACE};"
+            f" border:1px solid {T.LINE}; border-radius:{BTN_RADIUS}px;"
+            f" color:{T.INK}; }}"
+            f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.10)};"
+            f" border-color:{rgba(T.ACCENT, 0.45)}; }}"
+            f"QPushButton:pressed {{ background:{rgba(T.ACCENT, 0.18)}; }}"
+            f"QPushButton:disabled {{ color:{T.MUTED};"
+            f" background:transparent; border-color:{T.LINE}; }}")
+
+
 def rgba(hex_colour, alpha):
     """A washed-out version of a palette colour, for hairlines."""
     h = hex_colour.lstrip("#")
@@ -596,7 +641,7 @@ def field() -> str:
     """Type into these. A function, not a constant: a constant would be built
     once at import, in whichever palette happened to be loaded first."""
     return (f"background:{T.SURFACE}; border:1px solid {rgba(T.INK, 0.28)};"
-            f" border-radius:3px; padding:4px 6px; color:{T.INK};")
+            f" border-radius:5px; padding:4px 6px; color:{T.INK};")
 
 
 def clip(text, width):
@@ -1007,7 +1052,7 @@ def chip(text, bg, fg, dashed=False):
     lab = QLabel(text)
     lab.setStyleSheet(
         f"background:{bg}; color:{fg}; border:1px "
-        f"{'dashed' if dashed else 'solid'} {fg}44; border-radius:3px;"
+        f"{'dashed' if dashed else 'solid'} {fg}44; border-radius:5px;"
         f"padding:1px 6px; font-size:11px;")
     lab.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
     return lab
@@ -1471,7 +1516,7 @@ class WorkBar(QWidget):
             # A darker frame than the fields above it, and a prompt in the
             # ordinary muted text colour rather than Qt's near-invisible grey:
             self.entry.setStyleSheet(
-                f"QLineEdit {{ background:{T.SURFACE}; border-radius:3px;"
+                f"QLineEdit {{ background:{T.SURFACE}; border-radius:5px;"
                 f" padding:4px 6px; font-size:11px;"
                 f" border:1px solid {rgba(T.INK, 0.38)}; }}"
                 f"QLineEdit:hover {{ border:1px solid {T.ACCENT}; }}"
@@ -1666,7 +1711,8 @@ class Card(QFrame):
         left = T.RED_EDGE if self.problem else T.ACCENT if self.editing else stripe
         self.setStyleSheet(
             f"Card {{ background:{fill}; border:{px}px solid {edge};"
-            f" border-left:{4 if self.problem else 3}px solid {left}; }}")
+            f" border-left:{4 if self.problem else 3}px solid {left};"
+            f" border-radius:{CARD_RADIUS}px; }}")
 
     def _clear(self):
         # These belong to the view and are about to be deleted. Dropping the
@@ -1808,14 +1854,14 @@ class Card(QFrame):
                 foot.addWidget(chip(issue.replace("_", " "), T.AMBER_BG, T.AMBER_FG))
 
         self.edit_btn = QPushButton("Edit")
-        self.edit_btn.setStyleSheet(BTN_HIT)
+        self.edit_btn.setStyleSheet(btn_css())
         self.edit_btn.clicked.connect(self.enter_edit)
         foot.addWidget(self.edit_btn)
 
         # Qt puts a button's icon on the left, always.
         self.done_btn = QPushButton("Complete ")
         self.done_btn.setLayoutDirection(Qt.RightToLeft)
-        self.done_btn.setStyleSheet(BTN_HIT)
+        self.done_btn.setStyleSheet(btn_css())
         self.done_btn.setIcon(tick_icon(T.OK_FG))
         self.done_btn.setIconSize(QSize(12, 12))
         self.done_btn.clicked.connect(lambda: self.board.complete(self.thread_id))
@@ -1958,7 +2004,7 @@ class Card(QFrame):
         row = QHBoxLayout()
         row.addStretch()
         cancel = QPushButton("Cancel")
-        cancel.setStyleSheet(BTN_HIT)
+        cancel.setStyleSheet(btn_css())
         cancel.clicked.connect(self.exit_edit)
         row.addWidget(cancel)
         save = QPushButton("Create ticket" if self.is_new else "Save")
@@ -2266,10 +2312,14 @@ class Band(QWidget):
             f"color:{accent}; font-size:11px; background:transparent;")
 
         self.header.setObjectName("bandHeader")
-        # Scope to the header itself.
+        # Scope to the header itself. The bar is where the band's colour goes:
+        # 4px of the real thing down the left, the heading's ink beside it, and
+        # a strip behind them that is barely tinted at all. Filling the strip
+        # instead put a second colour behind every ticket in the run, which is
+        # what a card's own fill is for.
         self.header.setStyleSheet(
             f"#bandHeader {{ background:{tint};"
-            f" border-left:3px solid {accent}; }}")
+            f" border-left:4px solid {accent}; border-radius:4px; }}")
 
         # Only the band that has something to say gets a label. An empty one
         # was made for the other four and then never added to anything, and a
@@ -2299,7 +2349,7 @@ class Band(QWidget):
         self.add_btn.setToolTip(f"Start a ticket in {BAND_LABEL[priority]}")
         self.add_btn.setStyleSheet(
             f"QPushButton {{ {BTN_HIT} border:1px solid {rgba(accent, 0.45)};"
-            f" border-radius:3px; color:{accent}; background:transparent;"
+            f" border-radius:5px; color:{accent}; background:transparent;"
             f" font-size:11px; }}"
             f"QPushButton:hover {{ background:{rgba(accent, 0.14)}; }}"
             f"QPushButton:disabled {{ color:{T.MUTED};"
@@ -2319,8 +2369,10 @@ class Band(QWidget):
         self.panel.setObjectName("bandPanel")
         self.panel.setStyleSheet("#bandPanel { background:transparent; }")
         self.lay = QVBoxLayout(self.panel)
-        self.lay.setContentsMargins(8, 8, 8, 8)
-        self.lay.setSpacing(8)
+        # Cards stacked at 8px read as one block with lines through it. The
+        # extra two are what let each one be seen as a card.
+        self.lay.setContentsMargins(10, 10, 10, 12)
+        self.lay.setSpacing(10)
         outer.addWidget(self.panel)
 
         # Shown only while a drag is running and this band is empty. Without
@@ -2537,7 +2589,8 @@ class RailRow(QFrame):
         # keeping a queue stripe, which at 26px tall is most of its edge.
         left = "" if needs_triage(data) else f" border-left:3px solid {stripe};"
         self.setStyleSheet(f"RailRow {{ background:{fill};"
-                           f" border:{px}px solid {edge};{left} }}" + tip_css())
+                           f" border:{px}px solid {edge};{left}"
+                           f" border-radius:{ROW_RADIUS}px; }}" + tip_css())
         self.setCursor(Qt.OpenHandCursor)
 
         lay = QVBoxLayout(self)
@@ -2772,7 +2825,7 @@ class Rail(QWidget):
         self.fold_btn.setCursor(Qt.PointingHandCursor)
         self.fold_btn.setToolTip("Hide the running order")
         self.fold_btn.setStyleSheet(
-            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:3px;"
+            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:5px;"
             f" background:{T.SURFACE}; color:{T.MUTED}; font-size:11px; }}"
             f"QPushButton:hover {{ background:#EAF1FA; color:{T.ACCENT}; }}")
         self.fold_btn.clicked.connect(self.toggle_fold)
@@ -3131,7 +3184,12 @@ class Stats(QWidget):
         # and it went unnoticed for as long as this and the window
         # behind it were the same colour.
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"Stats {{ background:{T.CANVAS}; }}" + tip_css())
+        # The floor, not the canvas. The rail and the board are worked
+        # in -- dragged, dropped into, typed at -- and the figures are
+        # read. Putting it a step down leaves the work area as the one
+        # raised thing on the window and separates the two without a
+        # rule or a border to do it.
+        self.setStyleSheet(f"Stats {{ background:{T.WELL}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 10, 10, 8)
@@ -3149,7 +3207,7 @@ class Stats(QWidget):
         self.fold_btn.setCursor(Qt.PointingHandCursor)
         self.fold_btn.setToolTip("Hide the data")
         self.fold_btn.setStyleSheet(
-            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:3px;"
+            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:5px;"
             f" background:{T.SURFACE}; color:{T.MUTED}; font-size:11px; }}"
             f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.14)};"
             f" color:{T.ACCENT}; }}")
@@ -5353,7 +5411,7 @@ class Bert(QMainWindow):
                 b.setCursor(Qt.PointingHandCursor)
                 b.setStyleSheet(
                     f"QPushButton {{ {BTN_HIT}"
-                    f" border:1px solid {T.ACCENT}; border-radius:3px;"
+                    f" border:1px solid {T.ACCENT}; border-radius:5px;"
                     f" color:{T.ACCENT}; background:{T.SURFACE}; }}"
                     f"QPushButton:hover {{ background:#EAF1FA; }}"
                     f"QPushButton:disabled {{ color:{T.MUTED}; border-color:{T.LINE}; }}")
