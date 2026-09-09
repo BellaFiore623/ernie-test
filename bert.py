@@ -2043,16 +2043,16 @@ class Card(QFrame):
         return bool(self.f_work.added() or self.f_work.removed()
                     or self.f_work.undone())
 
-    def save(self):
+    def save(self) -> bool:
+        """True if the write landed. Closing Bert waits on the answer."""
         if self.is_new:
-            self.board.create_ticket(self, {
+            return self.board.create_ticket(self, {
                 "title": self.f_title.text().strip(),
                 "priority": self.data["priority"],
                 "work_add": self.f_work.added(),
                 "first_message": (self.f_first.text().strip()
                                   if self.f_first else ""),
             })
-            return
         fields = {
             "title": self.f_title.text().strip(),
             "client_override": self._override(),
@@ -2065,7 +2065,7 @@ class Card(QFrame):
         base = getattr(self, "_edit_base", None)
         # Put the card back in view mode before the write.
         self.exit_edit()
-        self.board.save_edits(self.thread_id, fields, base)
+        return self.board.save_edits(self.thread_id, fields, base)
 
     def _tick_off(self, item_id):
         self.board.finish_item(self.thread_id, item_id)
@@ -3879,10 +3879,22 @@ class Bert(QMainWindow):
         catch is closing Bert and then shutting the whole stack down on top of
         something that hasn't gone out yet.
         """
-        n, unshared = self._owed(self.health)
         # A theme swap closes this window and opens another one. Nothing is
         # being shut down, so there is nothing to warn about.
-        if self._swapping_theme or not self.connected or not (n or unshared):
+        if self._swapping_theme:
+            return super().closeEvent(ev)
+
+        # A third debt, and a different kind from the other two. Those reach
+        # Discord whether Bert is open or not, which is why their warning is
+        # about shutting the *stack* down -- but an editor nobody has saved is
+        # gone the moment this window shuts, and it is the only one of the
+        # three that is lost with the stack already down. So it is asked
+        # first, and before `connected` is looked at.
+        if not self._editor_may_close():
+            return ev.ignore()
+
+        n, unshared = self._owed(self.health)
+        if not self.connected or not (n or unshared):
             return super().closeEvent(ev)
 
         q = self.health.get("queued") or {}
@@ -3916,6 +3928,51 @@ class Bert(QMainWindow):
         if ask == QMessageBox.Yes:
             return super().closeEvent(ev)
         ev.ignore()
+
+    def _editor_may_close(self):
+        """Ask about an unsaved editor. False means stay open.
+
+        The same three-way the second click on Edit offers, and for the same
+        reason: refusing to close would leave somebody to find the editor
+        themselves, and closing without asking is what this exists to stop.
+        Keeping it open is the default, because it is the one that loses
+        nothing.
+        """
+        editor = (self._card_widget(self.editing_card)
+                  if self.editing_card else None)
+        if editor is None or not getattr(editor, "editing", False):
+            return True
+        if not editor.is_dirty():
+            return True
+
+        starting = self.editing_card == NEW_TICKET
+        held = (editor.f_title.text().strip() or "an untitled ticket")             if starting else (editor.data.get("name") or self.editing_card)
+
+        box = QMessageBox(self)
+        box.setWindowTitle("A ticket you haven't created yet" if starting
+                           else "Unsaved changes")
+        box.setText(held)
+        box.setInformativeText(
+            "Closing Bert loses it, and nothing has been created yet."
+            if starting else
+            "Closing Bert loses the changes -- they have not been saved.")
+        save = box.addButton("Create it and close" if starting
+                             else "Save and close", QMessageBox.AcceptRole)
+        box.addButton("Close and lose it", QMessageBox.DestructiveRole)
+        stay = box.addButton("Keep writing" if starting else "Keep editing",
+                             QMessageBox.RejectRole)
+        box.setDefaultButton(stay)
+        box.exec()
+
+        if box.clickedButton() is stay:
+            return False
+        if box.clickedButton() is save:
+            # save() puts the card back in view mode *before* the write, so
+            # the editor being shut says nothing about whether it landed --
+            # it has to answer for itself. A failed save with the window
+            # already gone takes the error box with it.
+            return bool(editor.save())
+        return True
 
     def _tick_roster(self):
         """Whether the customer list is still being pulled.
@@ -4134,16 +4191,28 @@ class Bert(QMainWindow):
                                        if c["priority"] in BANDS else 99,
                                        c["rank"]))
 
-    def save_edits(self, tid, fields, base=None):
+    def save_edits(self, tid, fields, base=None) -> bool:
+        """Write the edit. False if it did not land, so a caller can wait.
+
+        Closing Bert is the caller that needs it: "Save and close" must not
+        close on top of a save that failed, or the error box goes with the
+        window and the change is gone without anyone reading why. A conflict
+        counts as not landed even when it is resolved -- somebody is being
+        asked a question, and the window must not disappear underneath it.
+        """
         if not self._guard():
-            return
+            return False
+        ok = True
         try:
             self.api.edit(tid, fields, self.name(), base=base)
         except Conflict as e:
             self._edit_conflict(tid, fields, base, e)
+            ok = False
         except Exception as e:
             QMessageBox.warning(self, "Couldn't save", str(e))
+            ok = False
         self.refresh()
+        return ok
 
     def _edit_conflict(self, tid, fields, base, e):
         if e.code == "completed":
@@ -4381,18 +4450,25 @@ class Bert(QMainWindow):
         self.editing_card = NEW_TICKET     # holds the poll off while it is open
         card.enter_edit()
 
-    def create_ticket(self, card, fields):
-        """Ask Ernie for the thread. It shows on the board straight away."""
+    def create_ticket(self, card, fields) -> bool:
+        """Ask Ernie for the thread. It shows on the board straight away.
+
+        False if nothing was asked for, so closing Bert can refuse to close
+        over it -- an untitled draft still has everything typed into it.
+        """
         if not (fields.get("title") or "").strip():
             QMessageBox.information(self, "A ticket needs a title",
                                     "Give it a title before creating it.")
-            return
+            return False
         card.exit_edit()          # drops the placeholder, releases the board
+        ok = True
         try:
             self.api.new_ticket(fields, self.name())
         except Exception as e:
             QMessageBox.warning(self, "Couldn't start that ticket", str(e))
+            ok = False
         self.refresh()
+        return ok
 
     def _short_name(self, tid):
         """A ticket in a few words, for a sentence about two of them."""

@@ -10,6 +10,7 @@ The summary message is held to the same standard: it says when it was
 published, because one machine's write time is all it can honestly know.
 """
 
+import ast
 import dataclasses
 import time
 import json
@@ -938,6 +939,96 @@ def check_bert_says_who_has_to_update() -> bool:
     return c.report()
 
 
+def check_closing_asks_about_an_unsaved_editor() -> bool:
+    """
+    Closing Bert over an open editor threw the work away without a word.
+
+    The close warning counted two debts, and both are about Discord: changes
+    queued behind the undo window, and cards the shared board has not been
+    told about. Neither is lost by closing -- the outbox posts them whether
+    Bert is open or not, which is why that warning is about shutting the
+    *stack* down.
+
+    An editor nobody has saved is the opposite. It is gone the moment the
+    window shuts, it is the only one of the three that is lost with the stack
+    already down, and it was the only one not asked about. Measured: an edit
+    in progress and a part-written new ticket both closed silently.
+    """
+    c = Check("closing asks about an editor nobody has saved")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+
+    def method(name):
+        return next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == name), None)
+
+    ask = method("_editor_may_close")
+    c.ok(ask is not None, "there is something that asks")
+
+    close = method("closeEvent")
+    body_src = ast.get_source_segment(src, close) or "" if close else ""
+    c.ok("_editor_may_close" in body_src, "and closeEvent asks it")
+
+    # Before `connected` is read. The other two debts are only worth a warning
+    # while Ernie is reachable; this one is lost either way, so a stack that
+    # is already down must not skip the question.
+    if "_editor_may_close" in body_src and "self.connected" in body_src:
+        c.ok(body_src.index("_editor_may_close") < body_src.index("self.connected"),
+             "before connectivity, because this loss is local")
+
+    # Keeping the editor open is the default, being the one that loses nothing.
+    ask_src = ast.get_source_segment(src, ask) or "" if ask else ""
+    c.ok("setDefaultButton(stay)" in ask_src,
+         "and staying is the default, as it is on the other editor dialog")
+
+    return c.report()
+
+
+def check_a_write_says_whether_it_landed() -> bool:
+    """
+    "Save and close" must not close on top of a save that failed.
+
+    Card.save() puts the card back in view mode *before* the write, so the
+    editor being shut says nothing about whether the write landed -- the first
+    guard here read editing_card and was therefore always satisfied. Measured
+    with the API down: the save failed, "Couldn't save" appeared, and Bert
+    closed anyway, taking the error box with it.
+
+    So the two write paths answer for themselves.
+    """
+    c = Check("a write says whether it landed")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def fn(cls_name, name):
+        cls = next((n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
+                    and n.name == cls_name), None)
+        if cls is None:
+            return None
+        return next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == name), None)
+
+    for cls_name, name in (("Bert", "save_edits"), ("Bert", "create_ticket"),
+                           ("Card", "save")):
+        f = fn(cls_name, name)
+        c.ok(f is not None, f"{cls_name}.{name} is there")
+        if f is None:
+            continue
+        returns = [n for n in ast.walk(f) if isinstance(n, ast.Return)]
+        c.ok(returns and all(r.value is not None for r in returns),
+             f"{cls_name}.{name} answers on every path, never a bare return")
+        if cls_name == "Bert":
+            c.ok(any(isinstance(r.value, ast.Constant) and r.value.value is False
+                     for r in returns),
+                 f"{cls_name}.{name} says False when it did not land")
+
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -957,4 +1048,6 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_dry_run_writes_no_warning,
           check_health_reports_it_with_nothing_shared,
           check_bert_says_who_has_to_update,
+          check_closing_asks_about_an_unsaved_editor,
+          check_a_write_says_whether_it_landed,
           check_a_ticket_started_in_bert_becomes_a_thread)

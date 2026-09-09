@@ -352,6 +352,23 @@ activity feed, undo, and the outbox.
   redraws by its own route, but a resize parks nothing, and without the flag
   the board kept a layout for a window that was gone until whichever poll came
   next.
+- **Bert's close warning owes three debts, and the third is a different
+  kind.** The two below are about Discord, and neither is lost by closing --
+  the outbox posts them whether Bert is open or not, which is why that warning
+  is about shutting the *stack* down. An **editor nobody has saved** is the
+  opposite: gone the moment the window shuts, the only one of the three that
+  is lost with the stack already down, and for a long time the only one not
+  asked about. `_editor_may_close()` asks it **before `connected` is read**,
+  for that reason, and offers the same three-way the second click on Edit
+  does, with *keep editing* as the default.
+  **`Card.save()` puts the card back in view mode before the write**, so the
+  editor being shut says nothing about whether the write landed -- the first
+  version of this guard read `editing_card` and was therefore always
+  satisfied. Measured with the API down: the save failed, "Couldn't save"
+  appeared, and Bert closed anyway and took the error box with it. So
+  `save_edits()` and `create_ticket()` answer `True`/`False` for themselves,
+  and a conflict counts as *not landed* even when it resolves -- somebody is
+  being asked a question and the window must not vanish underneath it.
 - **Bert's close warning owes two different debts, and must count both.**
   `queued` is events waiting out their undo window before Ernie posts them to
   the customer thread; `sharing.waiting_to_send` is cards that have moved since
