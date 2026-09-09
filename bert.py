@@ -191,7 +191,7 @@ LIGHT = {
     # carries the meaning: surface above canvas above beside, and each card a
     # shade deeper than the wash it sits on. The inks did not move, so every
     # pairing got *more* contrast rather than less.
-    "ink": "#1F2124", "muted": "#51565A", "line": "#C0C6CD",
+    "ink": "#1F2124", "muted": "#484D51", "line": "#C0C6CD",
     "surface": "#EFF1F3", "canvas": "#D2D5D8",
     # Behind and to the right of the board column, a shade under the canvas.
     "beside": "#C0C2C6",

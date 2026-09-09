@@ -35,6 +35,20 @@ def lum(h):
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
+def contrast(a, b):
+    """WCAG contrast ratio. The offset is what makes two near-blacks
+    comparable to two near-whites -- a raw luminance ratio says dark separates
+    its cards 3x and light 1x, which is an artefact of dividing tiny numbers.
+    """
+    def rel(h):
+        ch = [c / 255 for c in rgb(h)]
+        ch = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+              for c in ch]
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+    hi, lo = sorted((rel(a), rel(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
 def hue_spread(h):
     """How far from grey a colour is: 0 is neutral, higher is a real hue."""
     r, g, b = rgb(h)
@@ -755,6 +769,72 @@ def check_a_scoped_container_states_its_tooltip() -> bool:
     return c.report()
 
 
+
+def check_a_card_stands_off_the_board_it_sits_on() -> bool:
+    """
+    Brightness separates a card from its board; colour only says which tag.
+
+    Light mode was reported as overwhelming and the fills blamed, and the
+    fills were not the fault: measured, they carried less chroma than dark's
+    already. What light had was no brightness separation at all -- the
+    weakest card sat at 1.01 against the well it is drawn in, so nothing but
+    hue said where a card began, and hue was left carrying the whole
+    structural load. Both themes now clear CARD_MIN, and the floor is a
+    *ratio* rather than a difference in levels, because two near-blacks and
+    two near-whites are not comparable any other way.
+    """
+    c = Check("a card stands off the board it sits on")
+
+    # Below this a card reads as a tint of the board rather than a thing on
+    # it. Dark's weakest band is 1.19 and light is 1.34; the floor is under
+    # both, so it catches a palette going flat rather than policing taste.
+    CARD_MIN = 1.15
+
+    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
+        well = palette["well"]
+        for band, skin in palette["band_card"].items():
+            fill = skin[0]
+            c.ok(contrast(fill, well) >= CARD_MIN,
+                 f"{name}: a {band} card stands off the well "
+                 f"({contrast(fill, well):.2f} >= {CARD_MIN})")
+            # And it stands off it the same way in both themes. A card
+            # *darker* than its board in one of them is the board reading
+            # inside out, whatever the ratio says.
+            c.ok(lum(fill) > lum(well),
+                 f"{name}: a {band} card is brighter than the well, as in "
+                 f"the other theme")
+
+    return c.report()
+
+
+def check_the_ink_follows_the_ground() -> bool:
+    """
+    Move the background and the text on it has to move too.
+
+    Deepening light mode's neutrals to separate the cards took `muted` from
+    4.7:1 to 4.2:1 on the canvas without touching it -- the readability cost
+    of a change made somewhere else entirely, and invisible unless it is
+    measured. 4.5:1 is the ordinary-text line.
+    """
+    c = Check("the ink follows the ground")
+
+    TEXT_MIN = 4.5
+
+    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
+        for ink in ("ink", "muted"):
+            for ground in ("surface", "canvas", "well", "beside", "chip_bg"):
+                got = contrast(palette[ink], palette[ground])
+                c.ok(got >= TEXT_MIN,
+                     f"{name}: {ink} on {ground} is {got:.1f}:1")
+        # Ink on every card fill, which is the text people actually read.
+        for band, skin in palette["band_card"].items():
+            got = contrast(palette["ink"], skin[0])
+            c.ok(got >= TEXT_MIN,
+                 f"{name}: ink on a {band} card is {got:.1f}:1")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
@@ -767,4 +847,6 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_nothing_is_unparented_while_it_is_visible,
           check_a_tooltip_is_readable,
           check_a_finished_work_item_says_so,
-          check_starting_a_ticket_is_not_editing_one)
+          check_starting_a_ticket_is_not_editing_one,
+          check_a_card_stands_off_the_board_it_sits_on,
+          check_the_ink_follows_the_ground)

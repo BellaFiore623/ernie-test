@@ -1164,6 +1164,26 @@ now and recede; the rule under the toolbar is what separates it. That is a
 change to both themes on purpose: dark had the same two slabs sitting proud of
 everything around them.
 
+**Light mode separates by brightness; colour is the second signal, not the
+only one.** It was reported as too bright and too saturated, and the second
+half was wrong: the fills carried chroma 26.6 against dark's 23.6, so
+desaturating alone would have flattened the board without touching the cause.
+The cause was that light had no brightness separation to lose. Against the well
+the cards sit in, the weakest of them stood at a contrast ratio of **1.01** and
+the strongest at 1.16, where the same cards in dark run 1.19 to 1.41. Eyes read
+a ratio, so at 1.01 a card was not standing off its board at all and colour was
+doing the whole structural job alone -- colour shouting to be the only thing
+telling a card from the space around it is what "overwhelming" was. The floor,
+the columns and the chips came down and the cards stayed up: every band is 1.34
+now, inside dark's range. With brightness carrying part of the separation the
+fills could give up 28% of their chroma -- 26.6 to 19.2, quieter than dark --
+and nothing became harder to find. Two invariants come out of it, both held by
+`tests/check_palette.py`: **a card stands off the well in both themes**, by a
+ratio with a floor rather than by hue, and the ink follows the ground when the
+ground moves. `muted` was measured against every surface it is drawn on, not
+just the obvious one: its worst pairing had slipped to 4.2:1 on `beside`,
+and it went two steps darker to bring the whole set back over 4.5:1.
+
 **No colour literals in Bert.** Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 both `LIGHT` and `DARK`. A hex typed into a stylesheet works in one theme and
