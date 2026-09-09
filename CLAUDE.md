@@ -162,10 +162,22 @@ activity feed, undo, and the outbox.
   the widgets: `_render_feed` throws every row away and builds it again on each
   poll, so a row opened to read would shut again within five seconds.
 - **The running order is on a splitter too**, along the other axis, and the
-  same rules apply: `RAIL_MIN_W`/`RAIL_MAX_W` rather than a fixed width,
-  `set_folded()` fixes it because folding is the button's business, and
+  same rules apply: `RAIL_MIN_W`/`RAIL_MAX_W` rather than a fixed width, and
   unfolding clears `_rail_sized` so the width comes back rather than whatever
-  the fold left. Kept in `settings.rail_width`. There is slack to take: the
+  the fold left.
+  **Folding is the button's business; opening is either's.** A folded panel
+  used to be pinned with `setFixedWidth`, which meant the pane could not be
+  moved at all -- and the handle is still sitting right there against the
+  spine, so dragging it did nothing and nothing on screen said why. Reported
+  as not being able to drag the sides back open, which is exactly what it was.
+  Folded, the panel is held to the spine as a *minimum* and keeps its full
+  maximum, so the handle can pull it out; `_unfold_by_drag` turns a drag past
+  `UNFOLD_GRAB` into the unfold. It passes `settle=False`, because the drag is
+  already the width somebody is choosing and re-placing the panes would snap
+  it out from under the pointer. The stretch factors are what keep this safe:
+  panes 0 and 2 are 0, so a window resize is absorbed by the board and a
+  folded spine cannot be widened into opening itself -- measured across four
+  resizes from 1050 to 1600px, both spines stayed at 30. Kept in `settings.rail_width`. There is slack to take: the
   rail plus a full-width board is 1040px, so on anything wider the rail grows
   into empty space rather than out of the board. Both lines in a row are cut
   with `QFontMetrics.elidedText` against the font they draw in, not at a

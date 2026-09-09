@@ -215,11 +215,20 @@ def check_it_folds_the_way_the_rail_folds() -> bool:
     fold = next((n for n in stats.body if isinstance(n, ast.FunctionDef)
                  and n.name == "set_folded"), None)
     body = ast.get_source_segment(src, fold) or "" if fold else ""
-    c.ok("setFixedWidth" in body, "folded, it is pinned to a spine")
+    c.ok("RAIL_FOLDED_W" in body, "folded, it comes down to the spine")
+    # A range even when folded, and not a fixed width. Pinned, the pane could
+    # not be moved at all -- and the handle still sits against the spine, so
+    # dragging it did nothing and there was no way to see why. The button
+    # folds; the handle opens.
+    c.ok("setFixedWidth" not in body,
+         "but is never pinned, or the handle beside it does nothing")
     c.ok("setMinimumWidth" in body and "setMaximumWidth" in body,
          "unfolded, it is handed back to the splitter as a range")
     c.ok("_stats_sized" in body,
          "and the remembered width is re-applied rather than the fold's")
+    c.ok("settle" in body,
+         "unless the handle did it, which is already the width somebody "
+         "chose and must not be snapped away mid-drag")
 
     # The teardown rule the whole application follows.
     clear = next((n for n in stats.body if isinstance(n, ast.FunctionDef)

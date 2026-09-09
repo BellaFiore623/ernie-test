@@ -106,6 +106,7 @@ FEED_MAX_ROWS = 8
 BOARD_MIN_H = 180          # the board never drags away to nothing
 SPLIT_GRIP = 6             # the handle between the board and the feed
 RAIL_FOLDED_W = 30         # the spine either side folds down to
+UNFOLD_GRAB = 12           # drag a spine this far and it opens
 STATS_MIN_W = 180          # narrower and the month bars stop comparing
 STATS_MAX_W = 380          # wider is a report, not a margin
 STATS_WIDTH = 244          # what it opens at, not what it stays
@@ -2946,14 +2947,21 @@ class Rail(QWidget):
     def toggle_fold(self):
         self.set_folded(not self.folded)
 
-    def set_folded(self, yes):
+    def set_folded(self, yes, settle=True):
         """Fold down to a spine so the board gets the whole window."""
         self.folded = yes
         self.head.setVisible(not yes)
         self.scroll.setVisible(not yes)
         self.hint.setVisible(not yes)
         if yes:
-            self.setFixedWidth(RAIL_FOLDED_W)
+            # A range, not a fixed width. Fixed, the pane could not be
+            # moved at all -- and the handle is still sitting right there
+            # against the spine, so the answer to dragging it was nothing
+            # happening. The minimum is the spine; the maximum is what it
+            # would have unfolded to, so the handle can pull it back out and
+            # `_unfold_by_drag` turns that into an unfold.
+            self.setMinimumWidth(RAIL_FOLDED_W)
+            self.setMaximumWidth(RAIL_MAX_W)
         else:
             # Handed back to the splitter, which puts it where it was.
             self.setMinimumWidth(RAIL_MIN_W)
@@ -2963,9 +2971,13 @@ class Rail(QWidget):
         # spine, then four hundred pixels of empty floor, then a handle
         # stranded in the middle of it -- and the board got none of the room
         # the fold was supposed to give it.
-        self.board._rail_sized = False
-        self.board._stats_sized = False
-        self.board._place_sides()
+        # `settle` is False when the *handle* did this: the drag is already
+        # the width somebody wants, and re-placing the panes would snap it
+        # out from under the pointer mid-gesture.
+        if settle:
+            self.board._rail_sized = False
+            self.board._stats_sized = False
+            self.board._place_sides()
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (10, 10, 4, 8)))
         self.fold_btn.setText("\u00bb" if yes else "\u00ab")
@@ -3455,22 +3467,30 @@ class Stats(QWidget):
     def toggle_fold(self):
         self.set_folded(not self.folded)
 
-    def set_folded(self, yes):
+    def set_folded(self, yes, settle=True):
         """Fold down to a spine, so the board gets the width back."""
         self.folded = yes
         self.head.setVisible(not yes)
         self.holder.setVisible(not yes)
         self.hint.setVisible(not yes and self._sig is None)
         if yes:
-            self.setFixedWidth(RAIL_FOLDED_W)
+            # A range, not a fixed width. Fixed, the pane could not be
+            # moved at all -- and the handle is still sitting right there
+            # against the spine, so the answer to dragging it was nothing
+            # happening. The minimum is the spine; the maximum is what it
+            # would have unfolded to, so the handle can pull it back out and
+            # `_unfold_by_drag` turns that into an unfold.
+            self.setMinimumWidth(RAIL_FOLDED_W)
+            self.setMaximumWidth(STATS_MAX_W)
         else:
             # Handed back to the splitter, which puts it where it was.
             self.setMinimumWidth(STATS_MIN_W)
             self.setMaximumWidth(STATS_MAX_W)
         # Both ways, for the reason Rail.set_folded gives.
-        self.board._rail_sized = False
-        self.board._stats_sized = False
-        self.board._place_sides()
+        if settle:
+            self.board._rail_sized = False
+            self.board._stats_sized = False
+            self.board._place_sides()
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (4, 10, 10, 8)))
         self.fold_btn.setText(GLYPH_LEFT if yes else GLYPH_RIGHT)
@@ -3675,6 +3695,8 @@ class Bert(QMainWindow):
         self.rail_split.setStretchFactor(0, 0)  # the board takes the slack
         self.rail_split.setStretchFactor(1, 1)
         self.rail_split.setStretchFactor(2, 0)  # and so does the far side
+        self.rail_split.splitterMoved.connect(self._unfold_by_drag)
+        # After the unfold, or they see a folded panel and record nothing.
         self.rail_split.splitterMoved.connect(self._remember_rail_width)
         self.rail_split.splitterMoved.connect(self._remember_stats_width)
         # Rebuilding thirty rows on every pixel of a drag is a stutter, so the
@@ -3966,6 +3988,24 @@ class Bert(QMainWindow):
         # drag to settle; the toolbar is two labels and a placeholder, and
         # leaving those cut for the length of a drag is the thing being fixed.
         self._fit_toolbar()
+
+    def _unfold_by_drag(self, *_):
+        """A spine dragged away from the edge opens that panel.
+
+        Folding used to pin the pane with `setFixedWidth`, on the grounds
+        that folding is the button's business -- true of *folding*, and it
+        left the handle sitting against the spine doing nothing at all, which
+        is not a rule anybody can see. Reported as not being able to drag the
+        sides back open, which is exactly what it was.
+
+        The button still folds and unfolds. This only turns a drag that has
+        clearly left the spine into the same unfold, and passes `settle=False`
+        so the width the drag is choosing survives it.
+        """
+        sizes = self.rail_split.sizes()
+        for i, panel in ((0, self.rail), (2, self.stats_panel)):
+            if panel.folded and sizes[i] > RAIL_FOLDED_W + UNFOLD_GRAB:
+                panel.set_folded(False, settle=False)
 
     def _remember_rail_width(self, *_):
         """Kept the way the feed height is, and for the same reason: a
