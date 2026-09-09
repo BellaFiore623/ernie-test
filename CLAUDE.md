@@ -235,6 +235,30 @@ activity feed, undo, and the outbox.
   loop. Measured after: 30 rebuilds held to the pixel with at most one bar
   move each, and five resizes across both axes moved no bar at all.
 
+- **The board column is centred in its pane, and its scrollbar comes with
+  it.** It was pinned left, which is why folding the running order gave the
+  board nothing to look at: the column slid across into the space the rail had
+  been in and left the same width of floor on the other side. Centred, folding
+  either side opens the room around it evenly and the tickets stay where the
+  eye already is. Asked for once the window had settled into three big
+  sections, and the column being attached to the rail stopped being worth
+  anything.
+  **Two ways to centre it and only one takes the bar along.** Centring the
+  *column* inside a full-width scroll area leaves the area's scrollbar at the
+  pane's own edge: measured with the rail folded, the column sat 116px in from
+  the left and its bar 160px out to the right, hard against the figures panel
+  and reading as though it belonged to them. So the cap goes on the **scroll
+  area**, which brings its bar to the cap with it -- the rule `feed_scroll`
+  already follows -- and two spacers centre the area inside `board_holder`,
+  which is what the splitter now holds. The cap allows for the bar's own
+  width, or the column loses that much the moment the board is long enough to
+  scroll.
+  The area is centred **by stretch factor, never by an alignment flag**: a
+  scroll area added with one takes its own sizeHint, cap or no cap. And the
+  two spacers are **weightless** -- given a factor each they split the pane
+  three ways with the area and it never reached the cap at all, measured as
+  the column stuck at its 463px minimum on a 1500px window.
+
 - **A feed row stops growing at `FEED_ROW_MAX_W`.** The status chip and Undo
   are right-aligned in fixed columns, which is what makes them a column you can
   run down and click -- but unbounded, a full-screen board put them a thousand

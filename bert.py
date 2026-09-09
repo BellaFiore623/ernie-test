@@ -3587,8 +3587,14 @@ class Bert(QMainWindow):
         vp.setObjectName("boardBack")
         vp.setAttribute(Qt.WA_StyledBackground, True)
         vp.setStyleSheet(f"#boardBack {{ background:{T.WELL}; }}")
-        # Widget smaller than the viewport: pin it left, don't centre it.
-        self.scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        # Widget smaller than the viewport: centre it. The column is capped
+        # at BOARD_MAX, so on anything wide there is spare room in here, and
+        # pinning it left meant folding the running order did not give the
+        # board anything -- it slid across to where the rail had been and left
+        # the same gap on the other side. Centred, folding either side widens
+        # the space around the column evenly and the tickets stay where the
+        # eye already is.
+        self.scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 
         board = QWidget()
         board.setObjectName("boardColumn")
@@ -3598,7 +3604,11 @@ class Bert(QMainWindow):
         # the strip beside the column could not be told apart from it.
         board.setAttribute(Qt.WA_StyledBackground, True)
         # The column keeps the canvas colour and stops where the bands stop
+        # A rule down both sides, now that the column floats rather than
+        # sitting against the rail: one edge drawn and the other not reads as
+        # a mistake once there is floor on both sides of it.
         board.setStyleSheet(f"#boardColumn {{ background:{T.CANVAS};"
+                            f" border-left:1px solid {T.LINE};"
                             f" border-right:1px solid {T.LINE}; }}")
         self.board_lay = QVBoxLayout(board)
         self.board_lay.setContentsMargins(BOARD_PAD, 10, BOARD_PAD, 24)
@@ -3613,6 +3623,43 @@ class Bert(QMainWindow):
         board.setMaximumWidth(BOARD_MAX + BOARD_PAD * 2)
         self.scroll.setWidget(board)
 
+        # The column is centred by capping the *scroll area* and letting two
+        # spacers take the rest, not by centring the column inside a
+        # full-width scroll area. The difference is where the scrollbar ends
+        # up: left to fill the pane, the area keeps its bar at the pane's own
+        # edge, so with the running order folded the board sat 116px in from
+        # the left and its scrollbar sat 160px out to the right of it, hard
+        # against the figures panel and reading as though it belonged to
+        # them. This is the rule `feed_scroll` already follows for the same
+        # reason -- the cap goes on the scroll area so its bar comes to the
+        # cap with it.
+        #
+        # A stretch factor, **not** an alignment flag: `addWidget(scroll,
+        # alignment=...)` makes a scroll area take its own sizeHint, which is
+        # small, cap or no cap. With a factor it expands to the cap and the
+        # spacers split what is left, evenly, which is the centring.
+        self.board_holder = QWidget()
+        self.board_holder.setObjectName("boardHolder")
+        self.board_holder.setAttribute(Qt.WA_StyledBackground, True)
+        self.board_holder.setStyleSheet(
+            f"#boardHolder {{ background:{T.WELL}; }}")
+        hold = QHBoxLayout(self.board_holder)
+        hold.setContentsMargins(0, 0, 0, 0)
+        hold.setSpacing(0)
+        # The spacers carry no weight of their own: with a factor each they
+        # split the pane three ways and the area never reached its cap --
+        # measured, the column stayed at its 463px minimum on a 1500px
+        # window. Weightless, they take only what is left once the area has
+        # grown to the cap and stopped.
+        hold.addStretch()
+        hold.addWidget(self.scroll, 1)
+        hold.addStretch()
+        # Its own bar rides inside the cap, so the cap has to allow for it or
+        # the column loses that much width whenever the board scrolls.
+        self.scroll.setMaximumWidth(
+            BOARD_MAX + BOARD_PAD * 2
+            + self.scroll.verticalScrollBar().sizeHint().width())
+
         self.rail = Rail(self)
         # Same trade as the feed, along the other axis: a title clipped in
         # the running order can be read by widening it, and somebody who
@@ -3622,7 +3669,7 @@ class Bert(QMainWindow):
         self.rail_split.setChildrenCollapsible(False)
         self.rail_split.setHandleWidth(SPLIT_GRIP)
         self.rail_split.addWidget(self.rail)
-        self.rail_split.addWidget(self.scroll)
+        self.rail_split.addWidget(self.board_holder)
         self.stats_panel = Stats(self)
         self.rail_split.addWidget(self.stats_panel)
         self.rail_split.setStretchFactor(0, 0)  # the board takes the slack

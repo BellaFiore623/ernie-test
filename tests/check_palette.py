@@ -1104,6 +1104,71 @@ def check_a_status_gives_up_its_noun_not_its_state() -> bool:
     return c.report()
 
 
+
+def check_the_board_is_centred_and_keeps_its_scrollbar() -> bool:
+    """
+    The column floats in the middle of its pane, bar and all.
+
+    It used to be pinned left, so folding the running order gave the board
+    nothing: the column slid across to where the rail had been and left the
+    same width of floor on the other side. Centred, folding either side opens
+    the space around it evenly and the tickets stay where the eye already is.
+
+    Two ways of centring it, and only one of them takes the scrollbar along.
+    Centre the *column* inside a full-width scroll area and the area keeps its
+    bar at the pane's own edge -- measured with the rail folded, the column
+    sat 116px in from the left and its bar sat 160px out to the right of it,
+    hard against the figures panel and reading as though it belonged to them.
+    Capping the *scroll area* instead brings the bar to the cap with it, which
+    is the rule `feed_scroll` already follows for exactly this.
+    """
+    c = Check("the board is centred and keeps its scrollbar")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+    body = "\n".join(ast.get_source_segment(src, f) or "" for f in cls.body
+                     if isinstance(f, ast.FunctionDef))
+
+    c.ok("addWidget(self.board_holder)" in body,
+         "the splitter takes the holder, so the pane is the full width and "
+         "the floor fills it")
+    c.ok("addWidget(self.scroll)" not in body,
+         "and not the scroll area, which would put its bar at the pane edge")
+    c.ok("hold.addWidget(self.scroll, 1)" in body,
+         "the area is given a stretch factor")
+    # An alignment flag is the trap: a scroll area added with one takes its
+    # own sizeHint, which is small, cap or no cap. Same finding as the feed's.
+    # Read off the call itself rather than the file's text -- the comment
+    # above that line in bert.py says the word "alignment", and a text search
+    # found its own warning and called it the bug.
+    adds = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "addWidget"
+            and any(isinstance(a, ast.Attribute) and a.attr == "scroll"
+                    for a in n.args)]
+    c.ok(adds, "the scroll area is added to a layout")
+    c.ok(all(not a.keywords and len(a.args) == 2 for a in adds),
+         "by factor rather than by an alignment flag, which would make it "
+         "take its own sizeHint instead")
+    c.ok("hold.addStretch()\n" in body,
+         "and the spacers carry no weight, or they split the pane with it "
+         "and the column never reaches its cap")
+    c.ok("hold.addStretch(1)" not in body,
+         "specifically not a weighted spacer -- measured, that left the "
+         "column at its 463px minimum on a 1500px window")
+
+    # The cap has to allow for the bar, or the column loses that much width
+    # the moment the board is long enough to scroll.
+    cap = body.split("self.scroll.setMaximumWidth(", 1)[-1].split(")")[0]
+    c.ok("verticalScrollBar" in cap,
+         "the area's cap allows for its own scrollbar")
+    c.ok("BOARD_MAX" in cap, "on top of the column's own width")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
@@ -1121,5 +1186,6 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_a_card_is_edged_in_its_own_tag,
           check_a_filter_says_how_many_it_holds,
           check_a_status_gives_up_its_noun_not_its_state,
+          check_the_board_is_centred_and_keeps_its_scrollbar,
           check_a_band_header_is_accented_not_filled,
           check_the_ink_follows_the_ground)
