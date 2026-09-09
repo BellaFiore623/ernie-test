@@ -15,7 +15,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie_outbox.py` | The **only** thing that posts to Discord. |
 | `bert.py` | PySide6 client. |
 | `schema.sql` | Applied on every `connect()`. All `CREATE ... IF NOT EXISTS`. |
-| `seed_test_server.py` | Builds realistic test threads. Test guild only. |
+| `seed_test_server.py` | Builds realistic test threads. Test guild only. `--limit N` for a short board while iterating. |
 | `wipe_test.py` | Deletes all threads in the test channel. Test guild only. |
 | `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
 | `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
@@ -531,6 +531,25 @@ has been done, when it last moved and who moved it.
   while the source text stays fixed at the moment the card changed. A written
   out "2h ago" differs on every pass and rewrites the message for ever, which
   is the trap `ernie_state.without_stamp()` exists for.
+- **It is an embed, not a message of text**, for the one thing text cannot
+  do: the bar down its side carries the band, so a thread says how urgent it is
+  before a word of it is read. These threads are already embed-shaped -- the
+  ticket bot posts one per build and return -- so it reads as native rather
+  than as a bot shouting. To do and Done are `inline` fields, side by side on a
+  desktop and stacked on a phone, one item per line: a run of them separated by
+  dots stops being a list you can count.
+- **The colour is the board's, copied and held to it.** `BAND_COLOUR` is
+  bert's `DARK["band_text"]`, because a colour chosen here would put the thread
+  and the board out of step -- and this file cannot import bert, which pulls in
+  PySide6 where the outbox has no display. `tests/check_status.py` holds the
+  two together, the way `check_palette.py` holds the two themes together. A
+  closed ticket goes `OK_FG` green, which is what done looks like everywhere
+  else.
+- **The time goes in a field, never the footer.** Discord renders `<t:...:R>`
+  in a description or a field value and **not** in footer text, so putting it
+  there would lose the self-updating clock that keeps the stored body still.
+- **`thread_status.body` is the embed serialised with sorted keys**, so "would
+  this read differently" survives the dict being built in another order.
 - **Not the ticket's name.** That is the thread's own name, shown directly
   above the message in every client. It carries the date and the client, which
   is exactly why repeating it puts the same string on screen twice.

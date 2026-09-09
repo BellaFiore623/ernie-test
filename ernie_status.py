@@ -31,6 +31,7 @@ the trap `ernie_state.without_stamp()` exists to work around.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -54,6 +55,22 @@ BAND_LABEL = {
     "low": "Low",
 }
 
+# The bar down the side of the embed, so a thread says which band it is in
+# before a word of it is read. Copied from bert's DARK `band_text` rather than
+# chosen here: inventing a colour would put the board and the thread out of
+# step, and this file cannot import bert -- that pulls in PySide6, and the
+# outbox runs where there is no display. `tests/check_status.py` holds the two
+# together, the way check_palette.py holds the two themes together.
+BAND_COLOUR = {
+    "unassigned": 0xF5AAA2,
+    "critical": 0xF5AAA2,
+    "high": 0xEFC15E,
+    "medium": 0xA3C8F0,
+    "low": 0xA8B2BD,
+}
+CLOSED_COLOUR = 0xA8DC8B      # T.OK_FG: done is green everywhere else
+FIELD_MAX = 1024              # Discord's cap on a field value
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -61,49 +78,81 @@ def now() -> str:
 
 # -- the message ------------------------------------------------------------
 
-def render(card: ernie_state.Card) -> str:
-    """What the status message says.
+def clip(value: str) -> str:
+    """Discord refuses a field value over 1024 characters."""
+    return value if len(value) <= FIELD_MAX else value[:FIELD_MAX - 1] + "\u2026"
+
+
+def render(card: ernie_state.Card) -> dict:
+    """The status, as an embed.
+
+    An embed rather than a message of text, for one thing text cannot do: the
+    bar down its side carries the band, so the thread says how urgent it is
+    before a word is read. These threads are already embed-shaped -- the
+    ticket bot posts one per build and return -- so it reads as native rather
+    than as a bot shouting.
 
     Deliberately not the ticket's name: that is the thread's own name, shown
     directly above this in every client, and repeating it puts the same string
     on screen twice within an inch.
     """
     if card.completed:
-        head = "**Ticket status** · closed"
+        title = "Ticket status \u00b7 closed"
         if card.completed_by:
-            head += f" by {card.completed_by}"
+            title += f" by {card.completed_by}"
+        colour = CLOSED_COLOUR
     else:
-        head = f"**Ticket status** · {BAND_LABEL.get(card.priority, card.priority)}"
+        band = BAND_LABEL.get(card.priority, card.priority)
+        title = f"Ticket status \u00b7 {band}"
+        colour = BAND_COLOUR.get(card.priority, BAND_COLOUR["low"])
 
-    lines = [head]
+    embed = {"title": title, "color": colour, "fields": []}
 
     todo = [i for i in card.items if not i.done]
     done = [i for i in card.items if i.done]
     if not card.items:
-        # Said outright rather than left off. Two thirds of open tickets carry
-        # work items and a third do not, and a message that simply stops after
-        # the band reads as though it failed to load.
-        lines.append("No work items yet.")
-    else:
-        if todo:
-            lines.append("**To do** — " + " · ".join(i.body for i in todo))
-        if done:
-            # Struck through, which is what a finished item already looks like
-            # in the state channel and in the change log.
-            lines.append("**Done** — "
-                         + " · ".join("~~" + i.body + "~~" for i in done))
-        if not todo and not card.completed:
-            # Only worth saying while the ticket is still open. On a closed
-            # one the header has already said it, and twice reads as padding.
-            lines.append("Nothing left to do.")
+        # Said outright rather than left off. A third of open tickets carry no
+        # work items, and an embed that stops at its title reads as one that
+        # failed to load.
+        embed["description"] = "No work items yet."
+    elif not todo and not card.completed:
+        embed["description"] = "Nothing left to do."
+
+    # Side by side on a desktop, stacked on a phone, which is what inline
+    # means -- and one line per item, because a run of them separated by dots
+    # stops being a list you can count.
+    if todo:
+        embed["fields"].append(
+            {"name": "To do", "inline": True,
+             "value": clip("\n".join(i.body for i in todo))})
+    if done:
+        # Struck through, which is what a finished item already looks like in
+        # the state channel and in the change log.
+        embed["fields"].append(
+            {"name": "Done", "inline": True,
+             "value": clip("\n".join("~~" + i.body + "~~" for i in done))})
 
     if card.updated_at:
-        foot = f"Last updated {discord_time(card.updated_at)}"
+        # Its own field rather than the footer: Discord renders <t:...:R> in a
+        # description or a field value and *not* in footer text, and the
+        # relative form is what keeps the stored body still while the reader's
+        # clock moves.
+        value = discord_time(card.updated_at)
         if card.actor:
-            foot += f" by {card.actor}"
-        lines.append(foot)
+            value += f" by {card.actor}"
+        embed["fields"].append(
+            {"name": "Last updated", "inline": False, "value": value})
 
-    return "\n".join(lines)
+    return embed
+
+
+def as_body(embed: dict) -> str:
+    """The embed as one string, for asking whether it would read differently.
+
+    Sorted, so two renderings of the same card compare equal whatever order
+    the keys happened to be built in.
+    """
+    return json.dumps(embed, sort_keys=True)
 
 
 # -- what needs one ---------------------------------------------------------
@@ -140,14 +189,15 @@ def publish(d: Discord, con, db: str) -> dict:
     have = stored(con)
 
     for card in wanted(con, ernie_state.load_board(db)):
-        body = render(card)
+        embed = render(card)
+        body = as_body(embed)
         was = have.get(card.thread_id)
         if was is not None and was["body"] == body:
             continue
         try:
             if was is None:
                 sent = d.write("POST", f"/channels/{card.thread_id}/messages",
-                               content=body)
+                               embeds=[embed])
                 con.execute(
                     """INSERT INTO thread_status (thread_id, message_id, body,
                                                   sent_at, pinned)
@@ -155,9 +205,12 @@ def publish(d: Discord, con, db: str) -> dict:
                     (card.thread_id, sent["id"], body, now()))
                 counts["posted"] += 1
             else:
+                # content="" as well as the embed, so a message written by
+                # an earlier build as plain text loses the text rather than
+                # carrying both.
                 d.write("PATCH",
                         f"/channels/{card.thread_id}/messages/{was['message_id']}",
-                        content=body)
+                        content="", embeds=[embed])
                 con.execute(
                     """UPDATE thread_status SET body=?, sent_at=?
                         WHERE thread_id=?""", (body, now(), card.thread_id))
@@ -224,8 +277,15 @@ def main() -> None:
               f" ({len(cards) - len(keep)} inherited or archived)\n")
         for card in keep:
             print(f"-- {card.thread_id}")
-            for line in render(card).splitlines():
-                print(f"   {line}")
+            e = render(card)
+            print(f"   [{e['color']:#08x}] {e['title']}")
+            if e.get("description"):
+                print(f"   {e['description']}")
+            for f in e["fields"]:
+                first, *rest = f["value"].splitlines() or [""]
+                print(f"   {f['name']:>12} | {first}")
+                for line in rest:
+                    print(f"   {'':>12} | {line}")
             print()
         return
 

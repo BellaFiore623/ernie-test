@@ -18,8 +18,18 @@ import pathlib
 
 from support import Board, Check, FakeDiscord, PARENT, iso
 
+import bert
 import ernie_state as S
 import ernie_status as st
+
+
+def body(card):
+    """The embed as one string, which is what a substring check wants."""
+    return st.as_body(st.render(card))
+
+
+def field(card, name):
+    return next((f for f in st.render(card)["fields"] if f["name"] == name), None)
 
 
 NL = chr(10)
@@ -70,17 +80,25 @@ def check_the_message_says_what_is_left() -> bool:
         # Who last touched it comes off the feed, the same way the state
         # channel names an actor -- so there has to be something in it.
         b.event(tid, actor="Bella Fiore")
-        body = st.render(card_for(b, tid))
+        card = card_for(b, tid)
+        e = st.render(card)
 
-        c.ok("replace cable" in body, "an outstanding item is named")
-        c.ok("~~collect reel~~" in body, "and a finished one is struck through")
-        c.ok("**To do**" in body and "**Done**" in body,
-             "under headings, so the two do not run together")
-        c.ok("Penn Hills" not in body,
+        c.ok("replace cable" in (field(card, "To do") or {}).get("value", ""),
+             "an outstanding item is named")
+        c.ok("~~collect reel~~" in (field(card, "Done") or {}).get("value", ""),
+             "and a finished one is struck through")
+        c.ok((field(card, "To do") or {}).get("inline")
+             and (field(card, "Done") or {}).get("inline"),
+             "the two sit side by side rather than stacking")
+        c.ok("Penn Hills" not in body(card),
              "the ticket's name is not repeated -- the thread is already called it")
-        c.ok("High" in body, "the band it sits in is there")
-        c.ok("Last updated" in body, "and when it last moved")
-        c.ok("Bella Fiore" in body, "and who moved it")
+        c.ok("High" in e["title"], "the band it sits in is named")
+        c.equal(e["color"], st.BAND_COLOUR["high"],
+                "and carried down the side of the embed as well")
+        c.ok("Bella Fiore" in (field(card, "Last updated") or {}).get("value", ""),
+             "with when it last moved, and who moved it")
+        c.ok((field(card, "Last updated") or {}).get("inline") is False,
+             "on its own line under the work, not beside it")
 
     return c.report()
 
@@ -99,15 +117,18 @@ def check_an_empty_ticket_says_so() -> bool:
 
     with Board() as b:
         tid = a_card(b)
-        body = st.render(card_for(b, tid))
-        c.ok("No work items yet." in body, "it says so outright")
-        c.ok("**To do**" not in body, "with no empty heading above it")
+        card = card_for(b, tid)
+        c.equal(st.render(card).get("description"), "No work items yet.",
+                "it says so outright")
+        c.ok(field(card, "To do") is None, "with no empty heading above it")
 
         # And once everything is ticked off, while the ticket is still open.
         work(b, tid, "replace cable", done=True)
-        body = st.render(card_for(b, tid))
-        c.ok("Nothing left to do." in body, "a finished list says that instead")
-        c.ok("~~replace cable~~" in body, "and still shows what was done")
+        card = card_for(b, tid)
+        c.equal(st.render(card).get("description"), "Nothing left to do.",
+                "a finished list says that instead")
+        c.ok("~~replace cable~~" in (field(card, "Done") or {}).get("value", ""),
+             "and still shows what was done")
 
     return c.report()
 
@@ -122,12 +143,16 @@ def check_a_closed_ticket_does_not_say_it_twice() -> bool:
         b.con.execute("UPDATE cards SET completed_at=?, completed_by=? "
                       "WHERE thread_id=?", (iso(-5), "Julian", tid))
         b.con.commit()
-        body = st.render(card_for(b, tid))
+        card = card_for(b, tid)
+        e = st.render(card)
 
-        c.ok("closed by Julian" in body, "the header says it is closed, and by whom")
-        c.ok("Nothing left to do." not in body, "and does not then say it again")
-        c.ok("High" not in body,
+        c.ok("closed by Julian" in e["title"],
+             "the title says it is closed, and by whom")
+        c.ok(e.get("description") is None, "and does not then say it again")
+        c.ok("High" not in e["title"],
              "nor a band, which is where it sat rather than where it is")
+        c.equal(e["color"], st.CLOSED_COLOUR,
+                "and it goes green, which is what done looks like everywhere else")
 
     return c.report()
 
@@ -148,12 +173,14 @@ def check_nothing_in_it_moves_on_its_own() -> bool:
         tid = a_card(b)
         work(b, tid, "replace cable")
         card = card_for(b, tid)
-        c.equal(st.render(card), st.render(card),
+        c.equal(body(card), body(card),
                 "rendering the same card twice gives the same text")
-        c.ok("<t:" in st.render(card),
+        c.ok("<t:" in body(card),
              "the time is Discord's markup, rendered by the reader's client")
-        c.ok(" ago" not in st.render(card),
+        c.ok(" ago" not in body(card),
              "and not written out, which would change under it")
+        c.ok("footer" not in st.render(card),
+             "and not in the footer, where Discord will not render it")
 
     return c.report()
 
@@ -301,6 +328,29 @@ def check_pinning_is_tried_again() -> bool:
     return c.report()
 
 
+def check_the_band_colours_match_the_board() -> bool:
+    """
+    The bar down the embed is the board's colour, not one chosen here.
+
+    ernie_status cannot import bert -- that pulls in PySide6 and the outbox
+    runs where there is no display -- so the values are copied, and copies
+    drift. This holds them together the way check_palette.py holds the two
+    themes together.
+    """
+    c = Check("the embed's band colours are the board's own")
+
+    board = bert.DARK["band_text"]
+    c.equal(set(st.BAND_COLOUR), set(board),
+            "every band the board knows has a colour here")
+    for band, hexed in board.items():
+        c.equal(st.BAND_COLOUR.get(band), int(hexed.lstrip("#"), 16),
+                f"{band} matches the board")
+    c.equal(st.CLOSED_COLOUR, int(bert.DARK["ok_fg"].lstrip("#"), 16),
+            "and closed is the same green as done everywhere else")
+
+    return c.report()
+
+
 CHECKS = (check_the_message_says_what_is_left,
           check_an_empty_ticket_says_so,
           check_a_closed_ticket_does_not_say_it_twice,
@@ -308,4 +358,5 @@ CHECKS = (check_the_message_says_what_is_left,
           check_only_threads_ernie_watched_open,
           check_it_posts_once_then_edits,
           check_an_inherited_thread_is_never_posted_to,
-          check_pinning_is_tried_again)
+          check_pinning_is_tried_again,
+          check_the_band_colours_match_the_board)

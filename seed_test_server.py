@@ -325,6 +325,10 @@ def main():
                     help="archive existing threads before seeding")
     ap.add_argument("--env", default="ernie-test.env",
                     help="env file to read the token and channel from")
+    ap.add_argument("--limit", type=int, default=0, metavar="N",
+                    help="seed only the first N cases. The full set is thirty "
+                         "threads, which is a lot to read while iterating on "
+                         "what a card or a message looks like.")
     a = ap.parse_args()
 
     # Every other script reads the env file; this one wanted the values
@@ -336,6 +340,8 @@ def main():
         sys.exit(f"DISCORD_TOKEN and TEST_CHANNEL_ID must be set, "
                  f"in {a.env} or the environment")
 
+    # A short board while somebody is iterating on how a thread reads.
+    cases = CASES[:a.limit] if a.limit else CASES
     d = Discord(token)
     ch = d.channel(cid)
     guild = ch.get("guild_id")
@@ -353,7 +359,7 @@ def main():
                 d.archive(t["id"])
         print(f"archived {len(active)} existing threads\n")
 
-    for title, messages, extra in CASES:
+    for title, messages, extra in cases:
         th = d.make_thread(cid, title)
         tid = th["id"]
         posted = []
@@ -378,7 +384,7 @@ def main():
 
         print(f"  {title[:62]:<64}{note}")
 
-    print(f"\n{len(CASES)} threads seeded.\n"
+    print(f"\n{len(cases)} threads seeded.\n"
           f"Point ernie.env at this guild and channel, use a separate db:\n"
           f"  python ernie_sync.py --once --db ernie-test.db")
 
