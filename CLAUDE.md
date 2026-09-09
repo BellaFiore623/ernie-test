@@ -20,6 +20,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
 | `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
 | `ernie_jira.py` | Customer list, Jira → SQLite. Read-only against Jira. Off unless configured. |
+| `ernie_version.py` | The version number, and which build is answering. Imported by everything that says one. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
@@ -686,6 +687,35 @@ so the name is *picked* in Bert instead of typed.
   settles nothing.
 - The dropdown is **pick-or-type**. A customer exists before Jira hears about
   them, and a card already carrying an unoffered client keeps it.
+
+## The version number
+
+`ernie_version.VERSION` is the one, and everything that names a version
+imports it. Bump it there and nowhere else.
+
+- **It is not `FORMAT_VERSION`.** That describes the shape of a payload in
+  `#ernie-state` and moves when that shape changes; this moves when a build
+  ships. Conflating them would tie a wire-format bump to a release.
+- **The thing it replaces is worse than nothing.** `FastAPI(version="0.1")`
+  was a literal that sat at 0.1 for the life of the project while `/docs` and
+  `/openapi.json` quoted it at every reader.
+- **The commit is part of the answer**, because the number alone cannot
+  separate two machines while everybody runs from source: both say `0.9.0` and
+  one of them is a week behind. It is read straight out of `.git` -- HEAD, then
+  a loose ref, then `packed-refs`, and a detached HEAD is the sha itself --
+  rather than shelled out to `git`, which need not be installed. Read **once,
+  at import**: a process is the build it started as, so rebasing under a
+  running Ernie must not change what it claims to be. No working copy is the
+  ordinary answer for a zip download or a frozen build, and gives the bare
+  number rather than an error.
+- Said in four places, all off the same constant: `--version` on every entry
+  point, a line at startup so a log answers it after the fact, `/health`'s
+  `build` block, and Bert's settings window. Bert shows **both** ends there,
+  its own and whatever `/health` reported, because in the one-backend-two-Berts
+  setup those are two checkouts and either can be the stale one.
+- **Nothing compares them yet.** `reconcile()` still drops a payload whose `v`
+  does not match into `report["unknown"]` in silence. Making that loud is the
+  next piece of work, and it is why this exists.
 
 ## Running
 

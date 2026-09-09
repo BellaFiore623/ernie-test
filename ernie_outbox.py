@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 import ernie_changelog
 import ernie_load as load
 import ernie_state
+import ernie_version
 from ernie_sync import Discord, GuildMismatch, load_env
 
 POLL_SECONDS = 30
@@ -338,6 +339,8 @@ def stuck(con) -> list:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=ernie_version.describe())
     ap.add_argument("--db", default="ernie.db")
     ap.add_argument("--env", default="ernie.env")
     ap.add_argument("--once", action="store_true")
@@ -368,6 +371,7 @@ def main() -> None:
     if not who["writes"]:
         sys.exit(f"Writes are blocked for guild {guild}. Set "
                  f"ALLOW_DISCORD_WRITES={guild} in {a.env} to enable posting.")
+    print(f"ernie_outbox {ernie_version.describe()}")
     print(f"{who['bot']} -> {who['guild']} ({guild})  [POSTING]  db={a.db}")
 
     while True:

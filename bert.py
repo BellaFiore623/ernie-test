@@ -28,6 +28,7 @@ import httpx
 # keeps the editor's validity check and Ernie's own reading of a thread in
 # agreement.
 import ernie_extract as ex
+import ernie_version
 from PySide6.QtCore import (
     QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize,
     QStringListModel, Qt, QThread, QTimer, Signal,
@@ -652,7 +653,16 @@ def load_settings() -> dict:
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, current):
+    """Name, theme, and which build this is.
+
+    The build goes here because this is the one window somebody already opens
+    to answer a question about their own copy, and because in the
+    one-backend-two-Berts setup the two halves are two checkouts: the person
+    on the far end can be running a Bert from last week against somebody
+    else's Ernie, and until now neither end could say so.
+    """
+
+    def __init__(self, parent, current, health=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(360)
@@ -676,6 +686,20 @@ class SettingsDialog(QDialog):
                       "a machine that darkens at sunset takes Bert with it.")
         note.setWordWrap(True)
         note.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
+
+        # Both ends, always, rather than one line when they agree: a reader
+        # who sees a single version has to know it stands for two things.
+        # Ernie's comes off /health, so it is genuinely what answered, not
+        # what this copy of the source happens to say.
+        theirs = ((health or {}).get("build") or {}).get("version")
+        their_commit = ((health or {}).get("build") or {}).get("commit")
+        said = (f"{theirs} ({their_commit})" if theirs and their_commit
+                else theirs or "not reported")
+        build = QLabel(f"Bert {ernie_version.describe()}\nErnie {said}")
+        build.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        build.setStyleSheet(f"color:{T.MUTED}; font-size:11px;")
+        form.addRow("Version", build)
+
         bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
@@ -3546,7 +3570,7 @@ class Bert(QMainWindow):
 
     def open_settings(self):
         was = self.settings.get("theme", "system")
-        dlg = SettingsDialog(self, self.settings)
+        dlg = SettingsDialog(self, self.settings, self.health)
         if dlg.exec() == QDialog.Accepted:
             self.settings.update(dlg.values())
             # Don't leave the old pair behind to be read back later.

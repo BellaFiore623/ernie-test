@@ -33,6 +33,7 @@ import httpx
 
 import ernie_extract as ex
 import ernie_load as load
+import ernie_version
 
 API = "https://discord.com/api/v10"
 PACING = 0.1         # sleep after each GET; Discord's global ceiling is 50/s
@@ -427,6 +428,8 @@ def cycle(con, d: Discord, guild_id: str, do_backfill: bool = False) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=ernie_version.describe())
     ap.add_argument("--db", default="ernie.db")
     ap.add_argument("--env", default="ernie.env",
                     help="which env file to load (ernie.env, ernie-test.env)")
@@ -448,7 +451,9 @@ def main() -> None:
     d = Discord(token, guild, allow_writes_for=allow)
 
     # Say out loud which server and which mode, every start. If this line ever
-    # surprises you, stop before it does anything.
+    # surprises you, stop before it does anything. The build goes first: it is
+    # the question asked after the fact, off a log, when two boards disagree.
+    print(f"ernie_sync {ernie_version.describe()}")
     who = d.whoami()
     if not who["guild"]:
         sys.exit(f"Can't see guild {guild}. Wrong token, or the bot isn't in "

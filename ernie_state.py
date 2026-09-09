@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 import ernie_load as load
+import ernie_version
 from ernie_sync import Discord, load_env
 
 PRODUCTION_GUILD = "1481003073894744226"    # the constant wipe_test.py guards on
@@ -988,6 +989,8 @@ def demo(d: Discord, guild: str, db: str, want: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=ernie_version.describe())
     ap.add_argument("--env", default="ernie-test.env")
     ap.add_argument("--db", default="ernie-test.db")
     ap.add_argument("--channel", default=None,

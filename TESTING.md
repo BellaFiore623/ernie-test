@@ -158,6 +158,11 @@ The same dialog has **Theme** — light, dark, or following the desktop, which
 tracks it as it changes. Saving a different one reopens the window; nothing is
 lost but your place on the board.
 
+At the bottom it shows the **version** twice: `Bert` is the copy you are
+running, `Ernie` is the one answering it. Quote both if you report anything
+odd — the two of you can be on different builds without either board saying
+so, and that on its own explains a whole class of "it works for me".
+
 ## What you'll see
 
 Top right, next to the refresh button, is the shared-board indicator:

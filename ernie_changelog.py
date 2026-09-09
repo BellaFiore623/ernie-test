@@ -29,6 +29,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import ernie_load as load
+import ernie_version
 from ernie_state import connect, discord_time
 from ernie_sync import Discord
 
@@ -258,6 +259,8 @@ def tick(d: Discord, cid: str, con) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=ernie_version.describe())
     ap.add_argument("--env", default="ernie-test.env")
     ap.add_argument("--db", default="ernie-test.db")
     ap.add_argument("--once", action="store_true")

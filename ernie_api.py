@@ -27,6 +27,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
 import ernie_extract as ex
+import ernie_version
 
 DB = "ernie.db"
 UNDO_WINDOW_S = 60      # how long before Ernie posts to the thread
@@ -40,7 +41,10 @@ PRIORITY_ORDER = ("unassigned", "critical", "high", "medium", "low")
 OUTBOX_MAX_ATTEMPTS = 5
 WORK_ITEM_MAX = 200     # a bubble, not a paragraph -- it has to fit on a card
 
-app = FastAPI(title="Ernie", version="0.1")
+# The real one, not documentation metadata. This read 0.1 for the whole
+# life of the project, which is worse than saying nothing: /openapi.json
+# and /docs both quote it.
+app = FastAPI(title="Ernie", version=ernie_version.VERSION)
 
 
 def db() -> sqlite3.Connection:
@@ -439,6 +443,9 @@ def health():
 
     return {
         "ok": bool(last and not last["error"]),
+        # Which build is answering. Bert shows it, and the machine on the
+        # other end of #ernie-state has no other way to ask.
+        "build": ernie_version.payload(),
         "last_sync": dict(last) if last else None,
         "seconds_since_sync": stale,
         # Which read of Discord that age belongs to, so Bert can tell a new
@@ -1404,11 +1411,14 @@ if __name__ == "__main__":
     import uvicorn
 
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=ernie_version.describe())
     ap.add_argument("--db", default="ernie.db")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8787)
     a = ap.parse_args()
 
     DB = a.db
+    print(f"ernie_api {ernie_version.describe()}")
     check_schema()
     uvicorn.run(app, host=a.host, port=a.port)

@@ -41,6 +41,7 @@ import httpx
 
 import ernie_extract as ex
 import ernie_load as load
+import ernie_version
 from ernie_sync import load_env
 
 PACING = 0.1          # sleep after each call, as the Discord client does
@@ -507,6 +508,8 @@ def report(con) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--version", action="version",
+                    version=ernie_version.describe())
     ap.add_argument("--db", default="ernie.db")
     ap.add_argument("--env", default="ernie.env")
     ap.add_argument("--once", action="store_true", help="one pull, then stop")
