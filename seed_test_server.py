@@ -300,6 +300,22 @@ CASES = [
     ("OPS: Baldwin - 02Sep26 - Gooseneck 10in out of stock", [
         ("Substituting the 8in unless they object", None),
     ], None),
+
+    # Two spellings of one customer, both carrying the same Client CR key --
+    # tier 1 resolves them through PIP-8605 without comparing any strings.
+    ("PROD: Dukes Root Control - 03Sep26 - EReel-1231 fiber respool", [
+        ("Fiber went at the reel end again", None),
+        (None, build_embed("Dukes Root Control - EReel-1231 - 03Sep26",
+                           "PIP-7782 (EReel-1231)",
+                           "PIP-8605 (Duke's Root Control)")),
+    ], None),
+
+    ("OPS: Duke's Root Control - 03Sep26 - ODE-3140 wheel motor", [
+        ("Right wheel motor is intermittent", None),
+        (None, build_embed("Duke's Root Control - ODE-3140 - 03Sep26",
+                           "PIP-7790 (ODE-3140)",
+                           "PIP-8605 (Duke's Root Control)")),
+    ], None),
 ]
 
 
