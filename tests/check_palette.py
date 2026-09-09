@@ -1169,6 +1169,121 @@ def check_the_board_is_centred_and_keeps_its_scrollbar() -> bool:
     return c.report()
 
 
+
+def all_card_fills(palette):
+    """Every fill a card can wear, the way card_skin reaches for them."""
+    fills = {f"{q} tag": v[1] for q, v in palette["queue"].items()}
+    fills["no tag"] = palette["neutral"][1]
+    fills.update({f"{b} card": v[0] for b, v in palette["band_card"].items()})
+    return fills
+
+
+def check_a_control_sits_under_the_card_it_is_on() -> bool:
+    """
+    A button, a field and a work-item bubble are all drawn a step *under* the
+    card they sit on -- in both themes, which is what makes it one rule.
+
+    They used `surface`, which was right while a card was a tint and the
+    surface was the near-white above it. Light's ramp then put the cards *at*
+    the surface level, and the three of them quietly became invisible:
+    measured against every card fill, `surface` is 1.00-1.01 in light. A
+    bubble with nothing but its border, and a search box that is a rectangle
+    of hairline -- and no check said anything, because every text pairing was
+    still fine. It is the fill against its *ground* that had gone.
+
+    `beside` was the obvious token and is the wrong one: in dark it is lighter
+    than some card fills and darker than others, 1.02-1.07, so a control
+    would appear and disappear depending on the ticket's tag.
+    """
+    c = Check("a control sits a step under the card it is on")
+
+    # A control is told from its card by its fill or by its border, and at
+    # least one of the two has to do real work. Both themes lean differently
+    # and both clear this: light has 1.14 of fill and 1.73 of border, dark
+    # 1.03 and 1.23 -- dark's fill alone is not enough on a triage card, and
+    # its border is what makes the button a button there.
+    CONTROL_MIN = 1.20
+
+    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
+        ground, edge = palette["control"], palette["line"]
+        for card, fill in all_card_fills(palette).items():
+            got = max(contrast(ground, fill), contrast(edge, fill))
+            c.ok(got >= CONTROL_MIN,
+                 f"{name}: a control on a {card} is told from it "
+                 f"({got:.2f} >= {CONTROL_MIN})")
+            # The direction is the strict half, and it is the same in both:
+            # a control is never brighter than the card it is drawn on, so
+            # nothing on a card competes with the card for being the top
+            # surface.
+            c.ok(lum(ground) < lum(fill),
+                 f"{name}: and sits under it, as it does in the other theme")
+
+    # The three sites, off the source: a fourth one added later would want
+    # the same token, and reaching for `surface` again is the mistake.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    for fn in ("btn_css", "field"):
+        node = next(n for n in ast.walk(ast.parse(src))
+                    if isinstance(n, ast.FunctionDef) and n.name == fn)
+        body = ast.get_source_segment(src, node) or ""
+        c.ok("T.CONTROL" in body, f"{fn}() draws on the control tone")
+        c.ok("T.SURFACE" not in body,
+             f"{fn}() does not reach for the surface, which is the card")
+
+    bub = next(n for n in ast.walk(ast.parse(src))
+               if isinstance(n, ast.ClassDef) and n.name == "Bubble")
+    body = ast.get_source_segment(src, bub) or ""
+    c.ok("T.CONTROL" in body, "an outstanding bubble does too")
+
+    return c.report()
+
+
+def check_the_light_ramp_has_four_levels() -> bool:
+    """
+    A grey workspace with bright work surfaces, not one bright field.
+
+    Light was reported as glaring three times. The first two answers went at
+    the card fills, and the fills were never it: what was bright was *how much
+    of the window* was. The sections and the workspace sat on one value with
+    the cards a long way above it, so almost everything on screen was near the
+    top of the range. Four levels now, and the cards are the only bright thing
+    in the window.
+
+    Dark keeps three, and the reason is measurable rather than an exception:
+    the whole of its bottom end from floor to workspace is a contrast ratio of
+    1.06, so a fourth step inside that is a difference nobody can see.
+    """
+    c = Check("the light ramp has four levels and dark has the three it can hold")
+
+    L = bert.LIGHT
+    order = ["well", "panel", "canvas", "surface"]
+    lums = [lum(L[k]) for k in order]
+    c.equal(lums, sorted(lums),
+            "light runs floor, sections, workspace, cards -- darkest first")
+    for a, b in zip(order, order[1:]):
+        got = contrast(L[a], L[b])
+        c.ok(got > 1.02, f"and {b} is a real step above {a} ({got:.3f})")
+
+    # The workspace is the board column and nothing else; everything around
+    # the work is a step under it.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    c.ok("#boardColumn {{ background:{T.CANVAS}" in src,
+         "the board column is the workspace")
+    for panel in ("Rail {{ background:{T.PANEL}",
+                  "Stats {{ background:{T.PANEL}",
+                  "#feedPanel {{ background:{T.PANEL}"):
+        c.ok(panel in src, f"and {panel.split()[0]} is a section around it")
+
+    D = bert.DARK
+    c.equal(D["panel"], D["canvas"],
+            "dark's sections stay at its workspace level")
+    c.ok(contrast(D["well"], D["canvas"]) < 1.10,
+         f"because its floor and workspace are already only "
+         f"{contrast(D['well'], D['canvas']):.3f} apart, and a step inside "
+         f"that is not a difference anybody can see")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
@@ -1184,6 +1299,8 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_starting_a_ticket_is_not_editing_one,
           check_a_card_stands_off_the_board_it_sits_on,
           check_a_card_is_edged_in_its_own_tag,
+          check_a_control_sits_under_the_card_it_is_on,
+          check_the_light_ramp_has_four_levels,
           check_a_filter_says_how_many_it_holds,
           check_a_status_gives_up_its_noun_not_its_state,
           check_the_board_is_centred_and_keeps_its_scrollbar,

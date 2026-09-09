@@ -1207,22 +1207,45 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
-**Three levels, and the floor is one of them.** `well` is what everything
-sits on -- the window, the toolbar, the space a folded panel leaves behind,
-and the room either side of the centred board column. The sections with
-content in them -- the board column, the rail, the figures, the feed -- are
-`canvas`, one step above it, and the cards are above that again. **All of
-them, with no exceptions for how a section is used.** The figures panel was
-put on the floor on the reasoning that the rail and the board are worked in
-while the figures are only read: true, and not what the eye does with it. A
-panel the same value as the space around it stops reading as a panel at all,
-and the three sections stopped matching each other to draw a distinction
-nobody had asked the layout for. Without the floor every one of those met the space around it at
-the same value and the window read as one flat field, most obviously with a
-panel folded away, where the gap it left looked like more board. `beside`
-could not do this job: it is *under* the canvas in light and *over* it in
-dark, because it doubles as a raised control there, so it means opposite
-things in the two themes.
+**Four levels in light, and the workspace is the board column alone.**
+Darkest first: `well` is the outer chrome -- the toolbar, the floor either
+side of the centred board column, the space a folded panel leaves; `panel` is
+the sections *around* the work, which is the running order, the figures and
+the activity feed; `canvas` is the workspace, which is `#boardColumn` and
+nothing else; `surface` is the cards and the things being read and typed in.
+Light was reported as glaring three times, and the first two answers went at
+the card fills. The fills were never it. What was bright was **how much of the
+window** was: the sections and the workspace sat on one value with the cards a
+long way above it, so almost everything on screen was near the top of the
+range. A grey workspace with bright work surfaces, rather than an application
+printed on a sheet of paper -- and the cards are now the only bright thing in
+the window, which is also what makes them read as the work.
+
+**Dark keeps three, and that is measured rather than excepted.** Its whole
+bottom end from the floor to the workspace is a contrast ratio of **1.06**, so
+a fourth step inside that is a difference nobody can see -- `DARK["panel"]` is
+its canvas value on purpose. Dark gets its depth from the border-to-fill
+relationship instead, which is 5-7x. `tests/check_palette.py` holds both: the
+light ramp must be four real steps in order, and dark's must be the three its
+range can carry.
+
+**A control is drawn a step *under* the card it sits on, in both themes.**
+`control` is what a button, a field and a work-item bubble are filled with. It
+used to be `surface`, which was right while a card was a tint and the surface
+was the near-white above it -- and stopped being right the moment the cards
+came up to the surface level themselves. Measured then, `surface` against
+every card fill in light was **1.00-1.01**: a bubble with nothing but its
+border and a search box that was a rectangle of hairline, and no check said
+anything, because every *text* pairing was still fine. It is the fill against
+its ground that had gone, which is why there is a check for that now.
+`beside` was the obvious token and is the wrong one -- in dark it is lighter
+than some card fills and darker than others (1.02-1.07), so a control would
+appear and disappear depending on the ticket's tag.
+**Fill or border, and at least one doing real work.** Light has both, 1.14 of
+fill and 1.73 of border; dark leans on the border, 1.03 and 1.23, and its fill
+alone is not enough on a triage card. The direction is the strict half and is
+the same in both: a control is never brighter than the card it is on, so
+nothing on a card competes with the card for being the top surface.
 
 **A plain `QWidget` ignores a stylesheet background unless it opts in.**
 `Rail`, `Stats` and `#boardColumn` all set one and none of them ever painted

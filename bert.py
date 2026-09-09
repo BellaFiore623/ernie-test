@@ -196,71 +196,86 @@ SEARCH_HINT_PAD = 16
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    # A light-grey floor, sections a step above it, and near-white cards -- the
-    # shape dark already had, arrived at from the other end. The earlier light
-    # palette put every one of those within a hair of the others and left the
-    # tag colours to say where a card began; deepening the floor to separate
-    # them worked, and made the application look like it was drawn on slate.
-    # This is the same separation spent the other way: the ground goes quiet
-    # and pale, and the *border* carries the tag. Measured against dark, whose
-    # borders stand at 5-7x their own fill where light's stood at 1.6-2.3.
-    "ink": "#1F2124", "muted": "#484D51", "line": "#CBD1D8",
-    "surface": "#FAFBFC", "canvas": "#E3E6EA",
-    # Under the canvas in light and over it in dark, because it doubles as a
-    # raised control there. It is the one token that means opposite things in
-    # the two themes, which is why it cannot be the floor.
-    "beside": "#CFD3D9",
-    # The floor. Everything with content in it -- the board column, the rail,
-    # the figures, the feed -- sits on the canvas one step above this, so a
-    # section reads as a thing on a surface rather than as a region of one
-    # flat colour.
-    "well": "#D8DBE1",
-    # The badge fills came up with the cards under them. A chip drawn for a
-    # 0.86 card is a smudge on a 0.94 one.
-    "amber_bg": "#FBF0DC", "amber_fg": "#7C5107",
-    "red_bg": "#FBE8E8", "red_fg": "#8E2828", "red_edge": "#C43C3C",
-    "ok_fg": "#2A6130", "ok_bg": "#E9F2E9", "accent": "#2B6CB0",
-    "info_bg": "#E6EDF7", "info_fg": "#1B3A5C",
+    # A grey workspace with bright work surfaces, not an application printed
+    # on a sheet of paper. Four neutral levels, darkest first:
+    #
+    #   well     the outer chrome -- the toolbar, the floor either side of
+    #            the board column, the space a folded panel leaves
+    #   panel    the sections around the work: the running order, the
+    #            figures, the activity feed
+    #   canvas   the workspace itself, which is the board column and nothing
+    #            else
+    #   surface  the cards, the fields, the things being read and typed in
+    #
+    # The previous light end put the sections and the workspace on one value
+    # and the cards a long way above it, so the eye had one big near-white
+    # field with everything on it. Reported as still glaring after two passes
+    # at the fills, which is the right diagnosis: it was never the fills, it
+    # was how much of the window was bright. Cards are now the only bright
+    # thing, and there is less of them.
+    "ink": "#1F2124", "muted": "#484D51", "line": "#B6BDC6",
+    "surface": "#F4F5F6", "canvas": "#DDE1E6", "panel": "#D5DAE0",
+    # Raised controls -- what a button is drawn on. Under the surface in
+    # light and over it in dark, because "raised" is toward the light end in
+    # one and toward the dark end in the other. It is the one token that
+    # means opposite things in the two themes, which is why it cannot be the
+    # floor.
+    "beside": "#E4E6EA",
+    # What a button, a field or a work-item bubble is drawn on: always a step
+    # **under** the card it sits on, in both themes. It used to be `surface`,
+    # which was right while a card was a tint and the surface was near-white
+    # -- and stopped being right the moment cards came to the surface level
+    # themselves. Measured against every card fill in this palette, `surface`
+    # is 1.00-1.01 against them: a bubble with nothing but its border, and a
+    # search box that is a rectangle of hairline. This is 1.14-1.15 under all
+    # of them, and it is the same direction in dark, so the rule is one
+    # sentence rather than two.
+    "control": "#E4E6EA",
+    "well": "#C9CED5",
+    # The badge fills came down with the cards under them: a chip drawn for a
+    # 0.94 card is a smudge on a 0.91 one.
+    "amber_bg": "#F0E6D6", "amber_fg": "#7C5107",
+    "red_bg": "#F4E2E2", "red_fg": "#8E2828", "red_edge": "#C43C3C",
+    "ok_fg": "#2A6130", "ok_bg": "#D3EED6", "accent": "#2B6CB0",
+    "info_bg": "#DDE8F2", "info_fg": "#1B3A5C",
     "grey_fg": "#555B60",
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#ECEEF1",
+    "chip_bg": "#EAEBEE",
     # Text on an accent-filled button, and the wash under a hovered bubble.
-    "on_accent": "#FFFFFF", "hover_bg": "#DCE8F7",
-    "neutral": ("#6F757B", "#F8F8F8", "#33373A"),
+    "on_accent": "#FFFFFF", "hover_bg": "#D0DEED",
+    "neutral": ("#6F757B", "#F5F5F5", "#33373A"),
     # (stripe, fill, ink). The stripe is the tag colour taken down in
     # lightness and **not** in saturation -- same hue, same cast, dark enough
-    # to hold an edge against a near-white card. Turning the saturation up
-    # instead would have made light's borders louder than dark's, which is a
+    # to hold an edge against a pale card. Turning the saturation up instead
+    # would have made light's borders louder than dark's, which is a
     # different colour meaning the same thing.
     "queue": {
-        "PROD": ("#A1660C", "#FCF7F0", "#633806"),
-        "OPS":  ("#5B7C2C", "#F6FAEE", "#27500A"),
-        "ENG":  ("#3C75BA", "#F5F8FD", "#1B3A5C"),
-        "CS":   ("#8F5AC2", "#FAF7FD", "#3D2154"),
+        "PROD": ("#A1660C", "#F8F5EF", "#633806"),
+        "OPS":  ("#5B7C2C", "#F3F7EC", "#27500A"),
+        "ENG":  ("#3C75BA", "#F2F6FA", "#1B3A5C"),
+        "CS":   ("#8F5AC2", "#F7F3FA", "#3D2154"),
     },
-    # The band header's strip, and only its strip -- a shade *above* the
+    # The band header's strip, and only its strip -- a shade above the
     # column, so the header reads as raised rather than as a coloured band
     # across the board. The colour is in the 4px bar down its left and in the
-    # heading's ink; this is barely tinted (chroma 10 at most, against 24
-    # before) so that a card sitting under it wears the only real colour in
-    # the run. Dark's headers stand 1.12-1.20x over their column; these are
-    # 1.11x over theirs.
+    # heading's ink; this is barely tinted so that a card sitting under it
+    # wears the only real colour in the run.
     "band_tint": {
-        "unassigned": "#F7F0F0", "critical": "#F7F0F0", "high": "#F5F1EB",
-        "medium": "#EEF2F7", "low": "#F2F2F2",
+        "unassigned": "#F4EBEB", "critical": "#F4EBEB", "high": "#F2EEE7",
+        "medium": "#EAEEF4", "low": "#EEEEEE",
     },
-    # (fill, outline). Near-white with a whisper of the band, and the outline
-    # is what says which band it is -- unchanged, because those are the
-    # severity marks. Unassigned is the plain neutral, the one card with no
-    # colour of its own: it is not a priority, it is the absence of one, and a
-    # blank card reads as one nobody has picked up. The red 2px outline over
-    # it is the thing asking for a person, and it is the only red on the board.
+    # (fill, outline). The card level with a whisper of the band, and the
+    # outline is what says which band it is -- unchanged, because those are
+    # the severity marks. Unassigned is the plain neutral, the one card with
+    # no colour of its own: it is not a priority, it is the absence of one,
+    # and a blank card reads as one nobody has picked up. The red 2px outline
+    # over it is the thing asking for a person.
     "band_card": {
-        "unassigned": ("#F9F9FA", "#C43C3C"), "critical": ("#FDF4F4", "#C43C3C"),
-        "high": ("#FCF7F0", "#D19434"), "medium": ("#F5F8FD", "#7099CB"),
-        "low": ("#F8F8F8", "#B7BCC2"),
+        "unassigned": ("#F5F5F5", "#C43C3C"), "critical": ("#FAF3F3", "#C43C3C"),
+        "high": ("#F8F4EF", "#D19434"), "medium": ("#F2F6FA", "#7099CB"),
+        "low": ("#F5F5F5", "#B7BCC2"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
@@ -279,7 +294,21 @@ LIGHT = {
 DARK = {
     "ink": "#E6E9EC", "muted": "#98A2AD", "line": "#333B45",
     "surface": "#1B2027", "canvas": "#14181D",
+    # The sections around the work sit at the canvas here, not a step under
+    # it. Dark's bottom end has no room for a fourth level: the whole of it
+    # from the floor to the workspace is a contrast ratio of 1.06, and a step
+    # inside that measures 1.04 against the canvas -- a difference nobody can
+    # see, spent on a distinction light needs and dark does not. Dark gets its
+    # depth from the border-to-fill relationship instead, which is 5-7x.
+    "panel": "#14181D",
     "beside": "#222831",
+    # A step under every card here too, which is where dark already had it --
+    # this is the value its buttons, fields and bubbles were already using, so
+    # naming the role changes nothing on this side. `beside` could not do the
+    # job: measured against dark's seven card fills it is lighter than some
+    # and darker than others, 1.02-1.07, which is a control that appears and
+    # disappears depending on the ticket's tag.
+    "control": "#1B2027",
     # Below the canvas here, as it is in light -- in dark that means darker
     # still, which is the one direction #222831 could not go.
     "well": "#0E1115",
@@ -641,7 +670,10 @@ def btn_css() -> str:
     Flat, on the surface tone, with the accent arriving only on hover. The
     border is the hairline every other edge on the board uses.
     """
-    return (f"QPushButton {{ {BTN_HIT} background:{T.SURFACE};"
+    # The raised-control tone, not the surface: the surface *is* the card a
+    # card's buttons are drawn on, so a button wearing it had only its border
+    # to say it was a button.
+    return (f"QPushButton {{ {BTN_HIT} background:{T.CONTROL};"
             f" border:1px solid {T.LINE}; border-radius:{BTN_RADIUS}px;"
             f" color:{T.INK}; }}"
             f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.10)};"
@@ -661,7 +693,7 @@ def rgba(hex_colour, alpha):
 def field() -> str:
     """Type into these. A function, not a constant: a constant would be built
     once at import, in whichever palette happened to be loaded first."""
-    return (f"background:{T.SURFACE}; border:1px solid {rgba(T.INK, 0.28)};"
+    return (f"background:{T.CONTROL}; border:1px solid {rgba(T.INK, 0.28)};"
             f" border-radius:5px; padding:4px 6px; color:{T.INK};")
 
 
@@ -1421,10 +1453,12 @@ class Bubble(QFrame):
                 f" border-radius:11px; }}")
             ink = T.OK_FG
         else:
-            # White, not a tint: the card underneath is now its queue's colour,
-            # and a pale blue bubble all but disappeared on a blue ENG card.
+            # A step under the card, not a tint of it: the card underneath
+            # wears its queue's colour, and a pale blue bubble all but
+            # disappeared on a blue ENG card. Neutral and one level down
+            # reads on every fill in both palettes, which a tint cannot.
             self.setStyleSheet(
-                f"#bubble {{ background:{T.SURFACE};"
+                f"#bubble {{ background:{T.CONTROL};"
                 f" border:1px solid {rgba(T.INK, 0.16)}; border-radius:11px; }}")
             ink = T.INK
 
@@ -2902,7 +2936,7 @@ class Rail(QWidget):
         # and it went unnoticed for as long as this and the window
         # behind it were the same colour.
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"Rail {{ background:{T.CANVAS}; }}" + tip_css())
+        self.setStyleSheet(f"Rail {{ background:{T.PANEL}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 4, 8)
@@ -3300,7 +3334,7 @@ class Stats(QWidget):
         # a panel, and the three sections stopped matching each other for a
         # distinction nobody was asking the layout to draw. Every section
         # with content in it is the canvas; the floor is what they stand on.
-        self.setStyleSheet(f"Stats {{ background:{T.CANVAS}; }}" + tip_css())
+        self.setStyleSheet(f"Stats {{ background:{T.PANEL}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 10, 10, 8)
@@ -3894,7 +3928,7 @@ class Bert(QMainWindow):
         # The canvas, like the board column and the two side panels: the feed
         # is a section with content in it, so it sits on the floor rather than
         # being part of it.
-        w.setStyleSheet(f"#feedPanel {{ background:{T.CANVAS};"
+        w.setStyleSheet(f"#feedPanel {{ background:{T.PANEL};"
                         f" border-top:1px solid {T.LINE}; }}")
         # No fixed height: the splitter owns it. A minimum only, so the
         # handle cannot be dragged down over the caption.
