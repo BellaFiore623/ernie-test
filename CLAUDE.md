@@ -1083,6 +1083,22 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
+**A container with its own stylesheet owns its tooltips too.** `apply_theme`
+states `QToolTip` on the application, and that settles it for any widget
+carrying no sheet of its own. It does not settle it for one that has one: Qt
+resolves a tooltip against the nearest stylesheet in the widget's chain, so a
+container that names only itself leaves its rows' tooltips to whatever the
+platform draws -- which on a dark desktop is dark, against the ink a light
+board asks for. `tip_css()` is that rule written once, and `Rail`, `RailRow`
+and `Stats` state it alongside their own. Reported from the running order,
+whose rows are the most hovered thing on the board.
+
+**The application palette starts from the style's, not from a blank one.** A
+default-constructed `QPalette` leaves every role it does not name at Qt's
+fallback, and `setPalette()` then installs that over the whole application --
+so roles nothing here thinks about, including the ones a tooltip paints from,
+came out black.
+
 **Hide a widget before unparenting it.** The teardowns unparent before
 `deleteLater()` on purpose -- one still parented to the panel keeps painting at
 the geometry it had, and a rebuild mid-drag left the old rows on screen under

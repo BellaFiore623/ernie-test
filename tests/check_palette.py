@@ -721,8 +721,43 @@ def check_starting_a_ticket_is_not_editing_one() -> bool:
     return c.report()
 
 
+def check_a_scoped_container_states_its_tooltip() -> bool:
+    """
+    A widget with a stylesheet of its own owns its tooltips too.
+
+    `apply_theme` states QToolTip on the application, which is enough for a
+    widget carrying no sheet. It is not enough for one that has its own: Qt
+    resolves a tooltip against the nearest stylesheet in the widget's chain,
+    so a container that names only itself leaves its rows' tooltips to
+    whatever the platform draws -- dark, on a dark desktop, against the ink a
+    light board asks for. Reported from the running order, where the rows are
+    the most hovered thing on the board.
+    """
+    c = Check("a container with its own stylesheet states its tooltip")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    c.ok("def tip_css(" in src, "the rule is written in one place")
+    c.ok(src.count("tip_css()") >= 4,
+         "and used, rather than being written out again at each site")
+
+    tree = ast.parse(src)
+    for cls_name in ("Rail", "RailRow", "Stats"):
+        cls = next((n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
+                    and n.name == cls_name), None)
+        body = ast.get_source_segment(src, cls) or "" if cls else ""
+        own = [ln for ln in body.splitlines() if "setStyleSheet" in ln]
+        c.ok(own, f"{cls_name} carries a stylesheet of its own")
+        # The call can span lines, so look at the statement it starts.
+        block = body.split("setStyleSheet", 1)[1][:400] if own else ""
+        c.ok("tip_css()" in block,
+             f"{cls_name} states the tooltip rule with it")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
+          check_a_scoped_container_states_its_tooltip,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
           check_triage_is_outlined_not_filled,
           check_the_other_skins, check_choosing_a_theme,

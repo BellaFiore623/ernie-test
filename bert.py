@@ -389,7 +389,12 @@ def apply_theme(choice: str) -> None:
     if app is None:
         return
 
-    pal = QPalette()
+    # From the style's own palette, not a blank one. A default-constructed
+    # QPalette leaves every role this does not name at Qt's fallback, which is
+    # largely black -- and setPalette() then installs that over the whole
+    # application. It is why the rail's tooltips came out black: nothing here
+    # names the role a tooltip actually paints its background from.
+    pal = QPalette(app.style().standardPalette())
     ink, surface, canvas = QColor(T.INK), QColor(T.SURFACE), QColor(T.CANVAS)
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText,
                  QPalette.ToolTipText):
@@ -553,6 +558,21 @@ def month_name(month: str) -> str:
     except (ValueError, IndexError, AttributeError):
         return str(month)
     return f"{name} {y[2:]}" if m == "01" else name
+
+
+def tip_css() -> str:
+    """The tooltip rule, for a widget that carries a stylesheet of its own.
+
+    `apply_theme` states this on the application, and that is enough for a
+    widget with no sheet. It is not enough for one that has its own: Qt
+    resolves a tooltip against the nearest stylesheet in the widget's chain,
+    so a container that names only itself leaves its rows' tooltips to
+    whatever the platform draws -- which on a dark desktop is dark, and
+    unreadable against the ink a light board asks for. Every scoped container
+    below states it too.
+    """
+    return (f"QToolTip {{ color:{T.INK}; background-color:{T.SURFACE};"
+            f" border:1px solid {T.LINE}; padding:4px 6px; }}")
 
 
 def rgba(hex_colour, alpha):
@@ -2507,7 +2527,7 @@ class RailRow(QFrame):
         # keeping a queue stripe, which at 26px tall is most of its edge.
         left = "" if needs_triage(data) else f" border-left:3px solid {stripe};"
         self.setStyleSheet(f"RailRow {{ background:{fill};"
-                           f" border:{px}px solid {edge};{left} }}")
+                           f" border:{px}px solid {edge};{left} }}" + tip_css())
         self.setCursor(Qt.OpenHandCursor)
 
         lay = QVBoxLayout(self)
@@ -2715,7 +2735,7 @@ class Rail(QWidget):
         # canvas colour, with the text the same colour as the box. Measured
         # against a plain widget in the same process: readable there, solid
         # black here.
-        self.setStyleSheet(f"Rail {{ background:{T.CANVAS}; }}")
+        self.setStyleSheet(f"Rail {{ background:{T.CANVAS}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 4, 8)
@@ -3080,7 +3100,7 @@ class Stats(QWidget):
         self.resize(STATS_WIDTH, self.height())
         # Scoped, like Rail's. Unscoped it cascades into every child and into
         # the tooltips those children own.
-        self.setStyleSheet(f"Stats {{ background:{T.CANVAS}; }}")
+        self.setStyleSheet(f"Stats {{ background:{T.CANVAS}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 10, 10, 8)
