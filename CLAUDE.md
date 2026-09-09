@@ -1095,6 +1095,21 @@ because that is the name Qt takes for the application -- counted with
 that, all from Bert's own pid. `w.hide()` first, at every one of those sites;
 `tests/check_palette.py` holds the line above each of them.
 
+**Light mode is not white.** It was: `surface` was `#FFFFFF` at luminance
+1.000, the canvas 0.920 behind it, and every card fill between 0.76 and 0.86 --
+a field of near-white, and tiring to read for an afternoon. The whole light end
+came down together, which is what keeps the order that carries the meaning:
+surface above canvas above beside, each card a shade deeper than the wash it
+sits on. The inks did not move, so every pairing kept its contrast; measured
+after, the worst text pairing anywhere is 4.7:1 and most are above 12:1.
+**And two large areas were painted in the brightest token for no reason.** The
+toolbar and the feed panel used `T.SURFACE`, so the biggest slab in the window
+was also the brightest thing in it -- brighter than any card. They are chrome,
+like the rail and the figures either side of the board, so they take `T.CANVAS`
+now and recede; the rule under the toolbar is what separates it. That is a
+change to both themes on purpose: dark had the same two slabs sitting proud of
+everything around them.
+
 **No colour literals in Bert.** Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 both `LIGHT` and `DARK`. A hex typed into a stylesheet works in one theme and

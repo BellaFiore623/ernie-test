@@ -183,48 +183,56 @@ BTN_HIT = "font-size:11px; padding:6px 14px; "
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    "ink": "#1F2124", "muted": "#6B7075", "line": "#DFE1E4",
-    "surface": "#FFFFFF", "canvas": "#F5F6F7",
+    # Nothing here is pure white, and the light end sits a notch below where
+    # it started. `surface` was #FFFFFF -- luminance 1.000 -- with the canvas
+    # at 0.920 behind it and every card fill between 0.76 and 0.86, so the
+    # board was a field of near-white and reading it for an afternoon was
+    # tiring. Everything below came down together, which keeps the order that
+    # carries the meaning: surface above canvas above beside, and each card a
+    # shade deeper than the wash it sits on. The inks did not move, so every
+    # pairing got *more* contrast rather than less.
+    "ink": "#1F2124", "muted": "#5C6166", "line": "#C0C6CD",
+    "surface": "#ECEFF2", "canvas": "#DCE0E5",
     # Behind and to the right of the board column, a shade under the canvas.
-    "beside": "#EAECEE",
-    "amber_bg": "#FCF3E2", "amber_fg": "#8A5A08",
-    "red_bg": "#FBEBEB", "red_fg": "#9B2C2C", "red_edge": "#D14343",
-    "ok_fg": "#2E6B34", "ok_bg": "#EAF2EA", "accent": "#2B6CB0",
-    "info_bg": "#E6EDF7", "info_fg": "#1B3A5C",
+    "beside": "#D5D9DF",
+    "amber_bg": "#F7EBD4", "amber_fg": "#7C5107",
+    "red_bg": "#F6E2E2", "red_fg": "#8E2828", "red_edge": "#C43C3C",
+    "ok_fg": "#2A6130", "ok_bg": "#E3EDE3", "accent": "#2B6CB0",
+    "info_bg": "#DEE7F4", "info_fg": "#1B3A5C",
     "grey_fg": "#555B60",
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#EEEFF1",
+    "chip_bg": "#E3E6EA",
     # Text on an accent-filled button, and the wash under a hovered bubble.
-    "on_accent": "#FFFFFF", "hover_bg": "#D6E4F5",
-    "neutral": ("#9AA0A6", "#EEEFF1", "#3C4043"),
+    "on_accent": "#FFFFFF", "hover_bg": "#CBDCF1",
+    "neutral": ("#8E949A", "#E3E6EA", "#33373A"),
     "queue": {
-        "PROD": ("#EF9F27", "#FAEEDA", "#633806"),
-        "OPS":  ("#97C459", "#EAF3DE", "#27500A"),
-        "ENG":  ("#6F9BD1", "#E6EDF7", "#1B3A5C"),
-        "CS":   ("#B08BD4", "#F0E9F7", "#3D2154"),
+        "PROD": ("#EF9F27", "#F4E5CB", "#633806"),
+        "OPS":  ("#97C459", "#E0EDD0", "#27500A"),
+        "ENG":  ("#6F9BD1", "#DEE7F4", "#1B3A5C"),
+        "CS":   ("#B08BD4", "#E8DEF2", "#3D2154"),
     },
     # A wash behind each band's cards. Unassigned is the one neutral in the
     # ramp on purpose: it is not a priority, it is the absence of one, and
     # wearing a near-critical red said the opposite of that across the room.
     "band_tint": {
-        "unassigned": "#F6E4E4", "critical": "#F6E4E4", "high": "#FBF1DF",
-        "medium": "#EAF1FA", "low": "#EFF1F2",
+        "unassigned": "#EFD9D9", "critical": "#EFD9D9", "high": "#F4E7D0",
+        "medium": "#DFE9F5", "low": "#E4E7EA",
     },
     # The card, a shade deeper than its wash -- except unassigned, which is
     # the plain surface, the other way about. A blank card reads as one
     # nobody has picked up, and it leaves red to mean one thing on this
     # board: a card that needs a person. Those keep their outline over it.
     "band_card": {
-        "unassigned": ("#FBEBEB", "#D14343"), "critical": ("#F7DCDC", "#D14343"),
-        "high": ("#FCEBD1", "#E0A03C"), "medium": ("#E3EDF9", "#7FA8D8"),
-        "low": ("#EDEFF1", "#C2C7CC"),
+        "unassigned": ("#F5E3E3", "#C43C3C"), "critical": ("#EFD2D2", "#C43C3C"),
+        "high": ("#F6E1C2", "#D19434"), "medium": ("#D8E5F4", "#7099CB"),
+        "low": ("#E3E6E9", "#B7BCC2"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
-        "unassigned": "#9B2C2C", "critical": "#9B2C2C", "high": "#8A5A08",
-        "medium": "#2B6CB0", "low": "#555B60",
+        "unassigned": "#8E2828", "critical": "#8E2828", "high": "#7C5107",
+        "medium": "#265F9C", "low": "#4C5257",
     },
 }
 
@@ -3471,7 +3479,11 @@ class Bert(QMainWindow):
 
     def _toolbar(self):
         bar = QWidget()
-        bar.setStyleSheet(f"background:{T.SURFACE}; border-bottom:1px solid {T.LINE};")
+        # The canvas, not the surface. It is a strip of chrome like the rail
+        # and the figures either side of the board, and the rule under it is
+        # what separates it -- painted in the brightest token it was the
+        # first thing the eye landed on in light mode.
+        bar.setStyleSheet(f"background:{T.CANVAS}; border-bottom:1px solid {T.LINE};")
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(16, 10, 16, 10)
         lay.setSpacing(10)
@@ -3587,7 +3599,10 @@ class Bert(QMainWindow):
         w.setObjectName("feedPanel")
         # Scoped, so the caption and the rows don't each paint their own block
         # of it the way a bare selector would.
-        w.setStyleSheet(f"#feedPanel {{ background:{T.SURFACE};"
+        # Canvas, for the reason the toolbar is: this is a panel beside the
+        # board rather than a sheet on top of it, and it is the largest
+        # single area in the window when the feed is short.
+        w.setStyleSheet(f"#feedPanel {{ background:{T.CANVAS};"
                         f" border-top:1px solid {T.LINE}; }}")
         # No fixed height: the splitter owns it. A minimum only, so the
         # handle cannot be dragged down over the caption.
