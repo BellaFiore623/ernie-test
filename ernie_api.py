@@ -482,6 +482,79 @@ def health():
     }
 
 
+@app.get("/stats")
+def stats(months: int = 6, ageing: int = 5):
+    """What the board looks like over time, rather than right now.
+
+    Four numbers, and each earns its place by answering something the board
+    itself cannot. Deliberately not a survey: a page of statistics nobody acts
+    on is furniture, and the first one that turns out to be wrong takes the
+    others' credibility with it.
+
+    Nothing here is derived from `events`. It is all read off cards and
+    threads, which are mirrored from Discord -- so it says something true on a
+    board that has never been driven from Bert, where the feed is empty and
+    every completion reads as "imported".
+    """
+    con = db()
+    try:
+        # 1. Completed per month. The trend is the point: a bare "this month"
+        #    throws away the shape, and the shape is what somebody wants.
+        by_month = [dict(r) for r in con.execute(
+            """SELECT substr(completed_at, 1, 7) AS month, COUNT(*) AS count
+               FROM cards WHERE completed_at IS NOT NULL
+               GROUP BY month ORDER BY month DESC LIMIT ?""", (months,))]
+        by_month.reverse()
+
+        # 2. The open ones that have been open longest. This is the list that
+        #    changes what somebody does today, and nothing else shows it.
+        oldest = [dict(r) for r in con.execute(
+            """SELECT c.thread_id, v.name, v.client_raw, c.priority,
+                      CAST(julianday('now') - julianday(t.created_at) AS INT)
+                        AS days
+               FROM cards c
+               JOIN threads t USING (thread_id)
+               LEFT JOIN v_thread_current v ON v.thread_id = c.thread_id
+               WHERE c.completed_at IS NULL
+               ORDER BY days DESC LIMIT ?""", (ageing,))]
+
+        # 3. How long one takes, end to end. The spread matters more than the
+        #    average, so the slowest comes too.
+        spans = [r[0] for r in con.execute(
+            """SELECT julianday(c.completed_at) - julianday(t.created_at)
+               FROM cards c JOIN threads t USING (thread_id)
+               WHERE c.completed_at IS NOT NULL""") if r[0] is not None]
+        spans.sort()
+        took = None
+        if spans:
+            mid = len(spans) // 2
+            median = (spans[mid] if len(spans) % 2
+                      else (spans[mid - 1] + spans[mid]) / 2)
+            took = {"count": len(spans),
+                    "average_days": round(sum(spans) / len(spans), 1),
+                    "median_days": round(median, 1),
+                    "slowest_days": round(spans[-1], 1)}
+
+        # 4. Open tickets with no build or return raised against them. Only
+        #    230 of 889 threads ever get one, so this is invisible today and
+        #    is the one number here somebody can act on directly.
+        open_now = con.execute(
+            "SELECT COUNT(*) FROM cards WHERE completed_at IS NULL"
+        ).fetchone()[0]
+        without = con.execute(
+            """SELECT COUNT(*) FROM cards c
+               WHERE c.completed_at IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM tickets t
+                                 WHERE t.thread_id = c.thread_id)"""
+        ).fetchone()[0]
+
+        return {"completed_by_month": by_month, "ageing": oldest,
+                "time_to_complete": took,
+                "no_ticket": {"open": open_now, "without": without}}
+    finally:
+        con.close()
+
+
 @app.get("/cards")
 def cards(
     queue: Optional[str] = Query(None, description="OPS | PROD | ENG | CS"),

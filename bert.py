@@ -105,6 +105,14 @@ FEED_ROWS = 4
 FEED_MAX_ROWS = 8          
 BOARD_MIN_H = 180          # the board never drags away to nothing
 SPLIT_GRIP = 6             # the handle between the board and the feed
+STATS_MIN_W = 180          # narrower and the month bars stop comparing
+STATS_MAX_W = 380          # wider is a report, not a margin
+STATS_WIDTH = 244          # what it opens at, not what it stays
+STATS_ROW_CHROME = 64      # the age column and the padding beside it
+STATS_OLD_D = 90           # a quarter open is a different kind of old
+STATS_MAX_AGE_S = 60       # these move when a ticket closes, not per poll
+GLYPH_LEFT = "\u00ab"
+GLYPH_RIGHT = "\u00bb"
 # Qt's QWIDGETSIZE_MAX, which PySide6 does not export. Undoes a
 # setFixedHeight, which sets minimum and maximum together.
 UNCAPPED = 16777215
@@ -523,6 +531,21 @@ VALUE_LABEL = {v: lab for v, lab in STATES + DIRECTIONS}
 VALUE_LABEL[""] = "(empty)"
 
 
+def month_name(month: str) -> str:
+    """"2026-08" as "Aug", and "Jan 27" where the year turns over.
+
+    The panel is 244px wide and the label sits beside a count, so the year is
+    spelled only where leaving it out would put two Januaries side by side.
+    """
+    try:
+        y, m = month.split("-")
+        name = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[int(m) - 1]
+    except (ValueError, IndexError, AttributeError):
+        return str(month)
+    return f"{name} {y[2:]}" if m == "01" else name
+
+
 def rgba(hex_colour, alpha):
     """A washed-out version of a palette colour, for hairlines."""
     h = hex_colour.lstrip("#")
@@ -747,6 +770,9 @@ class Api:
     def roster(self):
         return self.client.get(f"{self.base}/clients/roster").json()
 
+    def stats(self):
+        return self.client.get(f"{self.base}/stats").json()
+
     def new_ticket(self, fields, actor):
         return self._post("/tickets", {**fields, "actor": actor})
 
@@ -790,9 +816,13 @@ class Poller(QThread):
     loaded = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, api, want_roster=False):
+    def __init__(self, api, want_roster=False, want_stats=False):
         super().__init__()
         self.api = api
+        # The figures move when a ticket closes or ages a day, not every five
+        # seconds, so they ride the slow lane with the roster rather than the
+        # poll the board depends on.
+        self.want_stats = want_stats
         # The customer list is 65 rows that change about hourly, so it does
         # not ride the five-second poll. It comes back on the polls that ask,
         # and it comes back here rather than on demand because fetching it
@@ -812,6 +842,13 @@ class Poller(QThread):
                     p["roster"] = self.api.roster().get("clients") or []
                 except Exception:
                     p["roster"] = []
+            if self.want_stats:
+                # An older Ernie has no such route. That is not a reason to
+                # fail the poll the board depends on.
+                try:
+                    p["stats"] = self.api.stats()
+                except Exception:
+                    p["stats"] = None
             self.loaded.emit(p)
         except Exception as e:
             self.failed.emit(str(e))
@@ -3006,6 +3043,259 @@ class Rail(QWidget):
         e.acceptProposedAction()
 
 
+class Stats(QWidget):
+    """The board over time, in the space to the right of it.
+
+    The board says what is on the plate now. None of it says whether that is
+    getting better or worse, how long a ticket takes, or which ones have been
+    open since April. Four figures, and each earns its place by answering
+    something the board cannot: a page of statistics nobody acts on is
+    furniture, and the first one that turns out to be wrong takes the
+    credibility of the others with it.
+
+    Sized like the running order and for the same reasons -- a range rather
+    than a fixed width, so the splitter handle has something to move; folded
+    by its own button rather than by the handle; and the width remembered.
+    The rail plus a full-width board is 1040px, so on anything wider this
+    grows into empty space rather than out of the board.
+    """
+
+    def __init__(self, board):
+        super().__init__()
+        self.board = board
+        self.folded = False
+        self._spacer = None
+        self._sig = None
+        self.setMinimumWidth(STATS_MIN_W)
+        self.setMaximumWidth(STATS_MAX_W)
+        self.resize(STATS_WIDTH, self.height())
+        # Scoped, like Rail's. Unscoped it cascades into every child and into
+        # the tooltips those children own.
+        self.setStyleSheet(f"Stats {{ background:{T.CANVAS}; }}")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(4, 10, 10, 8)
+        outer.setSpacing(6)
+
+        self.head = QLabel("How it's going")
+        f = QFont()
+        f.setPointSize(10)
+        f.setWeight(QFont.DemiBold)
+        self.head.setFont(f)
+        self.head.setStyleSheet(f"color:{T.INK}; background:transparent;")
+
+        self.fold_btn = QPushButton(GLYPH_RIGHT)
+        self.fold_btn.setFixedSize(24, 24)
+        self.fold_btn.setCursor(Qt.PointingHandCursor)
+        self.fold_btn.setToolTip("Hide the figures")
+        self.fold_btn.setStyleSheet(
+            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:3px;"
+            f" background:{T.SURFACE}; color:{T.MUTED}; font-size:11px; }}"
+            f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.14)};"
+            f" color:{T.ACCENT}; }}")
+        self.fold_btn.clicked.connect(self.toggle_fold)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(4)
+        # The button first, because this panel's spine is the edge nearest the
+        # board -- the mirror of the rail, whose spine is the far left.
+        top.addWidget(self.fold_btn)
+        top.addWidget(self.head)
+        top.addStretch(1)
+        outer.addLayout(top)
+
+        self.body = QVBoxLayout()
+        self.body.setContentsMargins(0, 0, 0, 0)
+        self.body.setSpacing(9)
+        self.holder = QWidget()
+        self.holder.setLayout(self.body)
+        self.holder.setStyleSheet("background:transparent;")
+        outer.addWidget(self.holder)
+        outer.addStretch(1)
+
+        self.hint = QLabel("waiting for Ernie")
+        self.hint.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
+                                f" background:transparent;")
+        outer.addWidget(self.hint)
+
+    # -- drawing -----------------------------------------------------------
+
+    def _heading(self, text):
+        lab = QLabel(text.upper())
+        lab.setStyleSheet(f"color:{T.MUTED}; font-size:10px;"
+                          f" background:transparent;")
+        return lab
+
+    def _line(self, text, colour=None, tip=None):
+        lab = QLabel(text)
+        lab.setStyleSheet(f"color:{colour or T.INK}; font-size:12px;"
+                          f" background:transparent;")
+        if tip:
+            lab.setToolTip(tip)
+        return lab
+
+    def _bar(self, fraction, colour):
+        """A proportional strip.
+
+        Drawn rather than spelled with block characters: a block is a
+        different width in every font, so the bars would not line up with
+        each other and the comparison is the whole point of them.
+        """
+        holder = QWidget()
+        holder.setFixedHeight(5)
+        holder.setStyleSheet("background:transparent;")
+        lay = QHBoxLayout(holder)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        fill = QWidget()
+        fill.setStyleSheet(f"background:{colour}; border-radius:2px;")
+        share = max(1, min(100, int(round(fraction * 100))))
+        lay.addWidget(fill, share)
+        lay.addStretch(100 - share)
+        return holder
+
+    def clear(self):
+        while self.body.count():
+            it = self.body.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                # Hide before unparenting: an unparented visible widget is a
+                # top-level window until the event loop gets round to it.
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+            elif it.layout() is not None:
+                inner = it.layout()
+                while inner.count():
+                    sub = inner.takeAt(0)
+                    sw = sub.widget()
+                    if sw is not None:
+                        sw.hide()
+                        sw.setParent(None)
+                        sw.deleteLater()
+
+    def set_stats(self, data):
+        """Draw the four figures, and only when they have changed."""
+        sig = json.dumps(data, sort_keys=True, default=str)
+        if sig == self._sig:
+            return
+        self._sig = sig
+        self.clear()
+        if not data:
+            self.hint.setText("waiting for Ernie")
+            self.hint.setVisible(not self.folded)
+            return
+        self.hint.hide()
+
+        room = max(self.width() - STATS_ROW_CHROME, 60)
+        fm = QFontMetrics(self.font())
+
+        # 1. Completed per month. The trend is the point: one number for this
+        #    month throws away the shape, and the shape is the news.
+        months = data.get("completed_by_month") or []
+        self.body.addWidget(self._heading("Completed"))
+        if not months:
+            self.body.addWidget(self._line("nothing closed yet", T.MUTED))
+        else:
+            top = max(m["count"] for m in months) or 1
+            for m in months:
+                label = QHBoxLayout()
+                label.setContentsMargins(0, 0, 0, 0)
+                label.addWidget(self._line(month_name(m["month"]), T.MUTED))
+                label.addStretch(1)
+                label.addWidget(self._line(str(m["count"])))
+                self.body.addLayout(label)
+                self.body.addWidget(self._bar(m["count"] / top, T.ACCENT))
+
+        # 2. Open longest. The list that changes what somebody does today.
+        self.body.addWidget(self._heading("Open longest"))
+        ageing = data.get("ageing") or []
+        if not ageing:
+            self.body.addWidget(self._line("nothing open", T.MUTED))
+        for a in ageing:
+            who = a.get("client_raw") or a.get("name") or a["thread_id"]
+            days = a.get("days") or 0
+            row = ClickableWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(6)
+            age = self._line(f"{days}d",
+                             T.RED_FG if days >= STATS_OLD_D else T.AMBER_FG)
+            age.setFixedWidth(fm.horizontalAdvance("999d") + 2)
+            lay.addWidget(age)
+            lay.addWidget(self._line(
+                fm.elidedText(str(who), Qt.ElideRight, room),
+                tip=a.get("name") or ""))
+            lay.addStretch(1)
+            row.setCursor(Qt.PointingHandCursor)
+            row.clicked.connect(
+                lambda _=None, t=a["thread_id"]: self.board.reveal(t))
+            self.body.addWidget(row)
+
+        # 3. How long one takes. The spread matters more than the average, so
+        #    the slowest comes with it -- and the middle is quoted rather than
+        #    the mean, which one very old ticket drags a long way.
+        took = data.get("time_to_complete")
+        self.body.addWidget(self._heading("Time to close"))
+        if not took:
+            self.body.addWidget(self._line("nothing closed yet", T.MUTED))
+        else:
+            self.body.addWidget(self._line(
+                f"{took['median_days']} days, typically",
+                tip=f"The middle of {took['count']} closed tickets. The "
+                    f"average is {took['average_days']} days, which one very "
+                    f"old ticket can drag a long way."))
+            self.body.addWidget(self._line(
+                f"slowest {took['slowest_days']} days", T.MUTED))
+
+        # 4. Open tickets with nothing raised against them. Only 230 of 889
+        #    threads ever get one, so this is invisible anywhere else.
+        nt = data.get("no_ticket") or {}
+        if nt.get("open"):
+            self.body.addWidget(self._heading("No ticket raised"))
+            self.body.addWidget(self._line(
+                f"{nt.get('without') or 0} of {nt['open']} open",
+                T.AMBER_FG if nt.get("without") else T.MUTED,
+                tip="Open tickets with no Build Request or Return behind "
+                    "them. Those come from Python-Interface-Bot, and most "
+                    "threads never get one."))
+
+    # -- folding, the way the rail folds -----------------------------------
+
+    def toggle_fold(self):
+        self.set_folded(not self.folded)
+
+    def set_folded(self, yes):
+        """Fold down to a spine, so the board gets the width back."""
+        self.folded = yes
+        self.head.setVisible(not yes)
+        self.holder.setVisible(not yes)
+        self.hint.setVisible(not yes and self._sig is None)
+        if yes:
+            self.setFixedWidth(30)
+        else:
+            # Handed back to the splitter, which puts it where it was.
+            self.setMinimumWidth(STATS_MIN_W)
+            self.setMaximumWidth(STATS_MAX_W)
+            self.board._stats_sized = False
+        self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
+                                           else (4, 10, 10, 8)))
+        self.fold_btn.setText(GLYPH_LEFT if yes else GLYPH_RIGHT)
+        self.fold_btn.setToolTip("Show the figures" if yes
+                                 else "Hide the figures")
+
+        # Folded, the block that was absorbing the spare height is hidden and
+        # the button drifts to the middle of the spine.
+        lay = self.layout()
+        if yes and self._spacer is None:
+            lay.addStretch(1)
+            self._spacer = lay.itemAt(lay.count() - 1)
+        elif not yes and self._spacer is not None:
+            lay.removeItem(self._spacer)
+            self._spacer = None
+
+
 class Bert(QMainWindow):
     def __init__(self, api_base):
         super().__init__()
@@ -3125,9 +3415,13 @@ class Bert(QMainWindow):
         self.rail_split.setHandleWidth(SPLIT_GRIP)
         self.rail_split.addWidget(self.rail)
         self.rail_split.addWidget(self.scroll)
+        self.stats_panel = Stats(self)
+        self.rail_split.addWidget(self.stats_panel)
         self.rail_split.setStretchFactor(0, 0)  # the board takes the slack
         self.rail_split.setStretchFactor(1, 1)
+        self.rail_split.setStretchFactor(2, 0)  # and so does the far side
         self.rail_split.splitterMoved.connect(self._remember_rail_width)
+        self.rail_split.splitterMoved.connect(self._remember_stats_width)
         # Rebuilding thirty rows on every pixel of a drag is a stutter, so the
         # re-clip waits for the handle to settle. render() is cheap for the
         # bands either side of it: their signature has not changed.
@@ -3285,6 +3579,9 @@ class Bert(QMainWindow):
         self._feed_wants = 0        # what it would choose for itself
         self._feed_sized = False    # whether the handle has been placed
         self._rail_sized = False    # and the same for the rail
+        self._stats_sized = False   # and for the figures beside it
+        self.stats = None
+        self.stats_at = 0.0
         w = QWidget()
         w.setObjectName("feedPanel")
         # Scoped, so the caption and the rows don't each paint their own block
@@ -3418,6 +3715,32 @@ class Bert(QMainWindow):
             SETTINGS.write_text(json.dumps(self.settings, indent=2))
         except OSError:
             pass    # a layout is not worth an error box
+
+    def _remember_stats_width(self, *_):
+        """Kept the way the rail's width is, and for the same reason."""
+        if self.stats_panel.folded:
+            return
+        w = self.stats_panel.width()
+        if w and w != self.settings.get("stats_width"):
+            self.settings["stats_width"] = w
+            try:
+                SETTINGS.write_text(json.dumps(self.settings, indent=2))
+            except OSError:
+                pass    # a layout is not worth an error box
+
+    def _place_stats(self):
+        """Put the far handle where it was left, once per unfold."""
+        if self._stats_sized or self.stats_panel.folded:
+            return
+        want = max(STATS_MIN_W,
+                   min(self.settings.get("stats_width") or STATS_WIDTH,
+                       STATS_MAX_W))
+        sizes = self.rail_split.sizes()
+        if len(sizes) == 3 and sizes[1] > want:
+            # Out of the board's share, which is the one with slack in it.
+            self.rail_split.setSizes([sizes[0], sizes[1] - (want - sizes[2]),
+                                      want])
+            self._stats_sized = True
 
     def _place_rail(self):
         """Put the handle where it was left, once per unfold."""
@@ -3590,6 +3913,7 @@ class Bert(QMainWindow):
         # then left alone -- re-applying it on every poll would drag the handle
         # back under the person moving it.
         self._place_rail()
+        self._place_stats()
         if not self._feed_sized and self._feed_wants:
             want = self.settings.get("feed_height") or self._feed_wants
             total = self.split.height()
@@ -3687,7 +4011,8 @@ class Bert(QMainWindow):
         if self.poller is not None and self.poller.isRunning():
             return
         self.poller = Poller(
-            self.api, want_roster=time.time() - self.roster_at > ROSTER_MAX_AGE_S)
+            self.api, want_roster=time.time() - self.roster_at > ROSTER_MAX_AGE_S,
+            want_stats=time.time() - self.stats_at > STATS_MAX_AGE_S)
         self.poller.loaded.connect(self.on_loaded)
         self.poller.failed.connect(self.on_failed)
         self.poller.start()
@@ -3743,6 +4068,12 @@ class Bert(QMainWindow):
         self.health = p.get("health") or {}
         self.sharing = self.health.get("sharing")
         self.health_at = time.time()
+        if "stats" in p:
+            # An empty answer still counts as one: without stamping it, a
+            # stack with an older Ernie would ask again on every poll.
+            self.stats = p["stats"]
+            self.stats_at = time.time()
+            self.stats_panel.set_stats(self.stats)
         if "roster" in p:
             # An empty answer still counts as an answer: without stamping it,
             # a stack with no Jira asks again on every single poll.

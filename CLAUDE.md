@@ -623,6 +623,45 @@ has been done, when it last moved and who moved it.
   unarchiving to say "closed" would drag a finished ticket back into
   everybody's sidebar.
 
+## The figures beside the board
+
+`Stats` is the panel on the right, and `/stats` is what fills it. The board
+says what is on the plate now; none of it says whether that is getting better
+or worse, how long a ticket takes, or which ones have been open since April.
+
+- **Four figures, not a survey.** Completed per month, the open ones that have
+  been open longest, how long one takes end to end, and how many open tickets
+  have no build or return raised against them. Each answers something no other
+  view does. A page of statistics nobody acts on is furniture, and the first
+  one that turns out to be wrong takes the credibility of the others with it.
+- **Nothing is derived from `events`.** Production's is **empty**, and all 313
+  of its completions read `completed_by = "imported"` -- they were inferred
+  from archived threads, not recorded by anyone using Bert. So per-person and
+  per-action figures would show one fake name until production runs this
+  build. Everything here comes off `cards` and `threads`, which are mirrored
+  from Discord and true on any board.
+- **The middle, not the mean.** Measured against production: average time to
+  close 13.1 days, median **7.9**. The mean is the one that reads as "this is
+  how long a job takes" and it is the one a handful of very old tickets drag
+  away. The panel quotes the median; the mean is in the tooltip for anyone who
+  wants it, and the slowest is shown outright because the spread is the story.
+- **A trend, not a number.** "Completed this month" was the request; a single
+  figure throws away 27 → 61 → 63 → 67 → 95 across five months, which is the
+  news. The same query gives the shape for free.
+- **Sized and folded exactly like the running order**, which is the point of
+  putting it there: a range rather than a fixed width so the handle has
+  something to move, `setFixedWidth` only while folded because folding is the
+  button's business, `stats_width` remembered, and `_stats_sized` cleared on
+  unfold so the width comes back rather than whatever the fold left. It takes
+  the width out of the *board's* share, which is the one with slack in it. Its
+  fold button sits on the left of its own header -- the mirror of the rail,
+  whose spine is the far edge of the window.
+- **They ride the slow lane.** `STATS_MAX_AGE_S`, like the roster, because
+  they move when a ticket closes rather than every five seconds -- hanging four
+  aggregates off the poll the board depends on would make each of them a fresh
+  way for that poll to fail. An Ernie too old to serve `/stats` answers `None`
+  and the board carries on.
+
 ## The state channel
 
 So two people on two machines share one board without either hosting the

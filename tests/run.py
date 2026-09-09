@@ -25,6 +25,7 @@ import check_new_ticket                                       # noqa: E402
 import check_palette                                         # noqa: E402
 import check_poll_hold                                       # noqa: E402
 import check_started                                         # noqa: E402
+import check_stats                            # noqa: E402
 import check_status                           # noqa: E402
 import check_version                          # noqa: E402
 import check_state                                           # noqa: E402
@@ -36,7 +37,8 @@ MODULES = {"changelog": check_changelog, "state": check_state,
            "clients": check_clients,
            "newticket": check_new_ticket,
            "version": check_version,
-           "status": check_status}
+           "status": check_status,
+           "stats": check_stats}
 
 
 def main(argv: list[str]) -> int:
