@@ -3017,6 +3017,9 @@ class Bert(QMainWindow):
         self.connected = True
         self.last_sync = None
         self.health = {}            # the last /health payload
+        # A rebuild render() had to skip because an editor was open, so
+        # closing it draws what was missed rather than waiting for a poll.
+        self._bands_stale = False
         self.sharing = None         # its sharing block, or None if solo
         self.health_at = 0.0        # when that payload arrived, so both ages
                                     # off it go on counting between polls
@@ -4452,6 +4455,11 @@ class Bert(QMainWindow):
         pending, self._pending = self._pending, None
         if pending is not None:
             self.on_loaded(pending)
+        elif self._bands_stale:
+            # No poll to draw, but something changed shape while the editor
+            # was open -- a resize is the ordinary one. Without this the board
+            # keeps the width it had until whichever poll happens next.
+            self.render()
 
     def _edge_scroll(self):
         """Scroll the board while a card is held near the top or bottom edge.
@@ -4649,10 +4657,25 @@ class Bert(QMainWindow):
         # two visible cards computing a rank against neighbours that were not
         # its neighbours. They are ranked to the top for real now, in
         # ensure_card, so there is one order and this draws it.
+        # An open editor is never rebuilt under somebody. The poll already
+        # parks its payload for exactly this reason -- but render() is reached
+        # from places no poll goes, a resize and the end of a drag, and those
+        # tore the editor down anyway. Maximising the window while writing a
+        # new ticket destroyed it outright: the placeholder is not in
+        # self.cards, so nothing rebuilt it, and editing_card was left naming
+        # a widget that no longer existed, which holds every later poll and
+        # leaves the board frozen with nothing on it to say why.
+        #
+        # Only the bands are spared, because that is where an editor lives.
+        # The rail holds none and re-clips to the new width happily -- and the
+        # band signatures are deliberately left alone, so whatever changed is
+        # drawn by the render that follows the editor closing.
+        self._bands_stale = bool(self.editing_card)
         ordered = []
         for band, w in self.bands.items():
             group = [c for c in shown if c["priority"] == band]
-            w.set_cards(group)
+            if not self.editing_card:
+                w.set_cards(group)
             ordered.extend(group)
 
         self.rail.set_cards(ordered)

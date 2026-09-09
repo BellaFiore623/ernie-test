@@ -334,6 +334,24 @@ activity feed, undo, and the outbox.
   Edit on the wrong ticket and moving on costs no dialog. Every button names
   both tickets -- "this ticket" is the one phrase that cannot be used here,
   because the ticket being closed is not the one just clicked.
+- **Nothing rebuilds a band while an editor is open, whatever asked.** The
+  poll parks its payload for this reason, and always has -- but `render()` is
+  reached from places no poll goes: a window resize goes through the same
+  timer the rail handle uses, and the end of a drag calls it outright. Those
+  rebuilt the bands regardless, so **maximising the window while writing a new
+  ticket destroyed it**. For a card that exists it lost whatever had been
+  typed, the widget being replaced from the data behind it; for a ticket being
+  started it was worse, because the placeholder is not in `self.cards` -- so
+  nothing rebuilt it at all and `editing_card` was left naming a widget that
+  no longer existed, which holds every later poll and freezes the board with
+  nothing on screen to say why. Only the **bands** are spared, because that is
+  where an editor lives: the rail holds none and goes on re-clipping to the
+  new width, which is the whole point of the resize. The band signatures are
+  deliberately left un-updated, and `_bands_stale` carries the missed rebuild
+  so `apply_pending()` draws it the moment the editor closes -- a parked poll
+  redraws by its own route, but a resize parks nothing, and without the flag
+  the board kept a layout for a window that was gone until whichever poll came
+  next.
 - **Bert's close warning owes two different debts, and must count both.**
   `queued` is events waiting out their undo window before Ernie posts them to
   the customer thread; `sharing.waiting_to_send` is cards that have moved since

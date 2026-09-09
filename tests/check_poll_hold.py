@@ -36,6 +36,9 @@ class FakeBert:
         self.editing_card = editing
         self.dragging = dragging
         self._pending = None
+        # A rebuild render() skipped because an editor was open. The real one
+        # sets it in __init__ for the same reason: apply_pending reads it.
+        self._bands_stale = False
         self.cards = []
         self.completing = set()
         self.rendered = 0
@@ -362,8 +365,86 @@ def check_a_ticket_with_no_thread_has_not_left_the_board() -> bool:
     return c.report()
 
 
+def check_a_resize_does_not_tear_down_an_open_editor() -> bool:
+    """
+    Maximising the window while writing a new ticket destroyed it.
+
+    The poll parks its payload rather than redraw under an open editor, and
+    has since the hold was written. But render() is reached from places no
+    poll goes -- a window resize goes through the same timer the rail handle
+    uses, and the end of a drag calls it outright -- and those rebuilt the
+    bands regardless.
+
+    For a card that exists this lost whatever had been typed, because the
+    widget was replaced from the data behind it. For a ticket being started it
+    was worse: the placeholder is not in self.cards, so nothing rebuilt it at
+    all, and editing_card was left naming a widget that no longer existed --
+    which holds every later poll and leaves the board frozen with nothing on
+    screen to explain why. Measured before the fix: the draft and the typed
+    title both gone after one resize.
+    """
+    c = Check("a resize does not tear down an open editor")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    render = ast.get_source_segment(src, _method("render")) or ""
+
+    # The band rebuild is the thing that must not run.
+    band_call = [ln for ln in render.splitlines() if "w.set_cards(group)" in ln]
+    c.equal(len(band_call), 1, "render still rebuilds the bands")
+    if band_call:
+        before = render.split("w.set_cards(group)")[0].splitlines()
+        c.ok(any("editing_card" in ln for ln in before[-3:]),
+             "but only when no editor is open")
+
+    # The rail holds no editor, so it is not spared -- it re-clips to the new
+    # width while somebody types, which is the whole point of the resize.
+    c.ok("self.rail.set_cards" in render, "the rail is still redrawn")
+    if "self.rail.set_cards" in render:
+        rail_line = next(ln for ln in render.splitlines()
+                         if "self.rail.set_cards" in ln)
+        c.ok(not rail_line.startswith(" " * 12),
+             "outside the guard, not spared with the bands")
+
+    return c.report()
+
+
+def check_the_missed_redraw_is_not_lost() -> bool:
+    """
+    Closing the editor has to draw whatever changed while it was open.
+
+    A parked poll already redraws on release. A resize parks nothing -- there
+    is no payload, only a board that is now the wrong width -- so without a
+    flag the bands keep the size they had until whichever poll happens next,
+    up to five seconds of a board laid out for a window that is gone.
+    """
+    c = Check("the redraw a resize asked for is not lost")
+
+    b = FakeBert()
+    b._bands_stale = True
+    bert.Bert.apply_pending(b)
+    c.equal(b.rendered, 1, "closing the editor draws what was missed")
+
+    b = FakeBert()
+    b._bands_stale = False
+    bert.Bert.apply_pending(b)
+    c.equal(b.rendered, 0, "and nothing is redrawn when nothing was missed")
+
+    # A parked poll still wins: it redraws by its own route, and drawing twice
+    # would undo the hold's whole purpose.
+    b = FakeBert()
+    b._bands_stale = True
+    b._pending = {"board": {"cards": []}, "events": {"events": []}}
+    bert.Bert.apply_pending(b)
+    c.equal(b.rendered, 1, "a parked poll is drawn once, not twice")
+    c.ok(b._pending is None, "and is let go of")
+
+    return c.report()
+
+
 CHECKS = (check_free_board, check_editor_holds, check_drag_still_holds,
           check_other_hold_reparks, check_stale_hold_dropped,
           check_render_keeps_your_place,
           check_the_place_is_a_card_not_a_number,
-          check_a_ticket_with_no_thread_has_not_left_the_board)
+          check_a_ticket_with_no_thread_has_not_left_the_board,
+          check_a_resize_does_not_tear_down_an_open_editor,
+          check_the_missed_redraw_is_not_lost)
