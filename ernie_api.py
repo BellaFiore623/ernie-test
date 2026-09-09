@@ -205,6 +205,7 @@ REQUIRED_COLUMNS = {
     # thread at a time. Better to say so once, at startup, with the fix.
     "threads": ["owner_id"],
     "messages": ["author_display"],
+    "new_threads": ["rank"],
 }
 
 
@@ -223,6 +224,42 @@ def check_schema() -> None:
 def conflict(code: str, message: str, **extra):
     """409 with a body Bert can render, rather than a bare string."""
     raise HTTPException(409, {"code": code, "message": message, **extra})
+
+
+def band_order(con, priority: str, exclude: str | None = None):
+    """Every card in a band, in rank order, drafts included.
+
+    The board draws a ticket with no thread yet alongside the real ones, so a
+    drop lands against one as readily as against a card -- and reading only
+    `cards` here meant the neighbour Bert sent was not in the list, the
+    midpoint fell through to "end of band", and the card went somewhere
+    nobody aimed at. Both tables, one order.
+    """
+    return rows(con.execute(
+        """SELECT thread_id, rank FROM cards
+           WHERE priority=:p AND thread_id<>:x AND completed_at IS NULL
+           UNION ALL
+           SELECT draft_id AS thread_id, rank FROM new_threads
+           WHERE priority=:p AND draft_id<>:x AND posted_at IS NULL
+             AND complete_on_arrival = 0 AND rank IS NOT NULL
+           ORDER BY rank""", {"p": priority, "x": exclude or ""}))
+
+
+def band_top(con, priority: str) -> float:
+    """One step above the band's lowest, which is where a new ticket goes.
+
+    Counted over drafts as well as cards, or two tickets started in the same
+    band in a row would be given the same rank and tie.
+    """
+    band = band_order(con, priority)
+    return (band[0]["rank"] if band else RANK_STEP) - RANK_STEP
+
+
+def load_draft(con, thread_id: str):
+    """The new_threads row a draft_id names, if it is still waiting."""
+    return con.execute(
+        """SELECT * FROM new_threads WHERE draft_id=? AND posted_at IS NULL
+           AND complete_on_arrival = 0""", (thread_id,)).fetchone()
 
 
 def load_card(con, thread_id: str):
@@ -694,7 +731,8 @@ def cards(
         # cards yet, so nothing that keys on a thread_id will find them: Bert
         # shows them and leaves them alone until the outbox has made the thread.
         for d in con.execute(
-                """SELECT draft_id, title, priority, work_json, attempts, created_at
+                """SELECT draft_id, title, priority, rank, work_json,
+                          attempts, created_at
                    FROM new_threads WHERE posted_at IS NULL
                      -- Closed already, so it goes the moment the button is
                      -- pressed rather than lingering until the thread exists.
@@ -703,7 +741,11 @@ def cards(
             t = ex.parse_title(d["title"])
             out.append({
                 "thread_id": d["draft_id"], "pending": True,
-                "priority": d["priority"], "rank": 0.0,
+                # Its own rank, not a placeholder: 0.0 sorted it against the
+                # band's real ranks, which can be negative, so a ticket the
+                # board promised to put at the top of High could arrive below
+                # everything in it.
+                "priority": d["priority"], "rank": d["rank"] or 0.0,
                 "name": d["title"], "queue": t.queue, "client_raw": t.client_raw,
                 "client_key": ex.normalise_client(t.client_raw or "") or None,
                 "thread_date": t.date.isoformat() if t.date else None,
@@ -919,16 +961,21 @@ def new_ticket(body: NewTicketBody):
                                      f"{WORK_ITEM_MAX} characters.")
 
         draft = str(uuid.uuid4())
+        # To the top of the band whose + was pressed, which is where Bert has
+        # been showing it since. It is a real rank rather than a placeholder,
+        # so the board draws it where it will actually land and a drag has
+        # something to move.
+        rank = band_top(con, body.priority)
         con.execute(
             """INSERT INTO new_threads (draft_id, channel_id, title, priority,
-                                        work_json, first_message, actor,
+                                        rank, work_json, first_message, actor,
                                         created_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (draft, chan["channel_id"], title, body.priority,
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (draft, chan["channel_id"], title, body.priority, rank,
              json.dumps(typed), (body.first_message or "").strip() or None,
              body.actor, now_iso()))
         result = {"draft_id": draft, "title": title, "priority": body.priority,
-                  "work_items": typed}
+                  "rank": rank, "work_items": typed}
         remember(con, body.key, result)
         con.commit()
         return result
@@ -952,8 +999,22 @@ def move_card(thread_id: str, body: MoveBody):
         if cached:
             return cached
 
-        card = load_card(con, thread_id)
-        guard_open(card, "move")
+        # A ticket whose thread Discord has not made yet is on the board and
+        # can be dragged like anything else, and looking only in `cards`
+        # answered "no such card" -- true, and useless in the same way
+        # completing one was: the person moved it, and the wait for the thread
+        # is Ernie's problem rather than theirs. The draft carries the band and
+        # the rank, so the move is recorded there and make_threads brings the
+        # card in where it was left.
+        draft = None
+        card = con.execute("SELECT * FROM cards WHERE thread_id=?",
+                           (thread_id,)).fetchone()
+        if card is None:
+            draft = load_draft(con, thread_id)
+            if draft is None:
+                raise HTTPException(404, "no such card")
+        else:
+            guard_open(card, "move")
 
         # Bert can only send neighbours it can see. With a queue filter or a
         # search on, the card on the far side of the gap may be hidden, and the
@@ -963,10 +1024,7 @@ def move_card(thread_id: str, body: MoveBody):
         # dropped against and take the other side from the whole band. With no
         # filter on, the visible neighbour is the real one and this is the
         # midpoint it always was.
-        band = con.execute(
-            """SELECT thread_id, rank FROM cards
-               WHERE priority=? AND thread_id<>? AND completed_at IS NULL
-               ORDER BY rank""", (body.priority, thread_id)).fetchall()
+        band = band_order(con, body.priority, exclude=thread_id)
         ids = [r["thread_id"] for r in band]
         ranks = [r["rank"] for r in band]
 
@@ -988,6 +1046,20 @@ def move_card(thread_id: str, body: MoveBody):
             new_rank = hi - RANK_STEP
         else:
             new_rank = (ranks[-1] + RANK_STEP) if ranks else RANK_STEP
+
+        if draft is not None:
+            # Nothing is logged. The ticket does not exist yet, so there is no
+            # history to record and nothing in a thread to announce -- a draft
+            # dragged into Critical before it is made is the same as having
+            # pressed the + in Critical, which writes no event either.
+            con.execute(
+                "UPDATE new_threads SET priority=?, rank=? WHERE draft_id=?",
+                (body.priority, new_rank, thread_id))
+            result = {"thread_id": thread_id, "priority": body.priority,
+                      "rank": new_rank, "pending": True}
+            remember(con, body.key, result)
+            con.commit()
+            return result
 
         con.execute(
             "UPDATE cards SET priority=?, rank=?, updated_at=? WHERE thread_id=?",
@@ -1024,11 +1096,13 @@ def move_card(thread_id: str, body: MoveBody):
 
         # Renormalise if the gap is collapsing toward float precision limits.
         if lo is not None and hi is not None and abs(hi - lo) < 0.001:
-            band = con.execute(
-                "SELECT thread_id FROM cards WHERE priority=? ORDER BY rank",
-                (body.priority,)).fetchall()
-            for i, r in enumerate(band, 1):
+            # Drafts are spread with the cards, or a respacing would leave
+            # them at ranks the cards have just moved out from under.
+            for i, r in enumerate(band_order(con, body.priority), 1):
                 con.execute("UPDATE cards SET rank=? WHERE thread_id=?",
+                            (i * RANK_STEP, r["thread_id"]))
+                con.execute("UPDATE new_threads SET rank=? WHERE draft_id=? "
+                            "AND posted_at IS NULL",
                             (i * RANK_STEP, r["thread_id"]))
 
         result = {"thread_id": thread_id, "priority": body.priority, "rank": new_rank}

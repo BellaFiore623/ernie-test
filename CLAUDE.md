@@ -462,6 +462,31 @@ a ticket with no home yet is the ordinary case rather than an exception.
   `completed_at` -- measured, an edit queued behind its undo window is still
   due to post after the card is closed. So a change made seconds before
   closing still goes out.
+- **A ticket can be dragged before Discord has it**, and it is the same
+  sentence as closing one. A move looks up a `cards` row, a draft has none, and
+  "no such card" is true and useless: the person moved it, the board had
+  already drawn it in the new place, and the wait for the thread is Ernie's
+  problem rather than theirs. The band and the rank are written to
+  `new_threads` and `make_threads` brings the card in where it was left --
+  which is why it takes `new_threads.rank` rather than recomputing the band's
+  edge, or a ticket dragged down into Medium would arrive back at the top of
+  it. **Nothing is logged.** The ticket does not exist, so there is no history
+  to record and nothing in a thread to announce; dragging a draft into
+  Critical is the same act as pressing the `+` in Critical, which writes no
+  event either.
+- **A draft carries a real rank, because rank is the order and the only one.**
+  It went to the board at `0.0`, which is not a place -- ranks can be
+  negative, and `ensure_card` puts an unreadable thread at `MIN - RANK_STEP`,
+  so a ticket the board promised to put at the top of High could sort below
+  everything in it. It is ranked when the `+` is pressed, against the band's
+  cards **and its other drafts**, or two tickets started in one band in a row
+  are given the same number and tie.
+- **A draft is a neighbour like any other.** The board draws it among the
+  cards, so a drop can land against one -- and `move_card` read the band out of
+  `cards` alone, so the neighbour Bert named was not in the list, the midpoint
+  fell through to "end of band", and the card went somewhere nobody aimed at.
+  `band_order()` is the one place both tables are read as one order, and
+  `band_top()` and the respacing go through it too.
 - **Ernie opens the thread and then says whose it is.** There is no map from a
   Bert install to a Discord account, so the bot is the author and the name
   from `settings` goes in as plain text -- the same way every other name this

@@ -295,16 +295,23 @@ def make_threads(con, d: Discord) -> dict:
             # in, so a ticket whose title reads perfectly well came up grey
             # with "unknown client" the moment its thread existed.
             load.record_title(con, tid, row["title"], ts)
-            # To the top of its band, which is where Bert has been showing it
-            # since the + was pressed. rank is the order and the only one, so
-            # it has to say what the board says -- MAX + a step put the card
-            # at the bottom of the band, and a ticket somebody had just
-            # written slid away from them as soon as it became real.
-            edge = con.execute(
-                "SELECT MIN(rank) AS m FROM cards WHERE priority=?",
-                (row["priority"],)).fetchone()
-            rank = (load.RANK_STEP if edge["m"] is None
-                    else edge["m"]) - load.RANK_STEP
+            # Where the board has been showing it. rank is the order and the
+            # only one, so it has to say what the board says -- MAX + a step
+            # put the card at the bottom of the band, and a ticket somebody
+            # had just written slid away from them as soon as it became real.
+            #
+            # The draft carries its own rank now, because it can be dragged
+            # while it waits: recomputing the band's edge here would take a
+            # ticket somebody had moved down into Medium and put it back at
+            # the top. A row written before that column existed has none, and
+            # falls back to the edge it would have been given.
+            rank = row["rank"]
+            if rank is None:
+                edge = con.execute(
+                    "SELECT MIN(rank) AS m FROM cards WHERE priority=?",
+                    (row["priority"],)).fetchone()
+                rank = (load.RANK_STEP if edge["m"] is None
+                        else edge["m"]) - load.RANK_STEP
             con.execute(
                 """INSERT OR IGNORE INTO cards (thread_id, priority, rank,
                                                 updated_at)

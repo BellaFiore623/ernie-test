@@ -259,6 +259,13 @@ CREATE TABLE IF NOT EXISTS new_threads (
     channel_id    TEXT NOT NULL,
     title         TEXT NOT NULL,
     priority      TEXT NOT NULL,
+    -- Where it sits in that band. rank is the order and the only one, and a
+    -- draft is on the board from the moment the + is pressed -- so it needs a
+    -- real one rather than standing at 0.0 and hoping the band's ranks happen
+    -- to be higher. It is also what a drag writes: moving a ticket that has no
+    -- thread yet is the person saying where it goes, and make_threads takes
+    -- this rather than recomputing an edge that has since moved.
+    rank          REAL,
     work_json     TEXT NOT NULL DEFAULT '[]',
     first_message TEXT,                      -- optional, posted after the note
     actor         TEXT,                      -- whose name the note carries

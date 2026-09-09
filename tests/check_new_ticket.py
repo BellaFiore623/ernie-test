@@ -42,14 +42,14 @@ def draft(b, title=TITLE, priority="high", work=(), actor="Bella Fiore"):
     b.con.commit()
 
 
-def made_card(b):
+def made_card(b, draft_id="draft-1"):
     return b.con.execute(
         """SELECT c.thread_id, c.priority, c.rank, t.name, t.queue,
                   t.client_raw, t.client_key, t.summary, t.confidence
            FROM cards c
            JOIN thread_titles t ON t.thread_id = c.thread_id
            WHERE c.thread_id = (SELECT thread_id FROM new_threads
-                                WHERE draft_id='draft-1')""").fetchone()
+                                WHERE draft_id=?)""", (draft_id,)).fetchone()
 
 
 def check_the_title_is_read_when_the_thread_is_made() -> bool:
@@ -330,9 +330,180 @@ def check_closing_a_ticket_that_has_no_thread_yet() -> bool:
     return c.report()
 
 
+
+def started(b, priority="high", title=TITLE):
+    """A ticket started the way Bert starts one, through the API."""
+    b.con.execute("INSERT OR IGNORE INTO watched_channels "
+                  "(channel_id, generate_cards) VALUES (?,1)", (PARENT,))
+    b.con.commit()
+    return api.new_ticket(api.NewTicketBody(
+        title=title, priority=priority, actor="Bella Fiore",
+        key=f"k-{abs(hash((title, priority)))}"))["draft_id"]
+
+
+def move(b, tid, priority, after=None, before=None, key=None):
+    return api.move_card(tid, api.MoveBody(
+        priority=priority, after_id=after, before_id=before,
+        actor="Bella Fiore", key=key))
+
+
+def check_a_ticket_can_be_dragged_before_discord_has_it() -> bool:
+    """
+    "No such card" again, for the same reason and with the same answer.
+
+    A move looks up a cards row and a ticket still waiting in new_threads has
+    none, so dragging one you had just made was refused -- and the board had
+    already drawn it in the new place. The person moved it; the wait for the
+    thread is Ernie's problem rather than theirs, so the band and the rank are
+    recorded on the draft and make_threads brings the card in where it was
+    left.
+    """
+    c = Check("a ticket can be dragged before Discord has it")
+
+    with Board() as b:
+        one = b.card("PROD: Penn Hills - 02Sep26 - EReel-1220 respool",
+                     "medium", 1000.0)
+        two = b.card("OPS: Trekk - 03Sep26 - EReel-1301 eval", "medium", 2000.0)
+        api.DB = b.path
+        tid = started(b, "high")
+
+        try:
+            r = move(b, tid, "medium", after=one, key="k-move-1")
+        except api.HTTPException as e:
+            r = {}
+            c.ok(False, f"dragging it is accepted rather than refused "
+                        f"(refused with {e.status_code}: {e.detail})")
+        else:
+            c.ok(r.get("pending"), "dragging it is accepted rather than refused")
+
+        row = b.con.execute(
+            "SELECT priority, rank FROM new_threads WHERE draft_id=?",
+            (tid,)).fetchone()
+        c.equal(row["priority"], "medium", "the band it was dropped in is kept")
+        c.ok(row["rank"] is not None and 1000.0 < row["rank"] < 2000.0,
+             f"between the two cards it was dropped between ({row['rank']})")
+
+        # And the board draws it there, which is the half the person sees.
+        order = [x["thread_id"] for x in api.cards(
+            queue=None, client=None, include_completed=False)["cards"]
+            if x["priority"] == "medium"]
+        c.equal(order, [one, tid, two], "the board shows it in that place")
+
+        # Nothing is logged: the ticket does not exist, so there is no history
+        # to record and nothing in a thread to announce. Dropping a draft into
+        # Critical is the same act as pressing the + in Critical, which writes
+        # no event either.
+        c.equal(b.con.execute("SELECT COUNT(*) FROM events").fetchone()[0], 0,
+                "and no event is written for a ticket that does not exist yet")
+
+        # Idempotent like every other write here.
+        again = move(b, tid, "medium", after=one, key="k-move-1")
+        c.equal(again, r or None, "asking twice with one key answers once")
+
+        # Now the outbox catches up, and the card arrives where it was left --
+        # not at the top of the band the + was pressed in.
+        outbox.make_threads(b.con, FakeDiscord())
+        made = made_card(b, tid)
+        c.ok(made is not None, "the thread is made")
+        if made is not None:
+            c.equal(made["priority"], "medium",
+                    "the card arrives in the band it was dragged to")
+            c.ok(1000.0 < made["rank"] < 2000.0,
+                 f"and at the place it was dropped ({made['rank']}), rather "
+                 f"than the top of the band it was started in")
+
+    return c.report()
+
+
+def check_a_waiting_ticket_is_a_neighbour_like_any_other() -> bool:
+    """
+    The board draws a draft among the cards, so a drop can land against one.
+
+    The band was read out of `cards` alone, so a draft Bert had named as the
+    neighbour was not in the list at all: the midpoint fell through to "end of
+    band" and the card went somewhere nobody aimed at. Both tables, one order.
+    """
+    c = Check("a waiting ticket is a neighbour like any other")
+
+    with Board() as b:
+        one = b.card("PROD: Penn Hills - 02Sep26 - EReel-1220 respool",
+                     "high", 1000.0)
+        two = b.card("OPS: Trekk - 03Sep26 - EReel-1301 eval", "high", 3000.0)
+        api.DB = b.path
+        # Started in High, so it goes to the top: below 1000.
+        tid = started(b, "high")
+        top = b.con.execute("SELECT rank FROM new_threads WHERE draft_id=?",
+                            (tid,)).fetchone()["rank"]
+        c.ok(top < 1000.0, f"a new ticket goes to the top of its band ({top})")
+
+        # Drop the second card immediately after the draft.
+        move(b, two, "high", after=tid, key="k-nb-1")
+        moved = b.con.execute(
+            "SELECT rank FROM cards WHERE thread_id=?", (two,)).fetchone()["rank"]
+        c.ok(top < moved < 1000.0,
+             f"it lands between the draft and the card below it ({moved})")
+
+        order = [x["thread_id"] for x in api.cards(
+            queue=None, client=None, include_completed=False)["cards"]]
+        c.equal(order, [tid, two, one], "which is the order the board draws")
+
+    return c.report()
+
+
+def check_two_tickets_started_in_one_band_do_not_tie() -> bool:
+    """
+    The second + has to see the first, and the first is not a card yet.
+
+    Counting the edge over `cards` alone gave both drafts the same rank, and
+    an order decided by whatever the sort happened to do with a tie.
+    """
+    c = Check("two tickets started in one band do not tie")
+
+    with Board() as b:
+        api.DB = b.path
+        first = started(b, "low", "PROD: Puris - 04Sep26 - one")
+        second = started(b, "low", "PROD: Puris - 04Sep26 - two")
+        ranks = {r["draft_id"]: r["rank"] for r in b.con.execute(
+            "SELECT draft_id, rank FROM new_threads")}
+        c.ok(ranks[first] is not None and ranks[second] is not None,
+             "both carry a rank")
+        c.ok(ranks[second] < ranks[first],
+             f"and the newer is above the older ({ranks[second]} < "
+             f"{ranks[first]}), which is where the board draws it")
+
+        order = [x["thread_id"] for x in api.cards(
+            queue=None, client=None, include_completed=False)["cards"]]
+        c.equal(order, [second, first], "so the board has an order to show")
+
+    return c.report()
+
+
+def check_a_ticket_closed_while_waiting_cannot_be_dragged() -> bool:
+    """It left the board when the button was pressed; there is nothing there."""
+    c = Check("a ticket closed while waiting is not still draggable")
+
+    with Board() as b:
+        api.DB = b.path
+        tid = started(b, "high")
+        api.complete(tid, api.ActorBody(actor="Bella Fiore", key="k-c-1"))
+        try:
+            move(b, tid, "low", key="k-m-2")
+        except api.HTTPException as e:
+            c.equal(e.status_code, 404, "moving it is refused, as for any card "
+                                        "that is not on the board")
+        else:
+            c.ok(False, "moving a closed draft is refused")
+
+    return c.report()
+
+
 CHECKS = (check_the_title_is_read_when_the_thread_is_made,
           check_a_new_ticket_lands_where_the_board_showed_it,
           check_the_first_band_ticket_still_gets_a_rank,
           check_one_writer_decides_what_a_title_row_holds,
           check_a_second_new_ticket_meets_the_one_editor_rule,
-          check_closing_a_ticket_that_has_no_thread_yet)
+          check_closing_a_ticket_that_has_no_thread_yet,
+          check_a_ticket_can_be_dragged_before_discord_has_it,
+          check_a_waiting_ticket_is_a_neighbour_like_any_other,
+          check_two_tickets_started_in_one_band_do_not_tie,
+          check_a_ticket_closed_while_waiting_cannot_be_dragged)
