@@ -179,6 +179,11 @@ CARD_RADIUS = 5
 ROW_RADIUS = 4
 BTN_RADIUS = 5
 
+# What a search box spends before any placeholder is drawn: field() sets
+# 6px of padding either side over a 1px border, and the last two are slack so
+# a hint that fits does not end flush against the frame.
+SEARCH_HINT_PAD = 16
+
 
 # --------------------------------------------------------------------------
 # Colour
@@ -1622,6 +1627,36 @@ class WorkBar(QWidget):
         for b in self.holder.findChildren(Bubble):
             if b.btn is not None:      # a finished bubble has no tick
                 b.btn.setEnabled(ok)
+
+
+# Longest first. The toolbar picks the longest that fits the box it is drawn
+# in, the way a rail row picks how much of a client name it can show.
+SEARCH_HINTS = ("Search client, equipment, summary",
+                "Search client, equipment",
+                "Search tickets",
+                "Search")
+
+
+def status_forms(text):
+    """Every way of writing a toolbar status, longest first.
+
+    The two indicators are the only things on that bar whose words can be
+    given up: everything else is a control, and the board's own count is a
+    number. So they shorten rather than being cut -- and they shorten by
+    dropping the *noun*, never the state, because the state is the whole
+    point of them. "shared board" is already established by the time somebody
+    has read it once, and both labels carry the full sentence in a tooltip.
+
+    A clip would have taken the other end: `shared board · up to da` was what
+    the bar actually did at 1000px, which is the reading that matters cut off
+    in favour of the words that are the same every time.
+    """
+    forms = [text]
+    if text.startswith("shared board · "):
+        forms.append("shared · " + text.split("· ", 1)[1])
+    elif text.startswith("synced "):
+        forms.append(text[len("synced "):])
+    return forms
 
 
 def queue_counts(cards):
@@ -3642,7 +3677,7 @@ class Bert(QMainWindow):
             QTimer.singleShot(300, self.open_settings)
 
     def _toolbar(self):
-        bar = QWidget()
+        bar = self.bar = QWidget()
         # The floor, like the space around the sections: this is chrome, not
         # a section. Painted in the brightest token it was the first thing the
         # eye landed on in light mode; painted the canvas colour it merged
@@ -3680,7 +3715,7 @@ class Bert(QMainWindow):
         lay.addSpacing(10)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search client, equipment, summary")
+        self.search.setPlaceholderText(SEARCH_HINTS[0])
         # A range, not a fixed width. The toolbar asks for more than a
         # narrow window has, so something must give: less of the search
         # placeholder showing costs nothing, the filters being sat on top
@@ -3698,7 +3733,12 @@ class Bert(QMainWindow):
         self.search.setPalette(pal)
         self.search.setCursor(Qt.IBeamCursor)
         self.search.textChanged.connect(self.render)
-        lay.addWidget(self.search)
+        # A stretch factor, so the surplus on a wide window reaches the box
+        # rather than going entirely to the spacer before the indicators. Its
+        # maximum is what stops it running away with a full-screen board;
+        # without this it sat near its minimum at 1200px with 165px spare,
+        # and showed a shortened placeholder for no reason.
+        lay.addWidget(self.search, 1)
 
         # So the first filter can never end up against the box before it.
         lay.addSpacing(8)
@@ -3875,6 +3915,10 @@ class Bert(QMainWindow):
         redraw = getattr(self, "rail_redraw", None)
         if redraw is not None:      # resize fires while the window is built
             redraw.start()
+        # Not through the timer. The board is thirty widgets and waits for the
+        # drag to settle; the toolbar is two labels and a placeholder, and
+        # leaving those cut for the length of a drag is the thing being fixed.
+        self._fit_toolbar()
 
     def _remember_rail_width(self, *_):
         """Kept the way the feed height is, and for the same reason: a
@@ -4539,16 +4583,14 @@ class Bert(QMainWindow):
         skew = self.health.get("format_skew")
         if skew:
             n = skew.get("cards") or 0
-            self.shared.setText("shared board · can't read the other board")
-            self.shared.setStyleSheet(f"color:{T.RED_FG}; font-size:11px;")
-            self.shared.setToolTip(
+            self._say_shared(
+                "shared board · can't read the other board", T.RED_FG,
                 f"{n} card(s) in #ernie-state are written in format "
                 f"v{skew.get('their_v')} and this machine speaks "
                 f"v{skew.get('our_v')}, so they are being skipped -- and "
                 f"nothing done here is reaching the other board either. "
                 f"Waiting will not fix it: "
                 f"{who_is_behind(skew.get('their_v'), skew.get('our_v'))}.")
-            self.shared.show()
             return
 
         s = self.sharing
@@ -4593,10 +4635,7 @@ class Bert(QMainWindow):
                    "else running Bert is seeing what you see. Last compared "
                    f"{ago(agreed)} ago.")
 
-        self.shared.setText(text)
-        self.shared.setStyleSheet(f"color:{colour}; font-size:11px;")
-        self.shared.setToolTip(tip)
-        self.shared.show()
+        self._say_shared(text, colour, tip)
 
     def _tick_freshness(self):
         """How old the board is.
@@ -4645,10 +4684,63 @@ class Bert(QMainWindow):
                             f"Ernie last read Discord {ago(since)} ago.")
 
     def _say_fresh(self, text, amber, tip):
-        self.fresh.setText(text)
+        self._fresh_full = text
         self.fresh.setStyleSheet(
             f"color:{T.AMBER_FG if amber else T.MUTED}; font-size:11px;")
         self.fresh.setToolTip(tip)
+        self._fit_toolbar()
+
+    def _say_shared(self, text, colour, tip):
+        self._shared_full = text
+        self.shared.setStyleSheet(f"color:{colour}; font-size:11px;")
+        self.shared.setToolTip(tip)
+        self.shared.show()
+        self._fit_toolbar()
+
+    def _fit_toolbar(self):
+        """Give up words before the bar starts cutting them.
+
+        At the window's own minimum width the bar asks for about 45px more
+        than it has, and Qt spends that by squeezing whatever can be squeezed:
+        the search placeholder came out `Search client, equip` and the shared
+        indicator `shared board · up to da`, which is a status cut off
+        exactly where it starts saying something. Nothing here is elided for
+        the same reason -- an ellipsis on the end of that line loses the same
+        half.
+
+        So the two labels step down through `status_forms` together, and the
+        placeholder picks the longest of `SEARCH_HINTS` that fits the box it
+        is actually in. The test is the layout's own `totalMinimumSize`: what
+        it says it cannot go below, against what it has been given.
+        """
+        bar = getattr(self, "bar", None)
+        search = getattr(self, "search", None)
+        # resizeEvent fires while the window is still being built, before
+        # either of these exists.
+        if bar is None or search is None:
+            return
+
+        # The labels first, and the placeholder against what is left. In the
+        # other order the box is measured before the shortening has given it
+        # its room back, so it is told it has 140px, picks a short hint, and
+        # is then handed 175 -- which came out as a *narrower* window showing
+        # a *longer* placeholder, measured at 1002px against 940px.
+        lay = bar.layout()
+        fresh = status_forms(getattr(self, "_fresh_full", "") or "")
+        shared = status_forms(getattr(self, "_shared_full", "") or "")
+        for step in range(max(len(fresh), len(shared))):
+            self.fresh.setText(fresh[min(step, len(fresh) - 1)])
+            self.shared.setText(shared[min(step, len(shared) - 1)])
+            lay.activate()
+            if lay.totalMinimumSize().width() <= bar.width():
+                break
+
+        fm = QFontMetrics(search.font())
+        room = search.width() - SEARCH_HINT_PAD
+        for hint in SEARCH_HINTS:
+            if fm.horizontalAdvance(hint) <= room or hint is SEARCH_HINTS[-1]:
+                search.setPlaceholderText(hint)
+                break
 
     # -- writes ------------------------------------------------------------
 

@@ -722,6 +722,29 @@ or worse, how long a ticket takes, or which ones have been open since April.
   and every drag, and `updateGeometry` on four boxes relays the toolbar each
   time.
 
+- **The toolbar gives up words before it starts cutting them.** At the
+  window's own minimum width the bar asks for about 45px more than it has,
+  and Qt spends the difference on whatever can be squeezed: `Search client,
+  equip` in the box and `shared board · up to da` beside it -- a status cut
+  off exactly where it begins saying something, keeping only the words that
+  are the same every time. Eliding takes the same half, so nothing here is
+  elided. `status_forms()` drops the **noun** instead: `shared board` is
+  established the first time anybody reads it, and `up to date`, `no contact`,
+  `3 to send` is the part being looked at. Both labels carry the whole
+  sentence in a tooltip regardless, and the alarm states stay visible at every
+  width -- hiding the indicator would have hidden a warning.
+  `_fit_toolbar()` steps both labels down together and stops at the first
+  level the layout's own `totalMinimumSize` says it can hold, then picks the
+  longest of `SEARCH_HINTS` that fits the box. **In that order**: measured the
+  other way round, the box is sized before the shortening has given it its
+  room back, and a *narrower* window showed a *longer* placeholder (1002px
+  against 940px). It runs straight off `resizeEvent` rather than through the
+  board's redraw timer -- the board is thirty widgets and waits for a drag to
+  settle; leaving the bar cut for the length of that drag is the thing being
+  fixed. The search box carries a stretch factor for the other end of the
+  range: without one the surplus went entirely to the spacer and the box sat
+  near its minimum at 1200px with 165px going spare.
+
 ## The state channel
 
 So two people on two machines share one board without either hosting the

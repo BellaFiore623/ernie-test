@@ -28,6 +28,11 @@ import ernie_extract as ex
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
+# The separator the toolbar's two indicators are written with. Spelled by
+# code point so the check file's own encoding cannot be the thing that
+# breaks it.
+DOT = chr(0xB7)
+
 
 def rgb(h):
     h = h.lstrip("#")
@@ -1013,6 +1018,92 @@ def check_a_filter_says_how_many_it_holds() -> bool:
     return c.report()
 
 
+
+def check_a_status_gives_up_its_noun_not_its_state() -> bool:
+    """
+    The toolbar shortens rather than being cut, and cuts the right end.
+
+    At the window's own minimum width the bar asked for about 45px more than
+    it had, and Qt spent the difference on whatever could be squeezed:
+    `Search client, equip` in the box and `shared board · up to da` beside
+    it. The second is the one that matters -- a status cut off exactly where
+    it starts saying something, keeping only the words that are the same
+    every time. Eliding would have taken the same half.
+
+    So the words that go are the noun. `shared board` is established the
+    first time anybody reads it; `up to date`, `no contact`, `3 to send` is
+    the part being looked at. Both labels carry the full sentence in a
+    tooltip either way.
+    """
+    c = Check("a status gives up its noun, not its state")
+
+    for full, short in (
+            (f"shared board {DOT} up to date", f"shared {DOT} up to date"),
+            (f"shared board {DOT} no contact yet", f"shared {DOT} no contact yet"),
+            (f"shared board {DOT} 3 to send", f"shared {DOT} 3 to send"),
+            ("synced 20s ago", "20s ago"),
+            ("synced just now", "just now")):
+        forms = bert.status_forms(full)
+        c.equal(forms[0], full, f"{full!r} is written in full when it fits")
+        c.ok(len(forms) > 1, f"{full!r} has something to give up")
+        if len(forms) > 1:
+            c.equal(forms[-1], short, f"and shortens to {short!r}")
+            c.ok(full.split(DOT)[-1].strip() in forms[-1]
+                 or full.split()[-1] in forms[-1],
+                 f"keeping the reading, not the noun")
+
+    # A label with no noun to drop is left alone rather than mangled.
+    for odd in ("never synced", "", f"shared board{DOT}no space"):
+        forms = bert.status_forms(odd)
+        c.equal(forms[0], odd, f"{odd!r} is handed back unchanged")
+        c.ok(all(isinstance(f, str) for f in forms),
+             f"{odd!r} gives strings rather than raising")
+
+    # The hints are longest-first, or the fitting loop takes the first that
+    # fits and that is the shortest one.
+    lens = [len(h) for h in bert.SEARCH_HINTS]
+    c.equal(lens, sorted(lens, reverse=True),
+            "the search hints are longest first, which the loop relies on")
+    c.ok(len(bert.SEARCH_HINTS[-1]) < 12,
+         "and the last is short enough to fit any box worth typing in")
+
+    # The fit runs on resize directly, not through the board's redraw timer:
+    # the board is thirty widgets and waits for a drag to settle, and leaving
+    # the bar cut for the length of that drag is the thing being fixed.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+    rs = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
+              and n.name == "resizeEvent")
+    c.ok("_fit_toolbar()" in (ast.get_source_segment(src, rs) or ""),
+         "a resize refits the toolbar")
+
+    # The loop has to walk every form. Checks never make a QApplication, so
+    # the geometry this produces is measured by hand rather than here -- but
+    # a loop that stops after the first candidate shortens nothing, and that
+    # is the regression this catches. Put back, it goes red.
+    fit_src = ast.get_source_segment(src, next(
+        n for n in cls.body if isinstance(n, ast.FunctionDef)
+        and n.name == "_fit_toolbar")) or ""
+    c.ok("range(max(len(fresh), len(shared)))" in fit_src,
+         "the fit tries every form, not just the longest")
+    c.ok("totalMinimumSize" in fit_src,
+         "and stops at the first that the layout says it can hold")
+
+    # And the labels are only ever set through the two setters, so nothing
+    # can write a status the fitting does not know the full text of.
+    fit = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
+               and n.name == "_fit_toolbar")
+    inside = ast.get_source_segment(src, fit) or ""
+    body = src.split("class Bert", 1)[1]
+    for lab in ("self.fresh.setText", "self.shared.setText"):
+        c.equal(body.count(lab), inside.count(lab),
+                f"{lab} happens only where the shortening decides it")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
@@ -1029,5 +1120,6 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_a_card_stands_off_the_board_it_sits_on,
           check_a_card_is_edged_in_its_own_tag,
           check_a_filter_says_how_many_it_holds,
+          check_a_status_gives_up_its_noun_not_its_state,
           check_a_band_header_is_accented_not_filled,
           check_the_ink_follows_the_ground)
