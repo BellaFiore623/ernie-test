@@ -2332,7 +2332,13 @@ class Band(QWidget):
             self.panel.setMinimumHeight(DROP_ZONE_MIN if not self.cards else 0)
         else:
             self.panel.setMinimumHeight(0)
-            self.setVisible(bool(self.cards) or self.priority == "unassigned")
+            # A hidden band takes its "+ New Ticket" with it, and the band
+            # is the answer to "where does this go" -- so with everything in
+            # Needs Attention there was no way to start a ticket in Critical
+            # at all, which is the one case where you most want to. Measured:
+            # four of the five buttons did not exist.
+            self.setVisible(bool(self.cards) or not self.board.filtering()
+                            or self.priority == "unassigned")
 
         if wants_hint:
             if self.lay.indexOf(self.empty_hint) < 0:
@@ -2790,7 +2796,13 @@ class Rail(QWidget):
         # still gets its turn.
         for band in BANDS:
             group = [c for c in self.cards if c["priority"] == band]
-            if not group and not self.board.dragging:
+            # An empty band is still named. It used to appear only while a
+            # drag was running, so a board with everything in one place showed
+            # a single heading at rest and four more the instant a card was
+            # picked up -- the list rearranging itself under you at the moment
+            # you were aiming at it, and nothing to aim at before that. The
+            # head already knows how to say "empty".
+            if not group and not self.board.dragging and self.board.filtering():
                 continue
             # Every band is named, the first one included: the word is a
             # label rather than a separator, and "Needs Attention" at the top
@@ -2805,7 +2817,10 @@ class Rail(QWidget):
                 continue
             for c in group:
                 self.lay.addWidget(RailRow(c, self.board, room))
-            if not group:
+            # Drag-only, unlike the head above it: the zone is a target, and
+            # four of them stacked up at rest is a rail of empty boxes with
+            # the running order pushed off the bottom.
+            if not group and self.board.dragging:
                 self.lay.addWidget(RailZone(band))
         self.lay.addStretch()
 
@@ -4397,6 +4412,19 @@ class Bert(QMainWindow):
             if c["thread_id"] == tid:
                 return c["priority"]
         return None
+
+    def filtering(self) -> bool:
+        """Is the board showing less than it holds?
+
+        An empty band is worth naming when the band is genuinely empty: it is
+        somewhere to drop a card, somewhere to start one, and the shape of the
+        order is easier to read when every step of it is on screen. It is
+        noise when a *search* has emptied it -- somebody narrowing the view
+        did that deliberately, and five headings over one result fights the
+        narrowing rather than helping it.
+        """
+        return bool(self.search.text().strip()
+                    or not all(self.filters.values()))
 
     def begin_drag(self):
         self.dragging = True

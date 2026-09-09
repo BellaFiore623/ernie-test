@@ -414,9 +414,108 @@ def check_a_folded_band_opens_for_what_goes_into_it() -> bool:
     return c.report()
 
 
+class Box:
+    """A stand-in for the search field, which is all filtering() reads of it."""
+
+    def __init__(self, text=""):
+        self._text = text
+
+    def text(self):
+        return self._text
+
+
+class Narrowed:
+    """Enough of Bert for filtering(), so no widget has to be built."""
+
+    def __init__(self, term="", filters=None):
+        self.search = Box(term)
+        self.filters = filters if filters is not None else {
+            "PROD": True, "OPS": True, "ENG": True, "CS": True}
+
+
+def check_an_empty_band_is_still_named() -> bool:
+    """
+    A band with nothing in it is somewhere to put something.
+
+    The running order used to draw a band only if it held a card, unless a
+    drag was in flight -- so a board with everything in Needs Attention showed
+    one heading at rest and four more the instant a card was picked up. The
+    list rearranged itself under the pointer at the moment somebody was aiming
+    at it, and before that there was nothing to aim at.
+
+    Worse on the board, where the heading carries the + New Ticket button: a
+    hidden band takes its button with it, so with everything in Needs
+    Attention there was no way to start a ticket in Critical at all. Measured
+    before the fix: four of the five buttons did not exist.
+    """
+    c = Check("an empty band is still named, and can still be added to")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def method(cls_name, fn):
+        cls = next((n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
+                    and n.name == cls_name), None)
+        if cls is None:
+            return None
+        return next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == fn), None)
+
+    # The rail names every band it is not deliberately hiding.
+    rail = method("Rail", "set_cards")
+    c.ok(rail is not None, "the rail builds its own list")
+    body_src = ast.get_source_segment(src, rail) or "" if rail else ""
+    skip = [ln for ln in body_src.splitlines() if "continue" in ln]
+    c.ok(any("filtering" in ln for ln in body_src.splitlines()
+             if "not group" in ln),
+         "an empty band is skipped only when a filter emptied it")
+    c.ok(skip, "and the skip is still there for that case")
+
+    # The zone is a target, not a label, so it stays drag-only.
+    zone = [ln for ln in body_src.splitlines() if "RailZone" in ln]
+    c.ok(zone, "the rail still has a drop zone")
+    guard = body_src.split("RailZone")[0].splitlines()[-2:] if zone else []
+    c.ok(any("dragging" in ln for ln in guard),
+         "shown only while a card is in the air, not stacked up at rest")
+
+    # And the board keeps its band, because the band carries the + button.
+    drag_h = method("Band", "_apply_drag_height")
+    vis = ast.get_source_segment(src, drag_h) or "" if drag_h else ""
+    c.ok("filtering" in vis,
+         "a board band hides only when a filter emptied it")
+
+    return c.report()
+
+
+def check_filtering_knows_what_narrowed_the_board() -> bool:
+    """
+    Genuinely empty is worth showing; filtered empty is not.
+
+    Somebody who typed a search did that on purpose, and five headings over
+    one result fights the narrowing rather than helping it. The queue
+    checkboxes count for the same reason -- they are the other way to ask for
+    less than the board holds.
+    """
+    c = Check("filtering() knows what narrowed the board")
+
+    f = bert.Bert.filtering
+    c.ok(not f(Narrowed()), "a board showing everything is not filtered")
+    c.ok(f(Narrowed(term="penn")), "a search narrows it")
+    c.ok(not f(Narrowed(term="   ")),
+         "but whitespace alone is not a search")
+    c.ok(f(Narrowed(filters={"PROD": True, "OPS": False})),
+         "a queue switched off narrows it too")
+    c.ok(not f(Narrowed(filters={"PROD": True, "OPS": True})),
+         "and every queue on does not")
+
+    return c.report()
+
+
 CHECKS = (check_predicate, check_new_cards_rank, check_one_order,
           check_a_reorder_says_where_it_went,
           check_a_reorder_that_moves_nothing_says_nothing,
           check_the_rail_clips_to_its_width,
           check_a_collapsed_band_still_lands_a_drop,
-          check_a_folded_band_opens_for_what_goes_into_it)
+          check_a_folded_band_opens_for_what_goes_into_it,
+          check_an_empty_band_is_still_named,
+          check_filtering_knows_what_narrowed_the_board)

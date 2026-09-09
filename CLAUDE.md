@@ -182,6 +182,25 @@ activity feed, undo, and the outbox.
   out from under whoever was moving it. Rows are still held to one height;
   that is a different question and the thing that stops an undo shifting the
   list.
+- **An empty band is still named, in both lists.** It is somewhere to drop a
+  card and somewhere to start one, and the shape of the order is easier to
+  read when every step of it is on screen. The rail used to draw a band only
+  if it held something, unless a drag was in flight -- so a board with
+  everything in Needs Attention showed one heading at rest and four more the
+  instant a card was picked up: the list rearranging itself under the pointer
+  at the moment somebody was aiming at it, with nothing to aim at before that.
+  It reads as a glitch and was reported as one.
+  On the board it was worse than untidy, because the heading carries
+  `+ New Ticket`: a hidden band takes its button with it, so with everything
+  in Needs Attention there was no way to start a ticket in Critical at all --
+  measured, four of the five buttons did not exist. **The drop zone is still
+  drag-only**, though, because a zone is a target rather than a label and four
+  of them stacked up at rest pushes the running order off the bottom.
+  **A band a *filter* emptied still hides**: somebody who typed a search did
+  that deliberately, and five headings over one result fights the narrowing
+  rather than helping it. `Bert.filtering()` is the one question both lists
+  ask, and the queue checkboxes count as narrowing for the same reason the
+  search does.
 - **The place in a list is a card, not a scrollbar number.** `render()` tears
   every card down and builds it again whenever the data changes, so both
   scrolling lists have to be put back afterwards -- and the number alone is not
