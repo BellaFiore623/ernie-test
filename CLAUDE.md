@@ -26,6 +26,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
 | `tools/q.py` | Ad-hoc SQL helper. `python tools/q.py "SELECT ..." ernie-test.db` |
+| `tools/fake_stats_data.py` | Invents a past for the sandbox so the figures panel can be looked at. Refuses production; `--clear` undoes it. |
 | `tools/ernie_backup.py` | Online SQLite backup with rotation. |
 | `tools/dump_threads.py` | Raw API JSON to disk. Read-only, for seeing what Discord actually sent. |
 | `tools/bashrc-snippet.sh` | Optional shell shortcuts. Nothing depends on it. |
@@ -656,6 +657,13 @@ or worse, how long a ticket takes, or which ones have been open since April.
   the width out of the *board's* share, which is the one with slack in it. Its
   fold button sits on the left of its own header -- the mirror of the rail,
   whose spine is the far edge of the window.
+- **One function places both sides.** They share a splitter and `setSizes()`
+  takes every pane at once, so `_place_sides()` owns the three widths
+  together. Placing one of them with a two-element list -- which is what
+  `_place_rail` did before the figures were added -- leaves the third pane to
+  whatever Qt makes of a short list, and in practice *neither* width applied:
+  both panes sat at their content width and the rail quietly ignored the one
+  somebody had dragged.
 - **They ride the slow lane.** `STATS_MAX_AGE_S`, like the roster, because
   they move when a ticket closes rather than every five seconds -- hanging four
   aggregates off the poll the board depends on would make each of them a fresh

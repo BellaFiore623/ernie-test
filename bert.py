@@ -105,6 +105,7 @@ FEED_ROWS = 4
 FEED_MAX_ROWS = 8          
 BOARD_MIN_H = 180          # the board never drags away to nothing
 SPLIT_GRIP = 6             # the handle between the board and the feed
+RAIL_FOLDED_W = 30         # the spine either side folds down to
 STATS_MIN_W = 180          # narrower and the month bars stop comparing
 STATS_MAX_W = 380          # wider is a report, not a margin
 STATS_WIDTH = 244          # what it opens at, not what it stays
@@ -3728,31 +3729,36 @@ class Bert(QMainWindow):
             except OSError:
                 pass    # a layout is not worth an error box
 
-    def _place_stats(self):
-        """Put the far handle where it was left, once per unfold."""
-        if self._stats_sized or self.stats_panel.folded:
-            return
-        want = max(STATS_MIN_W,
-                   min(self.settings.get("stats_width") or STATS_WIDTH,
-                       STATS_MAX_W))
-        sizes = self.rail_split.sizes()
-        if len(sizes) == 3 and sizes[1] > want:
-            # Out of the board's share, which is the one with slack in it.
-            self.rail_split.setSizes([sizes[0], sizes[1] - (want - sizes[2]),
-                                      want])
-            self._stats_sized = True
+    def _place_sides(self):
+        """Put both handles where they were left, once per unfold.
 
-    def _place_rail(self):
-        """Put the handle where it was left, once per unfold."""
-        if self._rail_sized or self.rail.folded:
+        One function for the pair, because they share a splitter and
+        setSizes() takes every pane at once. Placing one of them with a
+        two-element list -- which is what this did before the figures were
+        added beside the board -- leaves the third pane to whatever Qt makes
+        of a short list, and in practice neither width was applied at all:
+        the rail sat at its content width, ignoring the one somebody had
+        dragged.
+
+        Once, from whatever was dragged last time or the default, and then
+        left alone. Re-applying on every poll would drag the handle back out
+        from under whoever was moving it.
+        """
+        if self._rail_sized and self._stats_sized:
             return
-        want = max(RAIL_MIN_W,
-                   min(self.settings.get("rail_width") or RAIL_WIDTH,
-                       RAIL_MAX_W))
+        rail = (RAIL_FOLDED_W if self.rail.folded else
+                max(RAIL_MIN_W, min(self.settings.get("rail_width")
+                                    or RAIL_WIDTH, RAIL_MAX_W)))
+        figures = (RAIL_FOLDED_W if self.stats_panel.folded else
+                   max(STATS_MIN_W, min(self.settings.get("stats_width")
+                                        or STATS_WIDTH, STATS_MAX_W)))
         total = self.rail_split.width()
-        if total > want:
-            self.rail_split.setSizes([want, total - want])
-            self._rail_sized = True
+        # The board keeps a card's worth of room whatever the sides ask for.
+        if total <= rail + figures + CARD_MIN_W:
+            return
+        self.rail_split.setSizes([rail, total - rail - figures, figures])
+        self._rail_sized = True
+        self._stats_sized = True
 
     def _panel_height(self, view):
         """The panel that holds a feed viewport this tall."""
@@ -3912,8 +3918,7 @@ class Bert(QMainWindow):
         # Placed once, from whatever was dragged last time or the default, and
         # then left alone -- re-applying it on every poll would drag the handle
         # back under the person moving it.
-        self._place_rail()
-        self._place_stats()
+        self._place_sides()
         if not self._feed_sized and self._feed_wants:
             want = self.settings.get("feed_height") or self._feed_wants
             total = self.split.height()

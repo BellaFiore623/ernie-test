@@ -681,7 +681,9 @@ def check_the_feed_can_be_resized() -> bool:
 
     # The running order is the same trade along the other axis.
     c.ok(src.count("QSplitter(") == 2, "the rail is on a splitter too")
-    place = _method("_place_rail")
+    # One function places both sides: they share a splitter, and
+    # setSizes takes every pane at once.
+    place = _method("_place_sides")
     c.ok(any(isinstance(n, ast.Constant) and n.value == "rail_width"
              for n in ast.walk(place)),
          "its width is remembered as well")
