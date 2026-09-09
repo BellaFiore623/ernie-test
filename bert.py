@@ -2819,12 +2819,19 @@ class Rail(QWidget):
         self.scroll.setVisible(not yes)
         self.hint.setVisible(not yes)
         if yes:
-            self.setFixedWidth(30)
+            self.setFixedWidth(RAIL_FOLDED_W)
         else:
             # Handed back to the splitter, which puts it where it was.
             self.setMinimumWidth(RAIL_MIN_W)
             self.setMaximumWidth(RAIL_MAX_W)
-            self.board._rail_sized = False
+        # Both ways. Narrowing the widget does not narrow the pane it sits in:
+        # the splitter keeps the width it last allotted, so folding left a
+        # spine, then four hundred pixels of empty floor, then a handle
+        # stranded in the middle of it -- and the board got none of the room
+        # the fold was supposed to give it.
+        self.board._rail_sized = False
+        self.board._stats_sized = False
+        self.board._place_sides()
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (10, 10, 4, 8)))
         self.fold_btn.setText("\u00bb" if yes else "\u00ab")
@@ -3326,12 +3333,15 @@ class Stats(QWidget):
         self.holder.setVisible(not yes)
         self.hint.setVisible(not yes and self._sig is None)
         if yes:
-            self.setFixedWidth(30)
+            self.setFixedWidth(RAIL_FOLDED_W)
         else:
             # Handed back to the splitter, which puts it where it was.
             self.setMinimumWidth(STATS_MIN_W)
             self.setMaximumWidth(STATS_MAX_W)
-            self.board._stats_sized = False
+        # Both ways, for the reason Rail.set_folded gives.
+        self.board._rail_sized = False
+        self.board._stats_sized = False
+        self.board._place_sides()
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (4, 10, 10, 8)))
         self.fold_btn.setText(GLYPH_LEFT if yes else GLYPH_RIGHT)

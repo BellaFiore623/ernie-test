@@ -657,6 +657,15 @@ or worse, how long a ticket takes, or which ones have been open since April.
   the width out of the *board's* share, which is the one with slack in it. Its
   fold button sits on the left of its own header -- the mirror of the rail,
   whose spine is the far edge of the window.
+- **Folding has to re-place the splitter, both ways.** Narrowing the widget
+  does not narrow the pane it sits in: the splitter keeps the width it last
+  allotted, so a fold left a 30px spine, then four hundred pixels of empty
+  floor, then a handle stranded in the middle of it -- and the board got none
+  of the room the fold was for. `set_folded` clears both sized flags and calls
+  `_place_sides()` on the way in as well as the way out, which also puts the
+  handle back against the spine where it belongs. Measured on a 1500px window:
+  folded, `[30, 1078, 380]` with the handle at x=30; unfolded again,
+  `[460, 648, 380]`, exactly where it started.
 - **One function places both sides.** They share a splitter and `setSizes()`
   takes every pane at once, so `_place_sides()` owns the three widths
   together. Placing one of them with a two-element list -- which is what

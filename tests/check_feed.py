@@ -691,6 +691,25 @@ def check_the_feed_can_be_resized() -> bool:
              for n in ast.walk(place)),
          "and a folded rail is left to the button, not the handle")
 
+    # Folding has to re-place the splitter, both ways. Narrowing the widget
+    # does not narrow the pane it sits in -- the splitter keeps the width it
+    # last allotted -- so a fold left a spine, then four hundred pixels of
+    # empty floor, then a handle stranded in the middle of it, and the board
+    # got none of the room the fold was for.
+    whole = ast.parse(src)
+    for cls_name in ("Rail", "Stats"):
+        cls = next((n for n in ast.walk(whole) if isinstance(n, ast.ClassDef)
+                    and n.name == cls_name), None)
+        fold = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == "set_folded"), None) if cls else None
+        body = ast.get_source_segment(src, fold) or "" if fold else ""
+        c.ok("_place_sides()" in body,
+             f"{cls_name}.set_folded re-places the splitter")
+        # Outside the if/else, or one direction goes unplaced.
+        tail = body.split("setMaximumWidth")[-1] if "setMaximumWidth" in body else ""
+        c.ok("_place_sides()" in tail,
+             f"{cls_name} does it folding as well as unfolding")
+
     # Bounded: too narrow loses the client, too wide is a second board.
     c.ok("RAIL_MIN_W" in src and "RAIL_MAX_W" in src,
          "with a floor and a ceiling on how far it goes")
