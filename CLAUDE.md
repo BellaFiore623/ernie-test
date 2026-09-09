@@ -424,14 +424,27 @@ activity feed, undo, and the outbox.
   appears only in the second. Counting the first alone meant reordering the
   board and closing straight away asked nothing, and the running order never
   left the machine. `Bert._owed()` reads both.
-- **The unsent mark is drawn in the ink, not the accent.** Measured against
-  every card fill in both palettes: the accent averages 4.6:1 in light and
-  5.9:1 in dark, the ink 13.7:1 and 11.8:1. It is also the cheaper choice --
-  a card already wears its tag's colour, and a mark spending none leaves
-  colour meaning something, which is the same rule the band bars in the
-  running order follow. The glyph is what says which state it is, so nothing
-  is lost: `*` is still waiting, `!` is given up, and `!` keeps amber because
-  a caution is the one thing on the card that is genuinely a warning.
+- **The unsent mark says what it means, in words.** It was `*` and `!`, on
+  the reasoning that the glyph is what tells the two states apart and it
+  spends no colour. Both halves were true and neither made `*` mean anything:
+  an asterisk in the corner of a card is a footnote mark with nothing to point
+  at, and the sentence explaining it lived in a tooltip nobody hovers on a card
+  they are not already asking about. It is **Pushing to Discord…** and **Not
+  sent** now, drawn as chips -- the card already wears chips for the tag, the
+  PIP count and "edited", so it is the shape the eye is reading there anyway.
+  One sentence covers all three waiting cases, because `#ernie-state` is a
+  Discord channel too: a card waiting only on the shared board is still waiting
+  on Discord, and which of the three it is stays in the tooltip. The given-up
+  one must never say *pushing* -- nothing is being pushed, and telling somebody
+  to wait for something that is not coming is the whole reason `/health`
+  reports `stuck` apart from `queued`.
+- **And it is drawn in the ink, not the accent.** Measured against every card
+  fill in both palettes: the accent averages 4.6:1 in light and 5.9:1 in dark,
+  the ink 13.7:1 and 11.8:1. It is also the cheaper choice -- a card already
+  wears its tag's colour, and a mark spending none leaves colour meaning
+  something, which is the same rule the band bars in the running order follow.
+  Amber is kept for the given-up one alone, because a caution is the one thing
+  on the card that is genuinely a warning.
 - **`/health` counts as owed only what the outbox will still try.**
   `OUTBOX_MAX_ATTEMPTS` matches `ernie_outbox.MAX_ATTEMPTS` and the
   `attempts < 5` in `v_outbox_due`; without it a row nothing would ever pick up

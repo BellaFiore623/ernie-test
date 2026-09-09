@@ -519,12 +519,18 @@ def check_a_card_says_it_holds_an_unsent_change() -> bool:
         b.con.commit()
 
         seen = board()
-        c.equal((bert.unsent_mark(seen[edited]) or [None])[0], "*",
-                "an edit waiting to post is marked")
+        # The same words for both. It was "*", which is a footnote mark with
+        # nothing to point at -- the sentence explaining it lived in a tooltip
+        # nobody hovers on a card they are not already asking about.
+        c.equal((bert.unsent_mark(seen[edited]) or [None])[0],
+                "Pushing to Discord…", "an edit waiting to post says so")
         c.equal(seen[dragged]["unsent"], 0,
                 "a reorder queues nothing for the thread")
-        c.equal((bert.unsent_mark(seen[dragged]) or [None])[0], "*",
-                "and is marked anyway, off the shared board it has not reached")
+        c.equal((bert.unsent_mark(seen[dragged]) or [None])[0],
+                "Pushing to Discord…",
+                "and says it anyway, off the shared board it has not reached "
+                "-- #ernie-state is Discord too, so one sentence covers both "
+                "and the tooltip says which")
 
         # The board-wide warning has to agree with what the cards are wearing.
         owed = bert.Bert._owed(api.health())
@@ -572,7 +578,8 @@ def check_a_given_up_change_is_not_about_to_send() -> bool:
             return bert.unsent_mark(card)
 
         got = mark()
-        c.equal((got or [None])[0], "*", "while it is still being tried")
+        c.equal((got or [None])[0], "Pushing to Discord…",
+                "while it is still being tried it says so")
         # The ink, not the accent: three times the contrast against a card,
         # measured, and it spends no colour a tag might want.
         c.equal(got[1] if got else None, bert.T.INK,
@@ -582,7 +589,13 @@ def check_a_given_up_change_is_not_about_to_send() -> bool:
                       (api.OUTBOX_MAX_ATTEMPTS, eid))
         b.con.commit()
         got = mark()
-        c.equal((got or [None])[0], "!", "past the limit it reads differently")
+        c.equal((got or [None])[0], "Not sent",
+                "past the limit it reads differently")
+        # The one thing it must not say. Nothing is being pushed: the outbox
+        # has given up, and a card reading "pushing" would be telling somebody
+        # to wait for something that is not coming.
+        c.ok("ushing" not in (got[0] if got else ""),
+             "and specifically does not claim to be sending")
         c.ok("not retry" in (got[2] if got else ""),
              "and says it will not go on its own")
         c.equal(api.health()["queued"]["count"], 0,

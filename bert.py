@@ -530,16 +530,26 @@ def unsent_mark(c):
     it had already gone out. The mark and the close warning have to agree, or
     one of them is lying.
 
-    A row the outbox has given up on gets its own glyph. It will not be tried
-    again, so a mark that reads as "in a moment" would be telling the reader
-    to wait for something that is not coming -- which is exactly why /health
-    reports `stuck` apart from `queued` rather than folding it in.
+    A row the outbox has given up on says something else. It will not be
+    tried again, so a mark that reads as "in a moment" would be telling the
+    reader to wait for something that is not coming -- which is exactly why
+    /health reports `stuck` apart from `queued` rather than folding it in.
+
+    **Words, not a glyph.** It was `*` and `!`, on the reasoning that the
+    glyph is what tells the two states apart and it spends no colour. Both
+    halves are true and neither made `*` mean anything: an asterisk in the
+    corner of a card is a footnote mark with nothing to point at, and the
+    sentence explaining it was in a tooltip nobody hovers on a card they are
+    not already asking about. Saying it costs the width of a chip, and the
+    card already wears chips -- the tag, the PIP count, "edited" -- so this is
+    the shape the eye is reading there anyway.
     """
     if c.get("stuck"):
         # Amber stays: this one is a caution, and amber is what a caution
-        # looks like everywhere else on the board.
-        return "!", T.AMBER_FG, ("Ernie gave up sending this. It will not "
-                                 "retry on its own.")
+        # looks like everywhere else on the board. And it must not say
+        # "pushing", which is the one thing that is not happening.
+        return "Not sent", T.AMBER_FG, ("Ernie gave up sending this. It will "
+                                        "not retry on its own.")
     unsent, unshared = c.get("unsent") or 0, c.get("unshared")
     if not unsent and not unshared:
         return None
@@ -553,9 +563,14 @@ def unsent_mark(c):
     # palettes, the accent averages 4.6:1 in light and 5.9:1 in dark; the ink
     # is 13.7:1 and 11.8:1. It is also the cheaper choice: a card already
     # wears its tag's colour, and a mark that spends none leaves colour
-    # meaning something. Nothing is lost by it -- the glyph is what says
-    # which state this is, and the two glyphs differ.
-    return "*", T.INK, f"Changed here — {why}"
+    # meaning something.
+    #
+    # One sentence for all three cases. #ernie-state is a Discord channel too,
+    # so a card waiting only on the shared board is still waiting on Discord
+    # and saying so twice differently would be drawing a distinction the
+    # reader cannot act on either way. Which of the three it is stays in the
+    # tooltip, where it belongs.
+    return "Pushing to Discord…", T.INK, f"Changed here — {why}"
 
 
 MIME = "application/x-bert-card"
@@ -1863,13 +1878,13 @@ class Card(QFrame):
         # one thing on the card about the change rather than about the ticket.
         mark = unsent_mark(d)
         if mark:
-            glyph, colour, why = mark
-            star = QLabel(glyph)
-            star.setToolTip(why)
-            star.setAlignment(Qt.AlignTop | Qt.AlignRight)
-            star.setStyleSheet(f"color:{colour}; font-size:14px;"
-                               f" font-weight:bold; background:transparent;")
-            after.append(star)
+            text, colour, why = mark
+            # A chip, like the ones beside it. Drawn in its own ink over the
+            # plain chip ground rather than a fill of its own: it is a state,
+            # not a warning, and the amber one carries the only colour here.
+            said = chip(text, T.CHIP_BG, colour)
+            said.setToolTip(why)
+            after.append(said)
 
         # Cut to the room it actually has, measured against the font it draws
         # in, the way a rail row cuts both of its lines. A count of characters
