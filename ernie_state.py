@@ -785,6 +785,30 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
     return changed
 
 
+def note_format_skew(con, seen: list) -> None:
+    """Remember that the channel held payloads we could not read, or forget it.
+
+    One row, deleted rather than flagged when the pull comes back clean: an
+    absent row is "no skew seen", which is also the right answer for a
+    database that has never pulled, and needs no third state to say so.
+    """
+    if not seen:
+        con.execute("DELETE FROM state_format_skew")
+        return
+    # Whichever version we saw last. Two other machines on two different
+    # formats is not a case worth a table -- the answer either way is that
+    # somebody has to update.
+    con.execute(
+        """INSERT INTO state_format_skew (id, seen_at, their_v, our_v, cards)
+           VALUES (1,?,?,?,?)
+           ON CONFLICT (id) DO UPDATE SET
+               seen_at = excluded.seen_at,
+               their_v = excluded.their_v,
+               our_v   = excluded.our_v,
+               cards   = excluded.cards""",
+        (now_iso(), str(seen[-1]["v"]), FORMAT_VERSION, len(seen)))
+
+
 def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
     """
     Pull the channel into the local mirror.
@@ -819,14 +843,20 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
     con = rw(db)
     bases = read_bases(con)
     local = {c.thread_id: c.payload() for c in load_board(db)}
+    # format_skew is kept apart from unknown on purpose. Both used to land in one
+    # list called "skipped", and they are opposites: a card whose thread has
+    # not synced here yet is ordinary and clears itself on a later cycle,
+    # while a payload we cannot read is a machine that needs updating and
+    # gets worse the longer it is left. Reported together, the one that
+    # matters was buried under the one that never does.
     report = {"applied": [], "ahead": [], "conflicts": [], "unknown": [],
-              "settled": 0}
+              "format_skew": [], "settled": 0}
     compared = []
     try:
         for tid, entry in remote.items():
             p = entry["payload"]
             if p.get("v") != FORMAT_VERSION:
-                report["unknown"].append(f"{tid} (format v{p.get('v')})")
+                report["format_skew"].append({"thread": tid, "v": p.get("v")})
                 continue
             if tid not in local:
                 # The channel knows a card this machine has never synced -- the
@@ -872,6 +902,17 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
             con.executemany(
                 "UPDATE state_sync SET agreed_at=? WHERE thread_id=?",
                 [(now_iso(), tid) for tid in compared])
+            con.commit()
+
+        # Record the skew, or clear it. Writing it down is what gets it off a
+        # printout and onto the board: /health reads this row and Bert says
+        # so. Clearing it on a clean pass is what stops the warning outliving
+        # the problem -- the old messages sit in the channel until that
+        # machine republishes them, so the row goes on being rewritten every
+        # cycle for as long as it is true, and disappears by itself the cycle
+        # after somebody updates.
+        if not dry_run:
+            note_format_skew(con, report["format_skew"])
             con.commit()
     finally:
         con.close()
@@ -1032,9 +1073,14 @@ def main() -> None:
               f"{len(r['applied'])}, {len(r['conflicts'])} conflicts, "
               f"{r['settled']} already agreed, "
               f"{len(r['ahead'])} to publish from here, "
-              f"{len(r['unknown'])} skipped")
+              f"{len(r['unknown'])} waiting on a thread")
         for u in r["unknown"]:
-            print(f"  skipped {u}")
+            print(f"  waiting {u}")
+        # Named separately and last, because it is the one that will not fix
+        # itself: everything above clears on a later cycle.
+        for hit in r["format_skew"]:
+            print(f"  UNREADABLE {hit['thread'][-6:]}  format v{hit['v']}, "
+                  f"this machine speaks v{FORMAT_VERSION}")
     else:
         cid = ensure_channel(d, guild, channel)
         print(publish(d, cid, a.db))

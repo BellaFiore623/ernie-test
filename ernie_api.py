@@ -397,6 +397,24 @@ def health():
                              - datetime.fromisoformat(agreed["last"])).total_seconds())
             sharing = {"cards": agreed["n"], "seconds_since_agreed": since,
                        "waiting_to_send": waiting}
+    # The channel holding cards in a wire format this build cannot read.
+    # Its own block rather than folded into sharing: sharing answers whether
+    # contact is happening, and this is contact happening and being useless.
+    # Asked for the same way state_sync is -- a database that has not had the
+    # migration run should report nothing here rather than 500 on /health.
+    format_skew = None
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                   "AND name='state_format_skew'").fetchone():
+        sk = con.execute("SELECT * FROM state_format_skew WHERE id=1").fetchone()
+        if sk:
+            format_skew = {
+                "their_v": sk["their_v"], "our_v": sk["our_v"],
+                "cards": sk["cards"],
+                "seconds_since_seen": int(
+                    (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(sk["seen_at"])).total_seconds()),
+            }
+
     # Still owed to Discord: queued behind the undo window, or being retried.
     # Bert asks so it can say so before somebody shuts the stack down on top
     # of a change that hasn't gone out.
@@ -454,6 +472,10 @@ def health():
         "syncing": bool(last and not last["finished_at"]),
         "board_size": board,
         "sharing": sharing,
+        # Reported even when sharing is None: a machine that could read none
+        # of the channel has applied nothing, so it has no state_sync rows to
+        # be "sharing" by -- which is exactly the machine that needs telling.
+        "format_skew": format_skew,
         "clients": roster,
         "queued": {"count": owed["n"], "due_at": owed["soonest"]},
         "stuck": {"count": stuck["n"]},

@@ -439,6 +439,24 @@ def needs_triage(c) -> bool:
         return False
     return not (c.get("client_override") or "").strip()
 
+def who_is_behind(their_v, our_v) -> str:
+    """Which of the two machines has to update, said plainly.
+
+    The version arrives as whatever was in the payload rather than as a
+    number -- a malformed one is still worth reporting -- so this has to
+    produce a sentence for values it cannot compare.
+    """
+    try:
+        theirs, ours = int(their_v), int(our_v)
+    except (TypeError, ValueError):
+        return "one of the two boards needs updating"
+    if theirs > ours:
+        return "this machine is the older one, so update it here"
+    if theirs < ours:
+        return "the other machine is the older one, so they need to update"
+    return "one of the two boards needs updating"
+
+
 def unsent_mark(c):
     """The mark on a card holding a change that has not left this machine.
 
@@ -3916,6 +3934,26 @@ class Bert(QMainWindow):
         this Bert is doing. Hidden entirely unless a board is actually shared,
         so nothing changes for one person on one machine.
         """
+        # Asked before the "is anything shared" guard, because a machine that
+        # could read none of the channel has applied none of it and so has no
+        # state_sync rows to be sharing by. That machine is precisely the one
+        # that needs telling, and the guard below would have hidden the only
+        # thing on screen that explains why its board is empty.
+        skew = self.health.get("format_skew")
+        if skew:
+            n = skew.get("cards") or 0
+            self.shared.setText("shared board · can't read the other board")
+            self.shared.setStyleSheet(f"color:{T.RED_FG}; font-size:11px;")
+            self.shared.setToolTip(
+                f"{n} card(s) in #ernie-state are written in format "
+                f"v{skew.get('their_v')} and this machine speaks "
+                f"v{skew.get('our_v')}, so they are being skipped -- and "
+                f"nothing done here is reaching the other board either. "
+                f"Waiting will not fix it: "
+                f"{who_is_behind(skew.get('their_v'), skew.get('our_v'))}.")
+            self.shared.show()
+            return
+
         s = self.sharing
         if not s:
             self.shared.hide()

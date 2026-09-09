@@ -768,6 +768,176 @@ def check_a_ticket_started_in_bert_becomes_a_thread() -> bool:
     return c.report()
 
 
+def a_channel_one_version_ahead(cards):
+    """The channel as written by a machine on a newer wire format."""
+    out = {}
+    for c in cards:
+        p = dict(c.payload())
+        p["v"] = S.FORMAT_VERSION + 1
+        out[c.thread_id] = {"message_id": f"m-{c.thread_id}", "payload": p}
+    return out
+
+
+def skew_row(b):
+    return b.con.execute("SELECT * FROM state_format_skew WHERE id=1").fetchone()
+
+
+def check_a_payload_we_cannot_read_is_written_down() -> bool:
+    """
+    The skip has to reach the board, not a printout nobody runs.
+
+    reconcile() drops a payload whose v is not ours and carries on. That is
+    the right thing to do with it -- we cannot read it -- but it means the
+    card stops being compared in either direction, so the two boards drift
+    apart and neither says a word. It went into a --pull listing and nowhere
+    else.
+    """
+    c = Check("a payload this build cannot read is written down")
+
+    with Board() as b:
+        cards = a_board(b)
+        S.fetch_state = lambda d, cid: a_channel_one_version_ahead(cards)
+        r = S.reconcile(None, "chan", b.path)
+
+        c.equal(len(r["format_skew"]), len(cards), "every card is skipped")
+        c.equal(r["applied"], [], "and none of them applied")
+        c.equal(r["unknown"], [],
+                "kept apart from the cards merely waiting on a thread")
+
+        row = skew_row(b)
+        c.ok(row is not None, "the pull writes it down")
+        if row:
+            c.equal(row["their_v"], str(S.FORMAT_VERSION + 1),
+                    "naming the format it could not read")
+            c.equal(row["our_v"], S.FORMAT_VERSION, "and the one it speaks")
+            c.equal(row["cards"], len(cards), "and how many it cost")
+
+    return c.report()
+
+
+def check_the_warning_clears_itself() -> bool:
+    """
+    It has to come down on its own the cycle after somebody updates.
+
+    The old messages sit in the channel until that machine republishes, so the
+    row is rewritten every cycle for as long as it is true -- and a pull that
+    skips nothing has to delete it, or the board goes on warning about a
+    problem that is over and the warning stops meaning anything.
+    """
+    c = Check("the warning clears itself once everybody has updated")
+
+    with Board() as b:
+        cards = a_board(b)
+        S.fetch_state = lambda d, cid: a_channel_one_version_ahead(cards)
+        S.reconcile(None, "chan", b.path)
+        c.ok(skew_row(b) is not None, "seen once, recorded")
+
+        S.fetch_state = lambda d, cid: as_channel(cards)
+        r = S.reconcile(None, "chan", b.path)
+        c.equal(r["format_skew"], [], "a clean pull skips nothing")
+        c.ok(skew_row(b) is None, "and takes the warning down")
+
+    return c.report()
+
+
+def check_the_ordinary_skip_is_not_an_alarm() -> bool:
+    """
+    A card whose thread has not synced here yet is normal and clears itself.
+
+    Both used to land in one list called "skipped". They are opposites: this
+    one is a later cycle away from fixing itself, and the other will not fix
+    itself at all. Reported together, the one that mattered was buried under
+    the one that never does.
+    """
+    c = Check("a card waiting on its thread raises no alarm")
+
+    with Board() as b:
+        cards = a_board(b)
+        channel = as_channel(cards)
+        stranger = dict(cards[0].payload())
+        channel["999999"] = {"message_id": "m-999999", "payload": stranger}
+        S.fetch_state = lambda d, cid: channel
+
+        r = S.reconcile(None, "chan", b.path)
+        c.equal(len(r["unknown"]), 1, "the stranger is noted as waiting")
+        c.equal(r["format_skew"], [], "and is not called a version problem")
+        c.ok(skew_row(b) is None, "so no warning is written")
+
+    return c.report()
+
+
+def check_a_dry_run_writes_no_warning() -> bool:
+    """--dry-run reports; it does not change what the board says."""
+    c = Check("a dry run writes no warning")
+
+    with Board() as b:
+        cards = a_board(b)
+        S.fetch_state = lambda d, cid: a_channel_one_version_ahead(cards)
+        r = S.reconcile(None, "chan", b.path, dry_run=True)
+        c.ok(r["format_skew"], "it still reports what it found")
+        c.ok(skew_row(b) is None, "but writes nothing down")
+
+    return c.report()
+
+
+def check_health_reports_it_with_nothing_shared() -> bool:
+    """
+    The machine that can read none of the channel has no state_sync rows.
+
+    It applied nothing, so nothing recorded a base -- which means `sharing` is
+    None and Bert's indicator hides. That machine is exactly the one that
+    needs telling, so the block is reported on its own.
+    """
+    c = Check("/health reports it even with nothing shared")
+
+    with Board() as b:
+        cards = a_board(b)
+        S.fetch_state = lambda d, cid: a_channel_one_version_ahead(cards)
+        S.reconcile(None, "chan", b.path)
+
+        api.DB = b.path
+        h = api.health()
+        c.ok(h.get("sharing") is None,
+             "nothing was applied, so there is no shared board to report")
+        skew = h.get("format_skew")
+        c.ok(skew is not None, "and the skew is reported anyway")
+        if skew:
+            c.equal(skew["their_v"], str(S.FORMAT_VERSION + 1), "their format")
+            c.equal(skew["our_v"], S.FORMAT_VERSION, "ours")
+            c.equal(skew["cards"], len(cards), "and how many cards it holds")
+            c.ok(skew["seconds_since_seen"] >= 0, "with an age")
+
+    return c.report()
+
+
+def check_bert_says_who_has_to_update() -> bool:
+    """
+    "Update" is only useful if it says which machine.
+
+    The version arrives as whatever was in the payload rather than as a
+    number, so a malformed one still has to produce a sentence.
+    """
+    c = Check("Bert says which of the two machines has to update")
+
+    c.ok("this machine" in bert.who_is_behind(2, 1),
+         "a newer channel means this one is behind")
+    c.ok("other machine" in bert.who_is_behind(1, 2),
+         "an older channel means they are")
+    for bad in (None, "x", ""):
+        c.ok(bert.who_is_behind(bad, 1),
+             f"{bad!r} still gets a sentence rather than a crash")
+
+    # And it is asked before the guard that hides the indicator, or the
+    # machine with no state_sync rows never sees it.
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tick = src.split("def _tick_sharing")[1].split(NL + "    def ")[0]
+    c.ok("format_skew" in tick, "the indicator asks about it")
+    c.ok(tick.index("format_skew") < tick.index("self.shared.hide()"),
+         "before it decides there is nothing shared to report")
+
+    return c.report()
+
+
 CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
@@ -781,4 +951,10 @@ CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_ticked_item_still_reaches_the_board,
           check_reopening_a_work_item_round_trips,
           check_the_client_list_says_when_it_has_gone_stale,
+          check_a_payload_we_cannot_read_is_written_down,
+          check_the_warning_clears_itself,
+          check_the_ordinary_skip_is_not_an_alarm,
+          check_a_dry_run_writes_no_warning,
+          check_health_reports_it_with_nothing_shared,
+          check_bert_says_who_has_to_update,
           check_a_ticket_started_in_bert_becomes_a_thread)

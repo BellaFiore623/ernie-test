@@ -321,6 +321,31 @@ CREATE TABLE IF NOT EXISTS state_sync (
 );
 
 
+-- The last pull that found a payload in #ernie-state it could not read.
+--
+-- Version skew between two machines, and the one failure here that does not
+-- get better by waiting: reconcile() skips a payload whose v is not ours, so
+-- that card stops being compared in both directions and the two boards drift
+-- apart with nothing on either to say why. It went into a --pull printout
+-- nobody runs.
+--
+-- One row, like changelog_state, because it is one fact about this machine
+-- rather than a history. Written by the pull when it skips something, and
+-- deleted by a pull that skips nothing -- so it clears itself once everybody
+-- has updated, rather than needing a hand to take it down.
+--
+-- their_v is TEXT because it is whatever arrived: an integer normally, and
+-- something else entirely if a payload is malformed, which is still worth
+-- reporting rather than throwing away on the way in.
+CREATE TABLE IF NOT EXISTS state_format_skew (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    seen_at  TEXT NOT NULL,               -- when the pull last skipped one
+    their_v  TEXT,                        -- the format version it carried
+    our_v    INTEGER NOT NULL,            -- FORMAT_VERSION on this machine
+    cards    INTEGER NOT NULL             -- how many it affected that pass
+);
+
+
 -- Which events have already been written to the change-log channel.
 -- Per event rather than a high-water mark: a change replayed from the other
 -- board carries the timestamp it originally happened at, so events do not

@@ -170,6 +170,12 @@ Top right, next to the refresh button, is the shared-board indicator:
 - **`shared board · up to date`** — your board and theirs agree.
 - **`shared board · 2 to send`** — you've changed something they haven't been
   told about. It goes out on the next cycle. Normal for up to a minute.
+- **`shared board · can't read the other board`** — in red, and the one here
+  that will not fix itself. The two of you are running builds that write the
+  shared copy differently, so those cards are being skipped in both directions:
+  nothing you do reaches them and nothing they do reaches you. Hover it — it
+  says which of the two machines is the older one. Somebody has to update
+  before either board is trustworthy again.
 - **`shared board · no contact for 5m`** — **your own** stack has stopped
   reading the channel. Check the three minimised windows on your machine. It
   does not mean the other person is offline: the shared board lives in

@@ -495,9 +495,19 @@ def main() -> None:
                 # top-level import either way round would be circular.
                 import ernie_state
                 r = ernie_state.reconcile(d, state_channel, a.db)
+                if r["format_skew"]:
+                    # Loud, every cycle it is true, and not folded in with the
+                    # cards merely waiting on a thread: this one means the two
+                    # boards have stopped agreeing and no amount of waiting
+                    # will settle it.
+                    them = r["format_skew"][-1]["v"]
+                    print(f"[{now()[:19]}] state: !! {len(r['format_skew'])} "
+                          f"card(s) in the channel are format v{them} and this "
+                          f"machine speaks v{ernie_state.FORMAT_VERSION} -- one "
+                          f"of the two boards needs updating", file=sys.stderr)
                 if r["applied"] or r["unknown"]:
                     print(f"[{now()[:19]}] state: applied {len(r['applied'])}, "
-                          f"skipped {len(r['unknown'])}")
+                          f"{len(r['unknown'])} waiting on a thread")
                     for hit in r["applied"]:
                         print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
                               + "; ".join(hit["changed"]))

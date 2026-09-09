@@ -528,6 +528,34 @@ other's API. Priority, rank, work items and completion live in
 - Completed cards stay in the channel carrying `completed: true`, so closing
   one propagates. Cards closed before the channel ever saw them are not
   backfilled.
+- **A payload this build cannot read is an alarm, and a card waiting on its
+  thread is not.** Both used to land in one list called `skipped`, and they are
+  opposites: a card the channel knows and this machine has no thread for clears
+  itself on a later cycle, while a payload whose `v` is not ours means that
+  card has stopped being compared *in both directions* and no amount of waiting
+  will settle it. Reported together, the one that matters was buried under the
+  one that never does. `report["format_skew"]` is now its own list, and
+  `note_format_skew()` writes it to `state_format_skew` -- one row, like
+  `changelog_state`, because it is one fact about this machine rather than a
+  history.
+- **The warning takes itself down.** The old messages sit in the channel until
+  that machine republishes them, so the row is rewritten every cycle for as
+  long as it is true, and a pull that skips nothing **deletes** it. An absent
+  row is "no skew seen", which is also the right answer for a database that has
+  never pulled, so there is no third state to explain.
+- **`/health` reports it even when `sharing` is `None`.** A machine that could
+  read none of the channel applied none of it, so nothing wrote a base and it
+  has no `state_sync` rows to be "sharing" by -- and that is precisely the
+  machine that needs telling. Bert asks about it **before** the guard that
+  hides the indicator when nothing is shared, or the one board that most needs
+  the message is the one that never sees it. It is red rather than amber
+  because it is asking for a person, which is what red means here, and the
+  tooltip names *which* machine is behind: `who_is_behind()` is a pure function
+  so the wording is testable, and it still produces a sentence for a `v` that
+  is not a number.
+- **`skew` in `ernie_state.py` means the clock**, and has since the preflight
+  was written -- `skew_seconds()`, `clock_skew_s`, `SKEW_WARN_S`. The wire
+  format one is `format_skew` throughout for that reason.
 
 ## The change log
 
@@ -713,9 +741,12 @@ imports it. Bump it there and nowhere else.
   `build` block, and Bert's settings window. Bert shows **both** ends there,
   its own and whatever `/health` reported, because in the one-backend-two-Berts
   setup those are two checkouts and either can be the stale one.
-- **Nothing compares them yet.** `reconcile()` still drops a payload whose `v`
-  does not match into `report["unknown"]` in silence. Making that loud is the
-  next piece of work, and it is why this exists.
+- **The build number is still not compared anywhere.** The *wire format* is,
+  and says so loudly -- see the state channel below -- but two machines on
+  0.9.0 and 0.8.1 with the same `FORMAT_VERSION` read each other perfectly and
+  nothing remarks on it. That is the right order to build these in: the format
+  is what actually breaks a board, and the build number is what an update
+  check will compare.
 
 ## Running
 
