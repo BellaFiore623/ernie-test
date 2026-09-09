@@ -191,17 +191,17 @@ LIGHT = {
     # carries the meaning: surface above canvas above beside, and each card a
     # shade deeper than the wash it sits on. The inks did not move, so every
     # pairing got *more* contrast rather than less.
-    "ink": "#1F2124", "muted": "#5C6166", "line": "#C0C6CD",
-    "surface": "#ECEFF2", "canvas": "#DCE0E5",
+    "ink": "#1F2124", "muted": "#51565A", "line": "#C0C6CD",
+    "surface": "#EFF1F3", "canvas": "#D2D5D8",
     # Behind and to the right of the board column, a shade under the canvas.
-    "beside": "#D5D9DF",
+    "beside": "#C0C2C6",
     # The floor. Everything with content in it -- the board column, the rail,
     # the figures, the feed -- sits on the canvas one step above this, so a
     # section reads as a thing on a surface rather than as a region of one
     # flat colour. `beside` cannot do this job: it is under the canvas in
     # light and above it in dark, because it doubles as a raised control
     # there, so it means opposite things in the two themes.
-    "well": "#D3D8DE",
+    "well": "#C6C9CD",
     "amber_bg": "#F7EBD4", "amber_fg": "#7C5107",
     "red_bg": "#F6E2E2", "red_fg": "#8E2828", "red_edge": "#C43C3C",
     "ok_fg": "#2A6130", "ok_bg": "#E3EDE3", "accent": "#2B6CB0",
@@ -210,31 +210,31 @@ LIGHT = {
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#E3E6EA",
+    "chip_bg": "#D8DADD",
     # Text on an accent-filled button, and the wash under a hovered bubble.
     "on_accent": "#FFFFFF", "hover_bg": "#CBDCF1",
     "neutral": ("#8E949A", "#E3E6EA", "#33373A"),
     "queue": {
-        "PROD": ("#EF9F27", "#F4E5CB", "#633806"),
-        "OPS":  ("#97C459", "#E0EDD0", "#27500A"),
-        "ENG":  ("#6F9BD1", "#DEE7F4", "#1B3A5C"),
-        "CS":   ("#B08BD4", "#E8DEF2", "#3D2154"),
+        "PROD": ("#EF9F27", "#F1E6D4", "#633806"),
+        "OPS":  ("#97C459", "#E1EAD6", "#27500A"),
+        "ENG":  ("#6F9BD1", "#E1E8F1", "#1B3A5C"),
+        "CS":   ("#B08BD4", "#ECE4F3", "#3D2154"),
     },
     # A wash behind each band's cards. Unassigned is the one neutral in the
     # ramp on purpose: it is not a priority, it is the absence of one, and
     # wearing a near-critical red said the opposite of that across the room.
     "band_tint": {
-        "unassigned": "#EFD9D9", "critical": "#EFD9D9", "high": "#F4E7D0",
-        "medium": "#DFE9F5", "low": "#E4E7EA",
+        "unassigned": "#EBDCDC", "critical": "#EBDCDC", "high": "#E7DFCF",
+        "medium": "#D9E0E8", "low": "#DEE0E2",
     },
     # The card, a shade deeper than its wash -- except unassigned, which is
     # the plain surface, the other way about. A blank card reads as one
     # nobody has picked up, and it leaves red to mean one thing on this
     # board: a card that needs a person. Those keep their outline over it.
     "band_card": {
-        "unassigned": ("#F5E3E3", "#C43C3C"), "critical": ("#EFD2D2", "#C43C3C"),
-        "high": ("#F6E1C2", "#D19434"), "medium": ("#D8E5F4", "#7099CB"),
-        "low": ("#E3E6E9", "#B7BCC2"),
+        "unassigned": ("#F1E4E4", "#C43C3C"), "critical": ("#F8E2E2", "#C43C3C"),
+        "high": ("#F4E5CF", "#D19434"), "medium": ("#DFE8F3", "#7099CB"),
+        "low": ("#E5E7E9", "#B7BCC2"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
