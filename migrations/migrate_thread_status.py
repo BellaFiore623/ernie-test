@@ -24,4 +24,9 @@ else:
     end = body.index(";", start) + 1
     con.executescript(body[start:end])
     con.commit(); print("added thread_status")
+cols = {r[1] for r in con.execute("PRAGMA table_info(thread_status)")}
+if "pinned" not in cols:
+    con.execute("ALTER TABLE thread_status ADD COLUMN pinned INTEGER NOT NULL "
+                "DEFAULT 0")
+    con.commit(); print("added thread_status.pinned")
 con.close()

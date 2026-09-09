@@ -148,22 +148,10 @@ def publish(d: Discord, con, db: str) -> dict:
             if was is None:
                 sent = d.write("POST", f"/channels/{card.thread_id}/messages",
                                content=body)
-                # Pinned, because "the first message" is what was asked for and
-                # a bot cannot be the first message of a thread somebody else
-                # opened. A pin is one click from the thread header, which is
-                # the same thing for a reader.
-                try:
-                    d.write("PUT", f"/channels/{card.thread_id}/pins/{sent['id']}")
-                except Exception as e:
-                    # Worth having, not worth failing over: the message is
-                    # posted either way, and a thread at the 50-pin cap or a
-                    # missing permission must not cost the status itself.
-                    print(f"  status: couldn't pin in {card.thread_id}: {e}",
-                          file=sys.stderr)
                 con.execute(
                     """INSERT INTO thread_status (thread_id, message_id, body,
-                                                  sent_at)
-                       VALUES (?,?,?,?)""",
+                                                  sent_at, pinned)
+                       VALUES (?,?,?,?,0)""",
                     (card.thread_id, sent["id"], body, now()))
                 counts["posted"] += 1
             else:
@@ -179,7 +167,36 @@ def publish(d: Discord, con, db: str) -> dict:
             counts["failed"] += 1
             print(f"  status: {card.thread_id} failed -- {e}", file=sys.stderr)
 
+    counts["pinned"] = pin_pending(d, con)
     return counts
+
+
+def pin_pending(d: Discord, con) -> int:
+    """Pin the messages that are not pinned yet, and keep trying.
+
+    "The first message" is what was wanted, and a bot cannot be the first
+    message of a thread somebody else opened -- a pin is one click from the
+    thread header, which is the same thing to a reader.
+
+    It is tried on every pass rather than once at posting time, because it
+    needs Manage Messages and the bot may not have it: measured against the
+    sandbox, all 29 pins came back 403 while every message posted fine. Left
+    at one attempt, granting the permission afterwards would have changed
+    nothing. Never fatal -- a thread at the 50-pin cap still gets its status.
+    """
+    done = 0
+    for r in con.execute("SELECT * FROM thread_status WHERE pinned = 0"):
+        try:
+            d.write("PUT", f"/channels/{r['thread_id']}/pins/{r['message_id']}")
+        except Exception as e:
+            print(f"  status: couldn't pin in {r['thread_id']}: "
+                  f"{str(e).splitlines()[0]}", file=sys.stderr)
+            continue
+        con.execute("UPDATE thread_status SET pinned=1 WHERE thread_id=?",
+                    (r["thread_id"],))
+        con.commit()
+        done += 1
+    return done
 
 
 def main() -> None:
@@ -217,7 +234,7 @@ def main() -> None:
     print(f"ernie_status {ernie_version.describe()}")
     counts = publish(d, con, a.db)
     print(f"posted {counts['posted']}, edited {counts['edited']}, "
-          f"failed {counts['failed']}")
+          f"pinned {counts['pinned']}, failed {counts['failed']}")
 
 
 if __name__ == "__main__":

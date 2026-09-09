@@ -206,6 +206,7 @@ def check_it_posts_once_then_edits() -> bool:
              "as a message in the thread")
         c.ok(any(v == "PUT" and "/pins/" in p for v, p, _ in d.calls),
              "and pins it, since a bot cannot be a thread's first message")
+        c.equal(first["pinned"], 1, "the pin is recorded as done")
 
         row = b.con.execute("SELECT * FROM thread_status WHERE thread_id=?",
                             (tid,)).fetchone()
@@ -215,7 +216,8 @@ def check_it_posts_once_then_edits() -> bool:
         # Nothing has changed, so nothing should be written.
         d2 = FakeDiscord()
         again = st.publish(d2, b.con, b.path)
-        c.equal(again, {"posted": 0, "edited": 0, "failed": 0},
+        c.equal({k: v for k, v in again.items() if k != "pinned"},
+                {"posted": 0, "edited": 0, "failed": 0},
                 "a pass over an unchanged board writes nothing at all")
         c.equal(d2.calls, [], "and does not touch Discord")
 
@@ -255,10 +257,55 @@ def check_an_inherited_thread_is_never_posted_to() -> bool:
     return c.report()
 
 
+def check_pinning_is_tried_again() -> bool:
+    """
+    Pinning needs Manage Messages, and the bot may not have it.
+
+    Measured against the sandbox on the first real run: all 29 messages posted
+    and all 29 pins came back 403. That is survivable -- the status is there
+    either way -- but attempted only once at posting time it would also be
+    permanent, so granting the permission afterwards would change nothing.
+    """
+    c = Check("a pin that was refused is tried again")
+
+    class NoPins(FakeDiscord):
+        def write(self, verb, path, **kw):
+            if verb == "PUT" and "/pins/" in path:
+                raise RuntimeError("403 Forbidden")
+            return super().write(verb, path, **kw)
+
+    with Board() as b:
+        tid = a_card(b)
+        refused = NoPins()
+        counts = st.publish(refused, b.con, b.path)
+        c.equal(counts["posted"], 1, "the message still posts")
+        c.equal(counts["pinned"], 0, "the pin does not")
+        c.equal(counts["failed"], 0, "and a refused pin is not a failure")
+        row = b.con.execute("SELECT pinned FROM thread_status").fetchone()
+        c.equal(row["pinned"], 0, "it is remembered as unpinned")
+
+        # The permission arrives. Nothing about the message has changed, so
+        # only the pin should happen.
+        allowed = FakeDiscord()
+        again = st.publish(allowed, b.con, b.path)
+        c.equal(again["pinned"], 1, "a later pass pins it")
+        c.equal(again["edited"], 0, "without rewriting the message")
+        c.equal(again["posted"], 0, "and without posting a second one")
+        row = b.con.execute("SELECT pinned FROM thread_status").fetchone()
+        c.equal(row["pinned"], 1, "and stops trying once it is done")
+
+        third = FakeDiscord()
+        st.publish(third, b.con, b.path)
+        c.equal(third.calls, [], "a pass over a pinned, unchanged board is silent")
+
+    return c.report()
+
+
 CHECKS = (check_the_message_says_what_is_left,
           check_an_empty_ticket_says_so,
           check_a_closed_ticket_does_not_say_it_twice,
           check_nothing_in_it_moves_on_its_own,
           check_only_threads_ernie_watched_open,
           check_it_posts_once_then_edits,
-          check_an_inherited_thread_is_never_posted_to)
+          check_an_inherited_thread_is_never_posted_to,
+          check_pinning_is_tried_again)

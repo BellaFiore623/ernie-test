@@ -336,7 +336,12 @@ CREATE TABLE IF NOT EXISTS thread_status (
     thread_id  TEXT PRIMARY KEY REFERENCES threads(thread_id),
     message_id TEXT NOT NULL,
     body       TEXT NOT NULL,              -- what the message currently says
-    sent_at    TEXT NOT NULL               -- when it was last written
+    sent_at    TEXT NOT NULL,              -- when it was last written
+    -- Pinning needs Manage Messages, which the bot may not have been given.
+    -- Tracked rather than assumed so a later pass can try again: without it,
+    -- granting the permission afterwards would change nothing, because the
+    -- pin is only attempted when the message is first posted.
+    pinned     INTEGER NOT NULL DEFAULT 0
 );
 
 
