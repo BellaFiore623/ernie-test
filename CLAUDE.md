@@ -1083,6 +1083,25 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
+**Three levels, and the floor is one of them.** `well` is what everything
+sits on -- the window, the toolbar, and the space a folded panel leaves
+behind. The sections with content in them -- the board column, the rail, the
+figures, the feed -- are `canvas`, one step above it, and the cards are above
+that again. Without the floor every one of those met the space around it at
+the same value and the window read as one flat field, most obviously with a
+panel folded away, where the gap it left looked like more board. `beside`
+could not do this job: it is *under* the canvas in light and *over* it in
+dark, because it doubles as a raised control there, so it means opposite
+things in the two themes.
+
+**A plain `QWidget` subclass ignores a stylesheet background unless it opts
+in.** `Rail` and `Stats` both set one and neither ever painted it -- proved by
+setting the rule to magenta and still seeing the window through it. It went
+unnoticed for as long as those panels and the window behind them were the
+same colour, and only showed up when the floor made them different.
+`setAttribute(Qt.WA_StyledBackground, True)` is the opt-in. Any new panel of
+this shape needs it too, or its background rule is decoration.
+
 **A container with its own stylesheet owns its tooltips too.** `apply_theme`
 states `QToolTip` on the application, and that settles it for any widget
 carrying no sheet of its own. It does not settle it for one that has one: Qt

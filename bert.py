@@ -195,6 +195,13 @@ LIGHT = {
     "surface": "#ECEFF2", "canvas": "#DCE0E5",
     # Behind and to the right of the board column, a shade under the canvas.
     "beside": "#D5D9DF",
+    # The floor. Everything with content in it -- the board column, the rail,
+    # the figures, the feed -- sits on the canvas one step above this, so a
+    # section reads as a thing on a surface rather than as a region of one
+    # flat colour. `beside` cannot do this job: it is under the canvas in
+    # light and above it in dark, because it doubles as a raised control
+    # there, so it means opposite things in the two themes.
+    "well": "#D3D8DE",
     "amber_bg": "#F7EBD4", "amber_fg": "#7C5107",
     "red_bg": "#F6E2E2", "red_fg": "#8E2828", "red_edge": "#C43C3C",
     "ok_fg": "#2A6130", "ok_bg": "#E3EDE3", "accent": "#2B6CB0",
@@ -246,6 +253,9 @@ DARK = {
     "ink": "#E6E9EC", "muted": "#98A2AD", "line": "#333B45",
     "surface": "#1B2027", "canvas": "#14181D",
     "beside": "#222831",
+    # Below the canvas here, as it is in light -- in dark that means darker
+    # still, which is the one direction #222831 could not go.
+    "well": "#0E1115",
     "amber_bg": "#2E2718", "amber_fg": "#EFC15E",
     "red_bg": "#301D1C", "red_fg": "#F5AAA2", "red_edge": "#E08078",
     "ok_fg": "#A8DC8B", "ok_bg": "#1E2A1C", "accent": "#7FA9DA",
@@ -2735,6 +2745,13 @@ class Rail(QWidget):
         # canvas colour, with the text the same colour as the box. Measured
         # against a plain widget in the same process: readable there, solid
         # black here.
+        # A plain QWidget subclass ignores a stylesheet background
+        # unless it says so: Qt only paints one for widgets that opt
+        # in. Without this the rule below did nothing at all -- proved
+        # by setting it to magenta and seeing the window through it --
+        # and it went unnoticed for as long as this and the window
+        # behind it were the same colour.
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"Rail {{ background:{T.CANVAS}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
@@ -3100,6 +3117,13 @@ class Stats(QWidget):
         self.resize(STATS_WIDTH, self.height())
         # Scoped, like Rail's. Unscoped it cascades into every child and into
         # the tooltips those children own.
+        # A plain QWidget subclass ignores a stylesheet background
+        # unless it says so: Qt only paints one for widgets that opt
+        # in. Without this the rule below did nothing at all -- proved
+        # by setting it to magenta and seeing the window through it --
+        # and it went unnoticed for as long as this and the window
+        # behind it were the same colour.
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"Stats {{ background:{T.CANVAS}; }}" + tip_css())
 
         outer = QVBoxLayout(self)
@@ -3375,7 +3399,12 @@ class Bert(QMainWindow):
         # Narrower than this and the feed's fixed columns start eating
         # the line, and the board columns are too tight to drop into.
         self.setMinimumWidth(1000)
-        self.setStyleSheet(f"QMainWindow {{ background:{T.CANVAS}; }}")
+        # The floor, so every section on it reads as a section. Painted the
+        # canvas colour, the board column, the rail, the figures and the
+        # feed all met the space around them at the same value and the
+        # window read as one flat field -- most obviously with a panel
+        # folded away, where the space it left looked like more board.
+        self.setStyleSheet(f"QMainWindow {{ background:{T.WELL}; }}")
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -3411,7 +3440,7 @@ class Bert(QMainWindow):
         vp = self.scroll.viewport()
         vp.setAutoFillBackground(True)
         pal = vp.palette()
-        pal.setColor(QPalette.Window, QColor(T.BESIDE))
+        pal.setColor(QPalette.Window, QColor(T.WELL))
         vp.setPalette(pal)
         # Widget smaller than the viewport: pin it left, don't centre it.
         self.scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -3499,11 +3528,11 @@ class Bert(QMainWindow):
 
     def _toolbar(self):
         bar = QWidget()
-        # The canvas, not the surface. It is a strip of chrome like the rail
-        # and the figures either side of the board, and the rule under it is
-        # what separates it -- painted in the brightest token it was the
-        # first thing the eye landed on in light mode.
-        bar.setStyleSheet(f"background:{T.CANVAS}; border-bottom:1px solid {T.LINE};")
+        # The floor, like the space around the sections: this is chrome, not
+        # a section. Painted in the brightest token it was the first thing the
+        # eye landed on in light mode; painted the canvas colour it merged
+        # with the columns under it.
+        bar.setStyleSheet(f"background:{T.WELL}; border-bottom:1px solid {T.LINE};")
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(16, 10, 16, 10)
         lay.setSpacing(10)
@@ -3619,9 +3648,9 @@ class Bert(QMainWindow):
         w.setObjectName("feedPanel")
         # Scoped, so the caption and the rows don't each paint their own block
         # of it the way a bare selector would.
-        # Canvas, for the reason the toolbar is: this is a panel beside the
-        # board rather than a sheet on top of it, and it is the largest
-        # single area in the window when the feed is short.
+        # The canvas, like the board column and the two side panels: the feed
+        # is a section with content in it, so it sits on the floor rather than
+        # being part of it.
         w.setStyleSheet(f"#feedPanel {{ background:{T.CANVAS};"
                         f" border-top:1px solid {T.LINE}; }}")
         # No fixed height: the splitter owns it. A minimum only, so the
