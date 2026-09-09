@@ -1094,13 +1094,23 @@ could not do this job: it is *under* the canvas in light and *over* it in
 dark, because it doubles as a raised control there, so it means opposite
 things in the two themes.
 
-**A plain `QWidget` subclass ignores a stylesheet background unless it opts
-in.** `Rail` and `Stats` both set one and neither ever painted it -- proved by
-setting the rule to magenta and still seeing the window through it. It went
-unnoticed for as long as those panels and the window behind them were the
-same colour, and only showed up when the floor made them different.
-`setAttribute(Qt.WA_StyledBackground, True)` is the opt-in. Any new panel of
-this shape needs it too, or its background rule is decoration.
+**A plain `QWidget` ignores a stylesheet background unless it opts in.**
+`Rail`, `Stats` and `#boardColumn` all set one and none of them ever painted
+it -- proved by setting a rule to magenta and still seeing straight through
+it. What looked like the board column's colour was the scroll viewport behind
+it, which is why the strip beside the column could not be told apart from the
+column itself. `setAttribute(Qt.WA_StyledBackground, True)` is the opt-in, and
+any new widget of this shape needs it or its background rule is decoration.
+
+**And the scroll viewport takes its colour from a stylesheet set on itself.**
+Setting the viewport's *palette* does not survive: it reads back as the
+application's canvas whether it is set before `setWidget()` or after --
+measured, `#14181D` where `#0E1115` was asked for, which is exactly what made
+the strip beside the board read as an awkward gap rather than as floor. Give
+the viewport an object name and set the rule **on the viewport**, not on the
+scroll area: `vp.setStyleSheet("#boardBack { background: ... }")`. The name is
+what keeps it off the cards -- a bare `background:` on a scroll area cascades
+into every band and card inside it.
 
 **A container with its own stylesheet owns its tooltips too.** `apply_theme`
 states `QToolTip` on the application, and that settles it for any widget

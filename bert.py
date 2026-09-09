@@ -3434,19 +3434,30 @@ class Bert(QMainWindow):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
-        # The area around the column, set through the palette rather than a
-        # stylesheet: a bare `background:` on the scroll area cascades into
+        # The area around the column: the floor, like the space beside a
+        # folded panel, so the column reads as a section standing on it.
+        #
+        # Named and styled, not set through the palette. A palette set here is
+        # propagated over by the application palette apply_theme installs, so
+        # this quietly stayed the canvas colour and the strip beside the board
+        # was the same value as the board itself -- measured on a real window,
+        # #14181D where #0E1115 was asked for. The name is what keeps the rule
+        # off the cards: a bare `background:` on a scroll area cascades into
         # every band and card inside it.
         vp = self.scroll.viewport()
-        vp.setAutoFillBackground(True)
-        pal = vp.palette()
-        pal.setColor(QPalette.Window, QColor(T.WELL))
-        vp.setPalette(pal)
+        vp.setObjectName("boardBack")
+        vp.setAttribute(Qt.WA_StyledBackground, True)
+        vp.setStyleSheet(f"#boardBack {{ background:{T.WELL}; }}")
         # Widget smaller than the viewport: pin it left, don't centre it.
         self.scroll.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
         board = QWidget()
         board.setObjectName("boardColumn")
+        # Opted in, or the rule below is decoration: a plain QWidget paints no
+        # stylesheet background without it. It never had, so what looked like
+        # the column's colour was the viewport showing through -- which is why
+        # the strip beside the column could not be told apart from it.
+        board.setAttribute(Qt.WA_StyledBackground, True)
         # The column keeps the canvas colour and stops where the bands stop
         board.setStyleSheet(f"#boardColumn {{ background:{T.CANVAS};"
                             f" border-right:1px solid {T.LINE}; }}")
