@@ -136,6 +136,12 @@ STATS_WINDOWS = (("7 days", 7), ("2 weeks", 14), ("3 weeks", 21),
 STATS_WINDOW_DEFAULT = 28
 GLYPH_LEFT = "\u00ab"
 GLYPH_RIGHT = "\u00bb"
+# The feed folds downward rather than sideways, so its button says so.
+# "Just like the running order" is about the control, not the arrow: a
+# panel that drops to the bottom edge marked with a chevron pointing
+# left is a button describing somebody else's panel.
+GLYPH_DOWN = "\u25be"
+GLYPH_UP = "\u25b4"
 # Qt's QWIDGETSIZE_MAX, which PySide6 does not export. Undoes a
 # setFixedHeight, which sets minimum and maximum together.
 UNCAPPED = 16777215
@@ -1062,6 +1068,32 @@ def chrome_button(glyph, tip):
     # 14px leaves the glyph box room inside a 28px button -- the lesson the
     # caution sign taught, where the two were the same height and it clipped.
     b.setStyleSheet("font-size:14px;")
+    return b
+
+
+def fold_button(glyph, tip):
+    """The control that folds a section away, and there are three of them.
+
+    Written once because it was written three times: the running order, the
+    figures and the activity feed are the window's three foldable sections,
+    and a reader who has learnt one of these has learnt all three. They had
+    drifted already -- two of them differed only in the alpha of the hover
+    tint, 0.12 against 0.14, which is nobody's intention and nothing anybody
+    would notice going wrong.
+
+    The glyph is the section's own, because each folds toward a different
+    edge: the rail toward the left, the figures toward the right, the feed
+    toward the bottom.
+    """
+    b = QPushButton(glyph)
+    b.setFixedSize(24, 24)
+    b.setCursor(Qt.PointingHandCursor)
+    b.setToolTip(tip)
+    b.setStyleSheet(
+        f"QPushButton {{ border:1px solid {T.LINE}; border-radius:5px;"
+        f" background:{T.CONTROL}; color:{T.MUTED}; font-size:11px; }}"
+        f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.12)};"
+        f" color:{T.ACCENT}; }}")
     return b
 
 
@@ -3145,15 +3177,7 @@ class Rail(QWidget):
         self.head.setFont(f)
         self.head.setStyleSheet(f"color:{T.INK}; background:transparent;")
 
-        self.fold_btn = QPushButton("\u00ab")
-        self.fold_btn.setFixedSize(24, 24)
-        self.fold_btn.setCursor(Qt.PointingHandCursor)
-        self.fold_btn.setToolTip("Hide the running order")
-        self.fold_btn.setStyleSheet(
-            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:5px;"
-            f" background:{T.CONTROL}; color:{T.MUTED}; font-size:11px; }}"
-            f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.12)};"
-            f" color:{T.ACCENT}; }}")
+        self.fold_btn = fold_button(GLYPH_LEFT, "Hide the running order")
         self.fold_btn.clicked.connect(self.toggle_fold)
 
         top = QHBoxLayout()
@@ -3224,7 +3248,7 @@ class Rail(QWidget):
             self.board._place_sides()
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (10, 10, 4, 8)))
-        self.fold_btn.setText("\u00bb" if yes else "\u00ab")
+        self.fold_btn.setText(GLYPH_RIGHT if yes else GLYPH_LEFT)
         self.fold_btn.setToolTip("Show the running order" if yes
                                  else "Hide the running order")
 
@@ -3542,15 +3566,7 @@ class Stats(QWidget):
         self.head.setFont(f)
         self.head.setStyleSheet(f"color:{T.INK}; background:transparent;")
 
-        self.fold_btn = QPushButton(GLYPH_RIGHT)
-        self.fold_btn.setFixedSize(24, 24)
-        self.fold_btn.setCursor(Qt.PointingHandCursor)
-        self.fold_btn.setToolTip("Hide the data")
-        self.fold_btn.setStyleSheet(
-            f"QPushButton {{ border:1px solid {T.LINE}; border-radius:5px;"
-            f" background:{T.CONTROL}; color:{T.MUTED}; font-size:11px; }}"
-            f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.14)};"
-            f" color:{T.ACCENT}; }}")
+        self.fold_btn = fold_button(GLYPH_RIGHT, "Hide the figures")
         self.fold_btn.clicked.connect(self.toggle_fold)
 
         top = QHBoxLayout()
@@ -3942,7 +3958,7 @@ class Stats(QWidget):
         self.layout().setContentsMargins(*((3, 10, 3, 8) if yes
                                            else (4, 10, 10, 8)))
         self.fold_btn.setText(GLYPH_LEFT if yes else GLYPH_RIGHT)
-        self.fold_btn.setToolTip("Show the data" if yes
+        self.fold_btn.setToolTip("Show the figures" if yes
                                  else "Hide the data")
 
         # Folded, the block that was absorbing the spare height is hidden and
@@ -4355,13 +4371,22 @@ class Bert(QMainWindow):
         hh = QHBoxLayout(head)
         hh.setContentsMargins(0, 0, 0, 0)
         hh.setSpacing(6)
-        self.feed_caret = QLabel("\u25be")
-        self.feed_caret.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
-                                      f" background:transparent;")
+        # The same button the other two sections carry, rather than the bare
+        # caret that was here. The feed is the third foldable section and was
+        # the only one whose control was a glyph with no edges: a reader who
+        # had found the other two had no reason to think this was one, and it
+        # was asked for on exactly those grounds.
+        #
+        # The header stays clickable underneath it, because it always was and
+        # a wider target costs nothing -- but the button is what says the
+        # section folds, and a label that merely happens to be clickable does
+        # not say that to anybody who has not already tried.
+        self.feed_fold_btn = fold_button(GLYPH_DOWN, "Hide the activity feed")
+        self.feed_fold_btn.clicked.connect(self.toggle_feed)
         lab = QLabel("Recent activity")
         lab.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                           f" background:transparent;")
-        hh.addWidget(self.feed_caret)
+        hh.addWidget(self.feed_fold_btn)
         hh.addWidget(lab)
         hh.addStretch()
         head.clicked.connect(self.toggle_feed)
@@ -4428,9 +4453,11 @@ class Bert(QMainWindow):
         if not self.feed_folded:
             self._feed_sized = False
         self.feed_body.setVisible(not self.feed_folded)
-        self.feed_caret.setText("\u25b8" if self.feed_folded else "\u25be")
-        self.feed_head.setToolTip("Show the activity feed" if self.feed_folded
-                                  else "Hide the activity feed")
+        tip = ("Show the activity feed" if self.feed_folded
+               else "Hide the activity feed")
+        self.feed_fold_btn.setText(GLYPH_UP if self.feed_folded else GLYPH_DOWN)
+        self.feed_fold_btn.setToolTip(tip)
+        self.feed_head.setToolTip(tip)
         self._fit_feed()
 
     def resizeEvent(self, e):

@@ -1573,7 +1573,89 @@ def check_a_wrapper_round_an_input_paints_nothing() -> bool:
     return c.report()
 
 
+def check_all_three_sections_fold_the_same_way() -> bool:
+    """
+    The window has three foldable sections, and one control between them.
+
+    The running order, the figures and the activity feed. Somebody who has
+    learnt one of these buttons has learnt all three, which only holds while
+    there is one button -- and there were three copies of it, already drifted:
+    two differed in the alpha of their hover tint, 0.12 against 0.14, which is
+    nobody's decision and nothing anybody would notice going wrong.
+
+    The feed was worse than drifted. Its control was a bare caret with no
+    border, on a header that happened to be clickable, so the one section
+    whose fold was not obviously a button was the one nobody found. Reported
+    as the feed wanting a collapse button "just like running order and
+    stats", which is exactly what it was missing.
+
+    **The glyph is the one thing that must differ.** Each section folds
+    toward its own edge -- the rail left, the figures right, the feed down --
+    and a panel that drops to the bottom marked with a leftward chevron is a
+    button describing somebody else's panel.
+    """
+    c = Check("all three sections fold the same way")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "fold_button"),
+              None)
+    c.ok(fn is not None, "there is one fold_button, written once")
+
+    # Nobody builds their own any more. A QPushButton put straight into a
+    # variable called fold_btn is the shape that drifted.
+    hand_rolled = [n for n in ast.walk(tree)
+                   if isinstance(n, ast.Assign)
+                   and isinstance(n.value, ast.Call)
+                   and getattr(n.value.func, "id", "") == "QPushButton"
+                   and any("fold" in (getattr(t, "attr", "") or "")
+                           for t in n.targets)]
+    c.equal(len(hand_rolled), 0,
+            "and no section rolls its own")
+
+    for cls, glyph, tip in (("Rail", "GLYPH_LEFT", "running order"),
+                            ("Stats", "GLYPH_RIGHT", "figures")):
+        node = next((n for n in ast.walk(tree)
+                     if isinstance(n, ast.ClassDef) and n.name == cls), None)
+        body = (ast.get_source_segment(src, node) or "") if node else ""
+        c.ok(f"fold_button({glyph}" in body,
+             f"{cls} takes the shared button, opening on {glyph}")
+        c.ok(tip in body, f"and its tooltip names the {tip}")
+
+    # The feed is the one that was missing it, so it is asserted by name
+    # rather than by class -- it lives on the window, not a panel of its own.
+    c.ok("fold_button(GLYPH_DOWN" in src,
+         "and so does the activity feed, opening on a downward caret")
+    c.ok("self.feed_fold_btn" in src, "which is a real button on its header")
+
+    # Folding has to move the glyph, or the button says "hide" on a section
+    # that is already hidden.
+    for fold, shut in (("toggle_fold", "GLYPH_RIGHT"),
+                       ("toggle_feed", "GLYPH_UP")):
+        fns = [n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == fold]
+        c.ok(fns, f"{fold} exists")
+    swaps = [n for n in ast.walk(tree)
+             if isinstance(n, ast.FunctionDef)
+             and n.name in ("set_folded", "toggle_feed")]
+    for n in swaps:
+        body = ast.get_source_segment(src, n) or ""
+        if "fold_btn" not in body:
+            continue
+        c.ok("setText(" in body and "setToolTip(" in body,
+             f"{n.name} turns the glyph round and rewrites the tooltip")
+
+    # And the caret it replaced is gone rather than left behind painting
+    # nothing next to the button that took over from it.
+    c.ok("feed_caret" not in src, "the bare caret is gone, not merely hidden")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour,
+          check_all_three_sections_fold_the_same_way,
           check_a_wrapper_round_an_input_paints_nothing,
           check_a_count_agrees_with_its_verb,
           check_no_colour_is_written_by_hand, check_palettes_agree,
