@@ -26,6 +26,8 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
 | `tools/q.py` | Ad-hoc SQL helper. `python tools/q.py "SELECT ..." ernie-test.db` |
+| `tools/backfill_message_types.py` | Fetches Discord's message `type` for rows written before the column existed. Read-only against Discord, writes one column, resumable. |
+| `tools/rebuild_title_history.py` | Writes each recovered rename as the title revision it was. No network. Cannot change what the board shows today. |
 | `tools/fake_stats_data.py` | Invents a past for the sandbox so the figures panel can be looked at. Refuses production; `--clear` undoes it. |
 | `tools/ernie_backup.py` | Online SQLite backup with rotation. |
 | `tools/dump_threads.py` | Raw API JSON to disk. Read-only, for seeing what Discord actually sent. |
@@ -1028,11 +1030,39 @@ or worse, how long a ticket takes, or which ones have been open since April.
   of anything read from here on -- see the data model note. It changes
   nothing about this figure, which still comes off `thread_titles`; it is
   what a later reconstruction of the history before today would be built on.
-  **The honest limit is the one the state-channel route would have had too:**
-  this counts what Ernie was watching for. Production has 889 title rows for
-  889 threads -- one each, because it has never run this build -- so it reads
-  zero until it has. The sandbox showed it working the moment a thread was
-  renamed.
+  **That limit was lifted, and the way it was lifted is the point.** It said
+  this counts only what Ernie was watching for, and production had 889 title
+  rows for 889 threads. `tools/backfill_message_types.py` fetched the type on
+  every message (908 pages, 7m26s, **703 renames recovered**) and
+  `tools/rebuild_title_history.py` wrote each rename as the title revision it
+  was: 694 of 696 written, and production's history now shows **61 PROD → OPS
+  and 7 back**, out of 73. It moves with the window -- 9 at four weeks, 41 at
+  three months, 73 at six.
+  **The reconstruction may not change what the board shows today**, which is
+  the rule that makes it safe on a live database: a rename is written only if
+  it is strictly older than the thread's earliest existing row, so the newest
+  revision is never one the tool invented and every card's queue and client
+  come from where they always did. Verified by snapshotting the title, tag,
+  client and confidence of all 363 cards and comparing after: **0 changed.**
+  Renames dated later are the *sync's* business -- 2 of 696 -- and it will
+  record them on its next pass.
+  **Only an exact row counts as one we already have**, same thread and same
+  moment. Matching on the *name* was tried first and is wrong in a way that
+  counts: production's single row per thread carries the name as of its first
+  sync, which is usually the name the last rename gave it, so skipping that
+  rename as familiar left the revision dated the day Ernie first looked
+  instead of the day it happened -- a thread that went OPS in April counting
+  as August, inside windows it falls outside, on a panel whose whole point is
+  the window. Two rows carrying one name is not noise; they share a tag, so
+  having both invents no move.
+  **And the guards are asked in the order that explains itself.** The
+  already-have question comes before the age question: once a pass has run,
+  the oldest row a thread holds is one the tool wrote, so every rename is
+  at-or-after it, and asked the other way round a second run reported all 694
+  as "newer than what we hold -- the sync's job", which is a sentence about
+  rows it had put there itself. Same outcome, different account of it.
+  `--dry-run` writes, measures and rolls back, so the preview is the real
+  figure rather than a count of intentions.
   On the panel the block draws `PROD → OPS  21` with a bar in the
   *destination's* colour: the arrow already says which way it went, and the
   tag it became is what a reader is counting. Four tags make twelve possible
