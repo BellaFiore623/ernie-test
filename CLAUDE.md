@@ -791,6 +791,27 @@ or worse, how long a ticket takes, or which ones have been open since April.
 - **A trend, not a number.** "Completed this month" was the request; a single
   figure throws away 27 → 61 → 63 → 67 → 95 across five months, which is the
   news. The same query gives the shape for free.
+- **And it follows the window, because everything on the panel does.** It was
+  pinned to six months while the tally beside it moved, and it is the biggest
+  block there -- reported as "I change the timeframe and nothing changes",
+  which was fair. A control that visibly does nothing to the thing under it
+  reads as broken whatever else it is quietly doing.
+- **The bucket comes from the window, not from a constant.** Daily to a
+  fortnight, weekly to two months, monthly beyond -- which puts every offered
+  window between three bars and fourteen. The thresholds are the whole
+  design: at ten days a two-week window fell to weekly and drew *two bars*,
+  which is not a trend, it is two numbers with a picture round them.
+- **A month bucket is a whole month, and the query widens to match.** Left
+  rolling, the earliest bar was a part month standing beside whole ones --
+  June the 14th to the 30th against all of July -- and read as a quiet month
+  rather than as half of one. Weeks stay rolling, because a seven-day slice
+  is not a named thing anybody compares against a calendar. The exact figure
+  for the window is the tally's job; this is a shape to compare along, and
+  the things being compared have to be the same size.
+- **Buckets are built forward from the start of the window**, not off the
+  rows that came back, so a quiet week is a nought in the trend rather than a
+  bar that is simply absent. Missing reads as "no data"; nought reads as
+  "nothing closed", and they are not the same news.
 - **Sized and folded exactly like the running order**, which is the point of
   putting it there: a range rather than a fixed width so the handle has
   something to move, `setFixedWidth` only while folded because folding is the

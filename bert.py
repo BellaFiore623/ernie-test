@@ -634,6 +634,28 @@ VALUE_LABEL = {v: lab for v, lab in STATES + DIRECTIONS}
 VALUE_LABEL[""] = "(empty)"
 
 
+def period_name(start, bucket):
+    """What to call one bar, in a column 244px wide.
+
+    Three shapes, because the bucket follows the window: `9 Sep` for a day,
+    `w/c 1 Sep` for a rolling seven days, and the month's own short name for
+    a month. Never raises and never invents a date it was not given -- a
+    string it cannot read comes back unchanged, which is a label somebody can
+    at least recognise as wrong.
+    """
+    text = str(start or "")
+    try:
+        y, m, d = (int(x) for x in text.split("-")[:3])
+        stamp = _MONTH_ABBR[m - 1]
+    except (ValueError, IndexError, TypeError):
+        return text
+    if bucket == "month":
+        return month_name(f"{y:04d}-{m:02d}")
+    if bucket == "week":
+        return f"w/c {d} {stamp}"
+    return f"{d} {stamp}"
+
+
 def month_name(month: str) -> str:
     """"2026-08" as "Aug", and "Jan 27" where the year turns over.
 
@@ -3594,22 +3616,29 @@ class Stats(QWidget):
             self.body.addWidget(self._heading("Tickets"))
             self.body.addWidget(self._tally(tally))
 
-        # 1. Completed per month. The trend is the point: one number for this
-        #    month throws away the shape, and the shape is the news.
-        months = data.get("completed_by_month") or []
+        # 1. Completed across the window. The trend is the point: one number
+        #    throws away the shape, and the shape is the news. It follows the
+        #    selector -- a timeframe control that does nothing to the biggest
+        #    block on the panel is one nobody believes, which is how this was
+        #    reported.
+        done = data.get("completed") or {}
+        bars = done.get("periods") or []
         self.body.addWidget(self._heading("Completed"))
-        if not months:
+        if not bars:
             self.body.addWidget(self._line("nothing closed yet", T.MUTED))
         else:
-            top = max(m["count"] for m in months) or 1
-            for m in months:
+            # Against the tallest bar, not against the total: the question a
+            # row of bars answers is which period was busier than which.
+            top = max(b["count"] for b in bars) or 1
+            for b in bars:
                 label = QHBoxLayout()
                 label.setContentsMargins(0, 0, 0, 0)
-                label.addWidget(self._line(month_name(m["month"]), T.MUTED))
+                label.addWidget(self._line(
+                    period_name(b["start"], done.get("bucket")), T.MUTED))
                 label.addStretch(1)
-                label.addWidget(self._line(str(m["count"])))
+                label.addWidget(self._line(str(b["count"])))
                 self.body.addLayout(label)
-                self.body.addWidget(self._bar(m["count"] / top, T.ACCENT))
+                self.body.addWidget(self._bar(b["count"] / top, T.ACCENT))
 
         # 2. Open longest. The list that changes what somebody does today.
         self.body.addWidget(self._heading("Open longest"))

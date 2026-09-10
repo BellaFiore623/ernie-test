@@ -56,13 +56,15 @@ def check_the_figures_are_what_they_claim() -> bool:
         old = opened(b, "PROD: D - 01Jan26 - four", 150)
         opened(b, "PROD: E - 01Jan26 - five", 3)
         api.DB = b.path
-        s = api.stats()
+        s = api.stats(days=365)
 
-        months = s["completed_by_month"]
-        c.equal(sum(m["count"] for m in months), 3, "every closure is counted")
-        c.ok(all(len(m["month"]) == 7 for m in months),
-             "and grouped by month, not by day")
-        c.ok(months == sorted(months, key=lambda m: m["month"]),
+        done = s["completed"]
+        c.equal(sum(b["count"] for b in done["periods"]), 3,
+                "every closure inside the window is counted")
+        c.equal(done["bucket"], "month",
+                "a year-long window is bucketed by month")
+        c.ok(done["periods"] == sorted(done["periods"],
+                                       key=lambda b: b["start"]),
              "oldest first, so it reads as a trend rather than a list")
 
         ages = s["ageing"]
@@ -135,7 +137,13 @@ def check_it_says_nothing_rather_than_something_wrong() -> bool:
     with Board() as b:
         api.DB = b.path
         s = api.stats()
-        c.equal(s["completed_by_month"], [], "no months")
+        # An empty board still gets its buckets -- they are built forward
+        # from the start of the window rather than off the rows, so the
+        # answer is "nothing closed" rather than "no data", which are not the
+        # same news.
+        c.ok(all(b["count"] == 0 for b in s["completed"]["periods"]),
+             "every bucket is empty")
+        c.ok(s["completed"]["periods"], "but the buckets are still there")
         c.equal(s["ageing"], [], "nothing ageing")
         c.equal(s["time_to_complete"], None,
                 "and no time to close, rather than a zero that reads as instant")
@@ -144,8 +152,23 @@ def check_it_says_nothing_rather_than_something_wrong() -> bool:
 
 
 def check_the_month_label_reads_in_a_narrow_column() -> bool:
-    """The panel is 244px, so the year is spelled only where it turns over."""
+    """The panel is 244px, so the year is spelled only where it turns over.
+
+    And the bar's label follows the bucket, which follows the window: a day,
+    a rolling week, or a month, each written to fit that column.
+    """
     c = Check("the month label reads in a narrow column")
+
+    c.equal(bert.period_name("2026-09-04", "day"), "4 Sep", "a day is a date")
+    c.equal(bert.period_name("2026-08-21", "week"), "w/c 21 Aug",
+            "a week says which week it commences")
+    c.equal(bert.period_name("2026-08-01", "month"), "Aug",
+            "and a month is just the month")
+    c.equal(bert.period_name("2026-01-01", "month"), "Jan 26",
+            "carrying the year where it turns over, as it always did")
+    for junk in ("", "nonsense", None, "2026-13-01"):
+        got = bert.period_name(junk, "day")
+        c.ok(isinstance(got, str), f"{junk!r} gives a string rather than raising")
 
     c.equal(bert.month_name("2026-08"), "Aug", "an ordinary month is three letters")
     c.equal(bert.month_name("2026-01"), "Jan 26",
@@ -441,6 +464,26 @@ def check_the_table_reads_in_the_toolbar_s_order() -> bool:
     c.ok("window_box" not in draw,
          "and never touched by the redraw, which throws the body away")
 
+    # The chain that makes the dropdown do anything: it has to clear the
+    # stamp, ask again, and the ask has to carry the panel's own window. Miss
+    # any one and the box changes and the numbers do not -- which is how this
+    # was reported.
+    changed = ast.get_source_segment(src, next(
+        n for n in stats.body if isinstance(n, ast.FunctionDef)
+        and n.name == "_window_changed")) or ""
+    c.ok("stats_at = 0" in changed,
+         "changing the window drops the freshness stamp")
+    c.ok("refresh()" in changed, "and asks again straight away")
+    c.ok("save_settings" in changed, "and remembers the choice")
+
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+    ref = ast.get_source_segment(src, next(
+        n for n in cls.body if isinstance(n, ast.FunctionDef)
+        and n.name == "refresh")) or ""
+    c.ok("stats_days=self.stats_panel.days()" in ref,
+         "and the poll carries the panel's window rather than a default")
+
     # Every window the panel offers has to be one the API will take.
     c.ok(all(isinstance(d, int) and d > 0 for _, d in bert.STATS_WINDOWS),
          "every window is a positive number of days")
@@ -452,8 +495,60 @@ def check_the_table_reads_in_the_toolbar_s_order() -> bool:
     return c.report()
 
 
+
+def check_the_window_moves_every_block_it_should() -> bool:
+    """
+    The selector has to change what is on the panel, or nobody believes it.
+
+    Reported as "I change the timeframe and nothing changes" -- and that was
+    fair: the tally followed the window from the start, but Completed was
+    hard-wired to six months and it is the biggest block on the panel. A
+    control that visibly does nothing to the thing under it reads as broken
+    whatever else it is quietly doing.
+    """
+    c = Check("the window moves every block it should")
+
+    with Board() as b:
+        tallied(b, "PROD: old - 01Jan26 - x", "PROD", 300, 250)
+        tallied(b, "PROD: recent - 01Jan26 - x", "PROD", 5, 2)
+        api.DB = b.path
+
+        week = api.stats(days=7)
+        year = api.stats(days=365)
+
+        c.ok(week["completed"] != year["completed"],
+             "Completed is a different block at a different window")
+        c.equal(sum(x["count"] for x in week["completed"]["periods"]), 1,
+                "one closure inside the week")
+        c.equal(sum(x["count"] for x in year["completed"]["periods"]), 2,
+                "and both inside the year")
+        c.ok(week["tally"]["totals"] != year["tally"]["totals"],
+             "and the tally moves with it")
+
+        # The bucket has to keep the bar count somewhere the eye can read.
+        # Seven days as one bar is not a trend, and a year as 365 is not a
+        # panel 244px wide.
+        for days in [d for _, d in bert.STATS_WINDOWS]:
+            bars = api.stats(days=days)["completed"]["periods"]
+            c.ok(3 <= len(bars) <= 14,
+                 f"{days}d draws {len(bars)} bars, which is a shape rather "
+                 f"than a wall -- three is the floor because two bars is not "
+                 f"a trend, and fourteen the ceiling because the panel is "
+                 f"244px wide and every bar is a row")
+
+        # A month bucket is a whole month, or the earliest bar is a part
+        # month standing beside whole ones and reads as a quiet month.
+        for days in (91, 182, 365):
+            first = api.stats(days=days)["completed"]["periods"][0]["start"]
+            c.ok(first.endswith("-01"),
+                 f"{days}d starts on the first of a month ({first})")
+
+    return c.report()
+
+
 CHECKS = (check_the_figures_are_what_they_claim,
           check_open_is_a_level_and_the_other_two_are_flows,
+          check_the_window_moves_every_block_it_should,
           check_the_rows_add_up,
           check_every_offered_tag_keeps_its_row,
           check_the_window_compares_dates_the_only_way_that_works,

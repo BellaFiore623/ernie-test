@@ -520,7 +520,7 @@ def health():
 
 
 @app.get("/stats")
-def stats(months: int = 6, ageing: int = 5, days: int = 28):
+def stats(ageing: int = 5, days: int = 28):
     """What the board looks like over time, rather than right now.
 
     Four numbers, and each earns its place by answering something the board
@@ -535,13 +535,58 @@ def stats(months: int = 6, ageing: int = 5, days: int = 28):
     """
     con = db()
     try:
-        # 1. Completed per month. The trend is the point: a bare "this month"
-        #    throws away the shape, and the shape is what somebody wants.
-        by_month = [dict(r) for r in con.execute(
-            """SELECT substr(completed_at, 1, 7) AS month, COUNT(*) AS count
-               FROM cards WHERE completed_at IS NOT NULL
-               GROUP BY month ORDER BY month DESC LIMIT ?""", (months,))]
-        by_month.reverse()
+        # 1. Completed over the window. The trend is the point: a bare "this
+        #    month" throws away the shape, and the shape is what somebody
+        #    wants. It follows the selector, because a timeframe control that
+        #    visibly does nothing to the biggest block on the panel is a
+        #    control nobody believes -- reported exactly that way.
+        #
+        #    The bucket comes from the window rather than being fixed, or
+        #    seven days is one bar and a year is 365. Between four and twelve
+        #    is a shape the eye reads; the thresholds are what put every
+        #    offered window inside that.
+        span = max(1, int(days))
+        # Fourteen, not ten: at ten, a two-week window fell to weekly and
+        # drew *two bars*, which is not a trend -- it is two numbers with a
+        # picture round them. Daily to a fortnight, weekly to two months,
+        # monthly beyond, which puts every offered window between three bars
+        # and thirteen.
+        bucket = "day" if span <= 14 else "week" if span <= 56 else "month"
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=span - 1)
+        # A month bucket is snapped back to the first of its month, and the
+        # query widened to match. Left rolling, the earliest bar was a part
+        # month counted against whole ones -- June the 14th to the 30th
+        # beside all of July -- which reads as a quiet month rather than as
+        # half of one. The exact figure for the window is the tally's job;
+        # this is a shape to compare along, and the things being compared
+        # have to be the same size. Weeks stay rolling, because a seven-day
+        # slice is not a named thing anybody compares to a calendar.
+        if bucket == "month":
+            start = start.replace(day=1)
+        daily = {r["day"]: r["n"] for r in con.execute(
+            """SELECT date(completed_at) AS day, COUNT(*) AS n
+               FROM cards
+               WHERE completed_at IS NOT NULL AND date(completed_at) >= :from
+               GROUP BY day""", {"from": start.isoformat()})}
+
+        # Built forward from that start rather than off the rows, so a quiet
+        # week is a gap in the trend instead of a bar that simply is not
+        # there. A missing bucket reads as "no data"; a nought reads as
+        # "nothing closed", and they are not the same news.
+        periods, cursor = [], start
+        while cursor <= today:
+            if bucket == "month":
+                nxt = (cursor.replace(day=1) + timedelta(days=32)).replace(day=1)
+            elif bucket == "week":
+                nxt = cursor + timedelta(days=7)
+            else:
+                nxt = cursor + timedelta(days=1)
+            n = sum(v for k, v in daily.items()
+                    if cursor.isoformat() <= k < nxt.isoformat())
+            periods.append({"start": cursor.isoformat(), "count": n})
+            cursor = nxt
+        completed = {"bucket": bucket, "periods": periods}
 
         # 2. The open ones that have been open longest. This is the list that
         #    changes what somebody does today, and nothing else shows it.
@@ -633,7 +678,7 @@ def stats(months: int = 6, ageing: int = 5, days: int = 28):
             for k in ("open", "created", "closed"):
                 tally[k].setdefault(q, 0)
 
-        return {"completed_by_month": by_month, "ageing": oldest,
+        return {"completed": completed, "ageing": oldest,
                 "time_to_complete": took, "tally": tally}
     finally:
         con.close()
