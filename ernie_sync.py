@@ -27,6 +27,7 @@ import pathlib
 import sqlite3
 import sys
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -36,6 +37,10 @@ import ernie_load as load
 import ernie_version
 
 API = "https://discord.com/api/v10"
+# What a `completed` event's new_value says when the closing happened in
+# Discord rather than in Bert. Read by the API (undo refuses it) and by Bert
+# (the feed says so instead of naming somebody).
+CLOSED_IN_DISCORD = "discord"
 PACING = 0.1         # sleep after each GET; Discord's global ceiling is 50/s
 RESCAN_TAIL = 100      # messages re-read per thread when checking for edits
 RESCAN_DAYS = 14       # only rescan threads active in this window
@@ -45,6 +50,7 @@ RESCAN_PER_CYCLE = 12  # threads rescanned per cycle; the rest wait their turn.
                        # edit surfaces within ceil(threads/12) cycles instead of
                        # the next one -- new cards, which is what people watch,
                        # are not delayed at all.
+CLOSURE_CHECKS = 20   # threads asked about per pass when cards go quiet
 RETRY_MAX_S = 30      # ride out a short 429 in write(); park anything longer
 # Two beats, because the two halves of a cycle cost wildly different things
 # and only one of them is what anybody is waiting for. Measured against the
@@ -276,6 +282,71 @@ def sync_threads(con, d: Discord, guild_id: str, stats: dict) -> list[dict]:
     return threads
 
 
+def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
+    """Cards whose thread has gone quiet: ask Discord whether it was closed.
+
+    Archiving a thread is how work finishes, and Bert could not see it happen.
+    The listing this loop runs on is `/guilds/{id}/threads/active`, and an
+    archived thread is simply **not in it** -- so the row keeps whatever
+    `archived` it had, the card is never completed, and a ticket somebody
+    closed in Discord sits on the board for ever. Measured before this: a
+    thread archived in Discord, then a full cycle -- `threads.archived` still
+    0, `completed_at` still NULL, no event.
+
+    **Absence is the question, never the answer.** A card missing from the
+    listing only earns a `GET /channels/{id}`; the card is closed on what
+    Discord says in the reply, not on the fact that it was missing. That
+    matters because a listing short for any other reason -- a hiccup, a
+    permission change, a channel dropping out of `watched` -- would otherwise
+    close half the board in one pass. It costs nothing when nothing has
+    happened, which is why it can run on the fast beat: no card is missing,
+    so no request is made.
+
+    The time is Discord's own `archive_timestamp`, not now: the event says
+    when the work actually finished, which is the whole point of putting it
+    in the feed. Who did it is not available -- the thread object does not
+    carry it, and the audit log needs a View Audit Log permission the bot
+    does not have -- so the row names nobody rather than guessing.
+    """
+    gone = [r["thread_id"] for r in con.execute(
+        """SELECT c.thread_id FROM cards c
+           JOIN threads t USING (thread_id)
+           JOIN watched_channels w ON w.channel_id = t.parent_id
+           WHERE c.completed_at IS NULL AND w.generate_cards = 1""")
+        if r["thread_id"] not in active]
+    if not gone:
+        return
+
+    for tid in gone[:CLOSURE_CHECKS]:
+        t = d.get(f"/channels/{tid}")
+        if not t:
+            # 403/404 come back as None. A thread we cannot read is not a
+            # thread we may declare finished.
+            continue
+        meta = t.get("thread_metadata") or {}
+        if not meta.get("archived"):
+            continue
+        when = meta.get("archive_timestamp") or now()
+        con.execute(
+            "UPDATE threads SET archived=1, last_synced_at=? WHERE thread_id=?",
+            (now(), tid))
+        con.execute(
+            "UPDATE cards SET completed_at=?, updated_at=? WHERE thread_id=?",
+            (when, now(), tid))
+        # dispatch_after NULL: it happened in Discord already, and posting
+        # "closed" back into the thread would be Ernie telling the room what
+        # it just watched somebody do -- the same rule `started` follows.
+        # new_value carries where it happened, so the feed can say so without
+        # inventing a person to attribute it to.
+        con.execute(
+            """INSERT INTO events (event_id, occurred_at, thread_id, verb,
+                                   new_value, dispatch_after)
+               VALUES (?,?,?,?,?,NULL)""",
+            (str(uuid.uuid4()), when, tid, "completed", CLOSED_IN_DISCORD))
+        stats["closed_in_discord"] = stats.get("closed_in_discord", 0) + 1
+    con.commit()
+
+
 def sync_messages(con, d: Discord, threads: list[dict], stats: dict) -> None:
     """Pass 2: forward-only fetch of new messages."""
     for t in threads:
@@ -440,7 +511,8 @@ def cycle(con, d: Discord, guild_id: str, do_backfill: bool = False,
     when the board is quiet. The edit rescan is the other 11.
     """
     stats = {"threads_seen": 0, "messages_new": 0, "edits_found": 0,
-             "titles_changed": 0, "deletions_found": 0}
+             "titles_changed": 0, "deletions_found": 0,
+             "closed_in_discord": 0}
     run_id = con.execute("INSERT INTO sync_runs (started_at) VALUES (?)",
                          (now(),)).lastrowid
     try:
@@ -448,6 +520,9 @@ def cycle(con, d: Discord, guild_id: str, do_backfill: bool = False,
             backfill(con, d, stats)
 
         threads = sync_threads(con, d, guild_id, stats)
+        # Before the messages, so a thread that closed is settled in the same
+        # pass that noticed it was missing rather than the next one.
+        reconcile_closures(con, d, {t["id"] for t in threads}, stats)
         sync_messages(con, d, threads, stats)
         if full:
             # Rotating, so its cursor advances once a minute as it always
@@ -546,12 +621,14 @@ def main() -> None:
             # read "nothing happened" -- which buries the ones that matter in
             # the file somebody opens when something has gone wrong.
             noisy = (s["messages_new"] or s["edits_found"]
-                     or s["titles_changed"] or s["deletions_found"])
+                     or s["titles_changed"] or s["deletions_found"]
+                     or s["closed_in_discord"])
             if full or noisy:
                 print(f"[{now()[:19]}] threads={s['threads_seen']} "
                       f"new={s['messages_new']} edits={s['edits_found']} "
                       f"titles={s['titles_changed']} "
                       f"deleted={s['deletions_found']} "
+                      f"closed={s['closed_in_discord']} "
                       f"({time.time()-t0:.1f}s){'' if full else ' fast'}")
         except Exception as e:
             print(f"[{now()[:19]}] cycle failed: {e}", file=sys.stderr)

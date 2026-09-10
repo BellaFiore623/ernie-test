@@ -59,6 +59,12 @@ ROSTER_STALE_S = 6 * 3600
 # What a ticket being started stands under until Ernie has made its thread.
 # It is not a thread id and never becomes one: the real card arrives from the
 # next poll with an id of its own.
+# What a `completed` event's new_value says when the closing happened in
+# Discord rather than here. Matched, not imported: Bert talks to Ernie over
+# HTTP and imports none of it. tests/check_closures.py holds the three copies
+# together.
+CLOSED_IN_DISCORD = "discord"
+
 NEW_TICKET = "__new__"
 MIRROR_STALE_S = 180   # the same three cycles, asked of Ernie's own reading:
                        # past this the sync loop has stopped and the board is
@@ -5994,6 +6000,17 @@ class Bert(QMainWindow):
         thread = f"<span style='color:{T.MUTED}'>{what}</span>"
 
         old, new = e.get("old_value"), e.get("new_value")
+
+        # Closed by somebody archiving the thread rather than by anyone here.
+        # It names no one on purpose: the thread object does not say who
+        # archived it, and the audit log that would needs a permission the
+        # bot has not got. "Ernie closed it" -- which is what the fallback
+        # below would have said -- is the one reading that is definitely
+        # wrong, because Ernie is the only party that certainly did not.
+        if e["verb"] == "completed" and new == CLOSED_IN_DISCORD:
+            return (f"{thread}<span style='color:{T.LINE}'> &middot; </span>"
+                    f"<b>closed in Discord</b>")
+
         if e["verb"] == "priority_changed" and old in BANDS and new in BANDS:
             def band(b):
                 return (f"<b style='color:{T.BAND_TEXT[b]}'>"

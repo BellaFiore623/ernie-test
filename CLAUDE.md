@@ -122,6 +122,47 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   history only (`generate_cards = 0`).
 - Archived means done: a keepalive bot pings live threads every three days,
   so nothing goes quiet by accident.
+- **A thread archived in Discord closes its card, and Ernie has to go looking
+  for it.** The sync loop runs on `/guilds/{id}/threads/active`, and an
+  archived thread is simply *not in that list* -- so the row kept whatever
+  `archived` it had, the card was never completed, and a ticket somebody
+  finished in Discord sat on the board for ever. Measured before the fix: a
+  thread archived in Discord, then a full cycle, and `threads.archived` was
+  still 0 with no event and no completion.
+  **Absence is the question, never the answer.** `reconcile_closures()` takes
+  the cards that are open and not in the listing and asks Discord about each
+  one -- `GET /channels/{id}` -- and closes only what comes back
+  `archived: true`. That ordering is the whole safety of it: a listing short
+  for any other reason (a hiccup, a permission change, a channel dropping out
+  of `watched`) would otherwise close the entire board in one pass, with an
+  event each and every one of them propagated to the other machine.
+  It costs **nothing** when nothing has closed -- no card is missing, so no
+  request is made -- which is why it rides the fast beat and a closure shows
+  up in about five seconds.
+- **The time is Discord's, not ours.** `thread_metadata.archive_timestamp` is
+  when the work actually finished, and that is what `completed_at` and the
+  event's `occurred_at` carry. Stamping `now()` would put the feed line at
+  the moment Ernie happened to notice, which on a stack that was off all
+  weekend is Monday morning.
+- **It names nobody, deliberately.** The thread object does not say who
+  archived it, and the audit log that would (`THREAD_UPDATE`) needs a **View
+  Audit Log** permission the bot does not have -- checked, and refused. So
+  the event carries `actor_name` NULL and `new_value = "discord"`, and Bert's
+  feed says "closed in Discord" rather than running the usual fallback, which
+  would have read "Ernie closed it" -- the one attribution that is certainly
+  wrong.
+- **`dispatch_after` is NULL**, the same rule `started` follows: it happened
+  in Discord already, and posting "closed" back into the thread is Ernie
+  telling the room what it just watched somebody do.
+- **Undo refuses it and points at reopen.** Clearing `completed_at` would
+  leave the thread archived, so the next pass closes the card again -- back
+  on the board for five seconds and gone, for ever. Reopen posts to the
+  thread, and posting to an archived thread unarchives it, so the two agree
+  afterwards. Verified end to end in the sandbox: reopen, outbox drain,
+  Discord reports `archived: false`, and the next sync leaves the card open.
+- **Bert's own Complete is not re-detected**, and not because of a flag about
+  who did it: a completed card is not in the query at all, which is guarded
+  on `completed_at IS NULL`.
 
 ## Writes and undo
 

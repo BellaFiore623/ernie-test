@@ -32,6 +32,13 @@ import ernie_version
 DB = "ernie.db"
 UNDO_WINDOW_S = 60      # how long before Ernie posts to the thread
 RANK_STEP = 1000.0
+# What a `completed` event's new_value says when the closing happened in
+# Discord rather than in Bert. Written by ernie_sync.reconcile_closures and
+# matched here rather than imported: importing the sync would pull httpx and
+# a Discord client into the API process for one string. The two are held
+# together by tests/check_closures.py, the way OUTBOX_MAX_ATTEMPTS is held to
+# ernie_outbox.MAX_ATTEMPTS.
+CLOSED_IN_DISCORD = "discord"
 PRIORITY_ORDER = ("unassigned", "critical", "high", "medium", "low")
 
 # The outbox stops trying after this many failures, and v_outbox_due says
@@ -1389,6 +1396,16 @@ def undo(event_id: str, body: ActorBody):
         if e["verb"] == "started":
             conflict("not_undoable",
                      "That thread was opened in Discord. Undo can't unmake it.")
+        if e["verb"] == "completed" and e["new_value"] == CLOSED_IN_DISCORD:
+            # Undo would clear completed_at and the very next sync would see
+            # the thread still archived and close the card again -- a card
+            # that comes back on the board for five seconds and leaves, for
+            # ever. Reopen is the verb that actually settles it: it posts to
+            # the thread, and posting to an archived thread unarchives it, so
+            # Discord and the board agree afterwards.
+            conflict("not_undoable",
+                     "That ticket was closed in Discord. Undo can't reach it "
+                     "-- reopen it instead, which unarchives the thread.")
         if e["undone_at"]:
             who = e["undone_by"] or "Someone"
             conflict("already_undone", f"{who} has already undone this.",

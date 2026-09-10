@@ -29,6 +29,7 @@ import check_stats                            # noqa: E402
 import check_status                           # noqa: E402
 import check_version                          # noqa: E402
 import check_state
+import check_closures
 import check_sync_beats                                           # noqa: E402
 
 MODULES = {"changelog": check_changelog, "state": check_state,
@@ -40,7 +41,8 @@ MODULES = {"changelog": check_changelog, "state": check_state,
            "version": check_version,
            "status": check_status,
            "stats": check_stats,
-           "beats": check_sync_beats}
+           "beats": check_sync_beats,
+           "closures": check_closures}
 
 
 def main(argv: list[str]) -> int:
