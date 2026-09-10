@@ -738,7 +738,53 @@ def check_the_block_shows_a_tail_rather_than_dropping_it() -> bool:
     return c.report()
 
 
+def check_the_figures_keep_clear_of_their_scrollbar() -> bool:
+    """
+    Every number on this panel is right-aligned, so they all end at one edge.
+
+    The counts in the tally, the number on a bar, the total, the age on an
+    ageing row. With no margin on the body that edge is exactly where the
+    scrollbar starts -- measured, one pixel between the two -- and it was
+    reported as the numbers running into it.
+
+    **The gutter goes on the body, not on the panel.** The scroll area is
+    what the bar belongs to, so padding outside it moves the bar along with
+    the content and leaves the gap exactly where it was. `FEED_GUTTER` is the
+    same rule on the activity feed, which has had one since it started
+    scrolling; this panel scrolls now too and did not.
+    """
+    c = Check("the figures keep clear of their scrollbar")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    c.ok(getattr(bert, "STATS_GUTTER", 0) > 0,
+         f"there is a gutter at all ({getattr(bert, 'STATS_GUTTER', 0)}px)")
+
+    stats = next((n for n in ast.walk(tree)
+                  if isinstance(n, ast.ClassDef) and n.name == "Stats"), None)
+    init = next((n for n in ast.walk(stats)
+                 if isinstance(n, ast.FunctionDef) and n.name == "__init__"),
+                None) if stats else None
+    body = (ast.get_source_segment(src, init) or "") if init else ""
+    c.ok("self.body.setContentsMargins(0, 0, STATS_GUTTER, 0)" in body,
+         "and it is the body's right margin, so the bar stays where it is")
+
+    # The room a client name is cut to has to lose the same width, or the
+    # longest ones are elided to a width that no longer exists and sit under
+    # the bar regardless.
+    draw = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "set_stats"),
+                None)
+    drawn = (ast.get_source_segment(src, draw) or "") if draw else ""
+    c.ok("STATS_ROW_CHROME - STATS_GUTTER" in drawn,
+         "and it comes out of the room an elided client name is given")
+
+    return c.report()
+
+
 CHECKS = (check_the_figures_are_what_they_claim,
+          check_the_figures_keep_clear_of_their_scrollbar,
           check_open_is_a_level_and_the_other_two_are_flows,
           check_the_window_moves_every_block_it_should,
           check_a_retag_is_already_in_the_mirror,

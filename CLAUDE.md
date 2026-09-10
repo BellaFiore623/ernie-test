@@ -933,6 +933,17 @@ or worse, how long a ticket takes, or which ones have been open since April.
   "time to close" was cut off the bottom edge. Nothing reported anything,
   because nothing had failed. More blocks are coming as people say what they
   want here, so it is a scroll area now rather than a height to keep an eye on.
+- **A gutter down the right, because every figure here is right-aligned.**
+  The counts in the tally, the number on a bar, the total, the age on an
+  ageing row -- they all end at one edge, and with no margin on the body that
+  edge is exactly where the scrollbar starts. Measured: one pixel between the
+  two, reported as the numbers running into it. `STATS_GUTTER` goes on the
+  **body**, not the panel: the scroll area is what the bar belongs to, so
+  padding outside it moves the bar along with the content and leaves the gap
+  where it was. `FEED_GUTTER` is the same rule on the feed, which has had one
+  since it started scrolling. It comes out of the room an elided client name
+  is given, or the longest are cut to a width that no longer exists and sit
+  under the bar anyway.
 - **The window selector is built once and lives outside the body.**
   `set_stats` throws the body away and builds it again whenever the numbers
   change; a combo rebuilt under somebody's pointer loses its popup mid-choice

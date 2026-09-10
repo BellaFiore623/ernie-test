@@ -118,6 +118,10 @@ STATS_MIN_W = 180          # narrower and the month bars stop comparing
 STATS_MAX_W = 380          # wider is a report, not a margin
 STATS_WIDTH = 244          # what it opens at, not what it stays
 STATS_ROW_CHROME = 64      # the age column and the padding beside it
+# The strip kept clear down the right of the figures, so a number does not
+# end where the scrollbar begins. The feed has had one of these since it
+# started scrolling; this panel scrolls now too and did not.
+STATS_GUTTER = 10
 STATS_OLD_D = 90           # a quarter open is a different kind of old
 STATS_MAX_AGE_S = 60       # these move when a ticket closes, not per poll
 # How many retag pairs are drawn before the rest are summed into one line.
@@ -3599,7 +3603,17 @@ class Stats(QWidget):
         outer.addWidget(self.window_box)
 
         self.body = QVBoxLayout()
-        self.body.setContentsMargins(0, 0, 0, 0)
+        # A gutter down the right, and only the right. Every figure on this
+        # panel is right-aligned -- the counts in the tally, the number on a
+        # bar, the total -- so they all end at the same edge, and with no
+        # margin that edge is exactly where the scrollbar starts. Reported as
+        # the numbers running into it.
+        #
+        # It goes on the *body*, not the panel: the scroll area is what the
+        # bar belongs to, so padding outside it moves the bar too and leaves
+        # the gap in the same place. `FEED_GUTTER` is the same rule on the
+        # feed, for the same reason.
+        self.body.setContentsMargins(0, 0, STATS_GUTTER, 0)
         self.body.setSpacing(9)
         self.holder = QWidget()
         self.holder.setLayout(self.body)
@@ -3832,7 +3846,10 @@ class Stats(QWidget):
             return
         self.hint.hide()
 
-        room = max(self.width() - STATS_ROW_CHROME, 60)
+        # The gutter comes out of the room a client name has, or the longest
+        # ones would be cut to a width that no longer exists and sit under
+        # the bar anyway.
+        room = max(self.width() - STATS_ROW_CHROME - STATS_GUTTER, 60)
         fm = QFontMetrics(self.font())
 
         # First, because it is the block somebody came to the panel for: how
