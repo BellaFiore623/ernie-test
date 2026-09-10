@@ -210,91 +210,87 @@ SEARCH_HINT_PAD = 16
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    # A grey workspace with bright work surfaces, not an application printed
-    # on a sheet of paper. Four neutral levels, darkest first:
+    # A grey workspace with work surfaces that are *lighter*, not white. The
+    # last pass put the cards at 0.91 luminance on a 0.79 ground, which is a
+    # near-white slab taking up most of the window -- reported as glare
+    # coming off the cards themselves once the chrome around them had already
+    # come down. So the cards came down to meet the room rather than the room
+    # rising to meet the cards.
     #
-    #   well     the outer chrome -- the toolbar, the floor either side of
-    #            the board column, the space a folded panel leaves
-    #   panel    the sections around the work: the running order, the
-    #            figures, the activity feed
-    #   canvas   the workspace itself, which is the board column and nothing
-    #            else
-    #   surface  the cards, the fields, the things being read and typed in
+    # Five levels, darkest first, each a step and none of them a leap:
     #
-    # The previous light end put the sections and the workspace on one value
-    # and the cards a long way above it, so the eye had one big near-white
-    # field with everything on it. Reported as still glaring after two passes
-    # at the fills, which is the right diagnosis: it was never the fills, it
-    # was how much of the window was bright. Cards are now the only bright
-    # thing, and there is less of them.
-    "ink": "#1F2124", "muted": "#484D51", "line": "#B6BDC6",
-    "surface": "#F4F5F6", "canvas": "#DDE1E6", "panel": "#D5DAE0",
-    # Raised controls -- what a button is drawn on. Under the surface in
-    # light and over it in dark, because "raised" is toward the light end in
-    # one and toward the dark end in the other. It is the one token that
-    # means opposite things in the two themes, which is why it cannot be the
-    # floor.
-    "beside": "#E4E6EA",
-    # What a button, a field or a work-item bubble is drawn on: always a step
-    # **under** the card it sits on, in both themes. It used to be `surface`,
-    # which was right while a card was a tint and the surface was near-white
-    # -- and stopped being right the moment cards came to the surface level
-    # themselves. Measured against every card fill in this palette, `surface`
-    # is 1.00-1.01 against them: a bubble with nothing but its border, and a
-    # search box that is a rectangle of hairline. This is 1.14-1.15 under all
-    # of them, and it is the same direction in dark, so the rule is one
-    # sentence rather than two.
-    "control": "#E4E6EA",
+    #   well     the outer chrome -- toolbar, the floor beside the column
+    #   feed     the activity bar, which recedes furthest of the sections
+    #   panel    the running order and the figures
+    #   canvas   the workspace, which is the board column and nothing else
+    #   surface  the cards
+    #
+    # The card stands 1.12x over the workspace -- a step, where it used to be
+    # a jump -- and the *border* still carries the tag at 3.8x its own fill.
+    # That relationship is the one doing the work; the fill only has to be
+    # told from the room, not shouted across it.
+    "ink": "#20252B", "muted": "#464C53", "line": "#B9C0C8",
+    "surface": "#E3E6EA", "canvas": "#D5DAE0", "panel": "#D1D6DC",
+    # The activity bar sits under the sections either side of the board, so
+    # the history recedes when nobody is reading it. Measured, it is 1.04
+    # against `panel` -- near the edge of what an eye picks up, and kept
+    # because the direction is right even where the size of it is marginal.
+    "feed": "#CDD2D8",
+    # Raised controls -- the Qt Button role. Under the surface in light and
+    # over it in dark, because "raised" is toward the light end in one and
+    # the dark end in the other.
+    "beside": "#DCE0E5",
+    # What a button, a field or a work-item bubble is drawn on: a step under
+    # the card, in both themes. The Undo button was a white object on a
+    # darker bar, which is the same glare the cards had.
+    "control": "#D5D9DE",
     "well": "#C9CED5",
-    # The badge fills came down with the cards under them: a chip drawn for a
-    # 0.94 card is a smudge on a 0.91 one.
-    "amber_bg": "#F0E6D6", "amber_fg": "#7C5107",
-    "red_bg": "#F4E2E2", "red_fg": "#8E2828", "red_edge": "#C43C3C",
-    "ok_fg": "#2A6130", "ok_bg": "#D3EED6", "accent": "#2B6CB0",
-    "info_bg": "#DDE8F2", "info_fg": "#1B3A5C",
-    "grey_fg": "#555B60",
+    # Badge fills, a step *under* the card rather than over it -- on a card
+    # this tone a lighter badge reads as a hole rather than a chip.
+    "amber_bg": "#E6D8C3", "amber_fg": "#6E4806",
+    "red_bg": "#EDD3D3", "red_fg": "#8E2828", "red_edge": "#C43C3C",
+    "ok_fg": "#255629", "ok_bg": "#C9E4CD", "accent": "#26619E",
+    "info_bg": "#CCDBEA", "info_fg": "#1B3A5C",
+    "grey_fg": "#4E545A",
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#EAEBEE",
-    # Text on an accent-filled button, and the wash under a hovered bubble.
-    "on_accent": "#FFFFFF", "hover_bg": "#D0DEED",
-    "neutral": ("#6F757B", "#F5F5F5", "#33373A"),
-    # (stripe, fill, ink). The stripe is the tag colour taken down in
-    # lightness and **not** in saturation -- same hue, same cast, dark enough
-    # to hold an edge against a pale card. Turning the saturation up instead
-    # would have made light's borders louder than dark's, which is a
-    # different colour meaning the same thing.
+    "chip_bg": "#DADEE3",
+    "on_accent": "#FFFFFF", "hover_bg": "#C0D2E5",
+    "neutral": ("#727272", "#E6E6E6", "#33373A"),
+    # (stripe, fill, ink). The fills are mixed **onto the card base** rather
+    # than onto white, which is what keeps them a tint of the room instead of
+    # a pastel block dropped into it. Chroma 15-26 against 6-12 before: on a
+    # near-white card that much colour glared, and on this one it reads as
+    # the tag. The stripe is the tag colour taken down in lightness and not
+    # in saturation -- same hue, same cast, dark enough to hold an edge.
     "queue": {
-        "PROD": ("#A1660C", "#F8F5EF", "#633806"),
-        "OPS":  ("#5B7C2C", "#F3F7EC", "#27500A"),
-        "ENG":  ("#3C75BA", "#F2F6FA", "#1B3A5C"),
-        "CS":   ("#8F5AC2", "#F7F3FA", "#3D2154"),
+        "PROD": ("#A1660C", "#EDE5D7", "#5A320A"),
+        "OPS":  ("#5B7C2C", "#DEE9CF", "#27500A"),
+        "ENG":  ("#3C75BA", "#DEE6F0", "#1B3A5C"),
+        "CS":   ("#8F5AC2", "#EAE3F2", "#3D2154"),
     },
-    # The band header's strip, and only its strip -- a shade above the
-    # column, so the header reads as raised rather than as a coloured band
-    # across the board. The colour is in the 4px bar down its left and in the
-    # heading's ink; this is barely tinted so that a card sitting under it
-    # wears the only real colour in the run.
+    # The band header's strip: above the column, under the cards. Between the
+    # two on purpose -- level with the cards and the header reads as part of
+    # the run rather than the thing naming it.
     "band_tint": {
-        "unassigned": "#F4EBEB", "critical": "#F4EBEB", "high": "#F2EEE7",
-        "medium": "#EAEEF4", "low": "#EEEEEE",
+        "unassigned": "#EADFDF", "critical": "#EADFDF", "high": "#E5E1D9",
+        "medium": "#DDE2E8", "low": "#E2E2E2",
     },
-    # (fill, outline). The card level with a whisper of the band, and the
-    # outline is what says which band it is -- unchanged, because those are
-    # the severity marks. Unassigned is the plain neutral, the one card with
-    # no colour of its own: it is not a priority, it is the absence of one,
-    # and a blank card reads as one nobody has picked up. The red 2px outline
-    # over it is the thing asking for a person.
+    # (fill, outline). The outline is what says which band it is and none of
+    # them moved -- those are the severity marks. Unassigned is the plain
+    # neutral, the one card with no colour of its own: it is not a priority,
+    # it is the absence of one, and the red 2px outline over it is the thing
+    # asking for a person.
     "band_card": {
-        "unassigned": ("#F5F5F5", "#C43C3C"), "critical": ("#FAF3F3", "#C43C3C"),
-        "high": ("#F8F4EF", "#D19434"), "medium": ("#F2F6FA", "#7099CB"),
-        "low": ("#F5F5F5", "#B7BCC2"),
+        "unassigned": ("#E6E6E6", "#C43C3C"), "critical": ("#F1E2E2", "#C43C3C"),
+        "high": ("#ECE5D9", "#D19434"), "medium": ("#DFE7EF", "#7099CB"),
+        "low": ("#E6E6E6", "#B7BCC2"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
-        "unassigned": "#8E2828", "critical": "#8E2828", "high": "#7C5107",
-        "medium": "#265F9C", "low": "#4C5257",
+        "unassigned": "#8E2828", "critical": "#8E2828", "high": "#6E4806",
+        "medium": "#22588F", "low": "#454B51",
     },
 
 }
@@ -315,6 +311,10 @@ DARK = {
     # see, spent on a distinction light needs and dark does not. Dark gets its
     # depth from the border-to-fill relationship instead, which is 5-7x.
     "panel": "#14181D",
+    # The activity bar. Light drops it under the sections either side; dark's
+    # bottom end has nowhere left to go -- floor to workspace is a ratio of
+    # 1.06 in total -- so it sits where they do.
+    "feed": "#14181D",
     "beside": "#222831",
     # A step under every card here too, which is where dark already had it --
     # this is the value its buttons, fields and bubbles were already using, so
@@ -2996,8 +2996,9 @@ class Rail(QWidget):
         self.fold_btn.setToolTip("Hide the running order")
         self.fold_btn.setStyleSheet(
             f"QPushButton {{ border:1px solid {T.LINE}; border-radius:5px;"
-            f" background:{T.SURFACE}; color:{T.MUTED}; font-size:11px; }}"
-            f"QPushButton:hover {{ background:#EAF1FA; color:{T.ACCENT}; }}")
+            f" background:{T.CONTROL}; color:{T.MUTED}; font-size:11px; }}"
+            f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.12)};"
+            f" color:{T.ACCENT}; }}")
         self.fold_btn.clicked.connect(self.toggle_fold)
 
         top = QHBoxLayout()
@@ -3392,7 +3393,7 @@ class Stats(QWidget):
         self.fold_btn.setToolTip("Hide the data")
         self.fold_btn.setStyleSheet(
             f"QPushButton {{ border:1px solid {T.LINE}; border-radius:5px;"
-            f" background:{T.SURFACE}; color:{T.MUTED}; font-size:11px; }}"
+            f" background:{T.CONTROL}; color:{T.MUTED}; font-size:11px; }}"
             f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.14)};"
             f" color:{T.ACCENT}; }}")
         self.fold_btn.clicked.connect(self.toggle_fold)
@@ -4127,7 +4128,7 @@ class Bert(QMainWindow):
         # The canvas, like the board column and the two side panels: the feed
         # is a section with content in it, so it sits on the floor rather than
         # being part of it.
-        w.setStyleSheet(f"#feedPanel {{ background:{T.PANEL};"
+        w.setStyleSheet(f"#feedPanel {{ background:{T.FEED};"
                         f" border-top:1px solid {T.LINE}; }}")
         # No fixed height: the splitter owns it. A minimum only, so the
         # handle cannot be dragged down over the caption.
@@ -5942,8 +5943,9 @@ class Bert(QMainWindow):
                 b.setStyleSheet(
                     f"QPushButton {{ {BTN_HIT}"
                     f" border:1px solid {T.ACCENT}; border-radius:5px;"
-                    f" color:{T.ACCENT}; background:{T.SURFACE}; }}"
-                    f"QPushButton:hover {{ background:#EAF1FA; }}"
+                    f" color:{T.ACCENT}; background:{T.CONTROL}; }}"
+                    f"QPushButton:hover {{"
+                    f" background:{rgba(T.ACCENT, 0.12)}; }}"
                     f"QPushButton:disabled {{ color:{T.MUTED}; border-color:{T.LINE}; }}")
                 b.setEnabled(self.writable())
                 b.clicked.connect(lambda _, i=e["event_id"]: self.undo(i))

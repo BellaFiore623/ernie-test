@@ -1431,12 +1431,28 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
-**Four levels in light, and the workspace is the board column alone.**
+**The cards came down to the room, not the room up to the cards.** Reported
+a third time, and the diagnosis was sharper than mine: the chrome was fine by
+then and the glare was coming off the *card surfaces* -- 0.91 luminance on a
+0.79 ground, a near-white slab taking up most of the window, with the Undo
+button a white object sitting on a darker bar doing the same thing in
+miniature. So `surface` is `#E3E6EA` now and the fills are mixed **onto that
+base rather than onto white**, which is what keeps them a tint of the room
+instead of a pastel block dropped into it: chroma 15-26 against 6-12 before,
+because on a near-white card that much colour glared and on this one it reads
+as the tag. The card stands **1.12x** over the workspace -- a step, where it
+was a jump -- and the border still carries the tag at 3.8x its own fill. The
+brightest thing in the light palette is now the card, at 0.79.
+
+**Five levels in light, and the workspace is the board column alone.**
 Darkest first: `well` is the outer chrome -- the toolbar, the floor either
-side of the centred board column, the space a folded panel leaves; `panel` is
-the sections *around* the work, which is the running order, the figures and
-the activity feed; `canvas` is the workspace, which is `#boardColumn` and
-nothing else; `surface` is the cards and the things being read and typed in.
+side of the centred board column, the space a folded panel leaves; `feed` is
+the activity bar, which recedes furthest of the sections so the history is
+quiet when nobody is reading it; `panel` is the running order and the figures;
+`canvas` is the workspace, which is `#boardColumn` and nothing else; `surface`
+is the cards. `feed` is 1.04 against `panel` -- near the edge of what an eye
+picks up, kept because the direction is right even where the size is
+marginal.
 Light was reported as glaring three times, and the first two answers went at
 the card fills. The fills were never it. What was bright was **how much of the
 window** was: the sections and the workspace sat on one value with the cards a
@@ -1586,6 +1602,18 @@ anything else on the board, on the one control that appears twice per card.
 `btn_css()` is the flat version: the surface tone, the hairline every other edge
 uses, and the accent arriving only on hover. Both themes, because Fusion was
 doing it to both.
+
+**The literal rule is checked now, and was not before.** "No colour literals
+in Bert" has been written here a long time and was kept by hand, which is to
+say not kept: `#EAF1FA` was the hover on the Undo button, on the running
+order's fold button and on the figures' -- a pale blue that works in light and
+is a flare on a dark toolbar, in whichever theme nobody happened to be looking
+at. Exactly the failure the rule exists to prevent, sitting there through
+three passes over this palette. `check_no_colour_is_written_by_hand` walks
+every string constant outside the two palette definitions, skipping
+**docstrings** (the reasoning for a colour often quotes the measurement that
+chose it) and requiring a word boundary so `&#8594;` stays an arrow rather
+than becoming `#859`.
 
 **No colour literals in Bert.** Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to

@@ -19,6 +19,7 @@ that ships.
 import ast
 import colorsys
 import pathlib
+import re
 
 from support import Check
 
@@ -1250,10 +1251,29 @@ def check_a_control_sits_under_the_card_it_is_on() -> bool:
     body = ast.get_source_segment(src, bub) or ""
     c.ok("T.CONTROL" in body, "an outstanding bubble does too")
 
+    # And every *other* button, which is where this got away. The Undo button
+    # carried `background:{T.SURFACE}` -- the card tone -- and sat on the
+    # activity bar, which is darker than a card. A bright object on a dark
+    # bar is the same glare the cards had, reported in the same breath.
+    # A QPushButton rule is matched by the two lines it spans, because these
+    # are composed f-strings and the property rarely shares a line with the
+    # selector.
+    lines = src.splitlines()
+    on_surface = []
+    for i, line in enumerate(lines):
+        if "QPushButton" not in line:
+            continue
+        window = " ".join(lines[i:i + 4])
+        if "background:{T.SURFACE}" in window:
+            on_surface.append(i + 1)
+    c.equal(on_surface, [],
+            "no button is drawn on the card tone -- a control has its own, "
+            "and `surface` is the thing controls sit *on*")
+
     return c.report()
 
 
-def check_the_light_ramp_has_four_levels() -> bool:
+def check_the_light_ramp_has_five_levels() -> bool:
     """
     A grey workspace with bright work surfaces, not one bright field.
 
@@ -1268,13 +1288,14 @@ def check_the_light_ramp_has_four_levels() -> bool:
     the whole of its bottom end from floor to workspace is a contrast ratio of
     1.06, so a fourth step inside that is a difference nobody can see.
     """
-    c = Check("the light ramp has four levels and dark has the three it can hold")
+    c = Check("the light ramp has five levels and dark the three it can hold")
 
     L = bert.LIGHT
-    order = ["well", "panel", "canvas", "surface"]
+    order = ["well", "feed", "panel", "canvas", "surface"]
     lums = [lum(L[k]) for k in order]
     c.equal(lums, sorted(lums),
-            "light runs floor, sections, workspace, cards -- darkest first")
+            "light runs floor, activity bar, sections, workspace, cards -- "
+            "darkest first")
     for a, b in zip(order, order[1:]):
         got = contrast(L[a], L[b])
         c.ok(got > 1.02, f"and {b} is a real step above {a} ({got:.3f})")
@@ -1285,13 +1306,28 @@ def check_the_light_ramp_has_four_levels() -> bool:
     c.ok("#boardColumn {{ background:{T.CANVAS}" in src,
          "the board column is the workspace")
     for panel in ("Rail {{ background:{T.PANEL}",
-                  "Stats {{ background:{T.PANEL}",
-                  "#feedPanel {{ background:{T.PANEL}"):
+                  "Stats {{ background:{T.PANEL}"):
         c.ok(panel in src, f"and {panel.split()[0]} is a section around it")
+    # The activity bar goes one further down than the sections either side of
+    # the board, so the history recedes when nobody is reading it.
+    c.ok("#feedPanel {{ background:{T.FEED}" in src,
+         "and the activity bar has a tone of its own, under those")
+    c.ok(lum(L["feed"]) <= lum(L["panel"]),
+         "which is below them rather than beside them")
+
+    # The card is a step over the workspace, not a leap. Both halves matter:
+    # under the floor it stops reading as a thing on a surface, and far over
+    # it the board becomes a field of near-white with grey edging, which is
+    # what this ramp was reported for twice.
+    step = contrast(L["surface"], L["canvas"])
+    c.ok(1.10 <= step <= 1.30,
+         f"a card is a step over the workspace, not a jump ({step:.2f})")
 
     D = bert.DARK
     c.equal(D["panel"], D["canvas"],
             "dark's sections stay at its workspace level")
+    c.equal(D["feed"], D["canvas"],
+            "and so does its activity bar, for the same reason")
     c.ok(contrast(D["well"], D["canvas"]) < 1.10,
          f"because its floor and workspace are already only "
          f"{contrast(D['well'], D['canvas']):.3f} apart, and a step inside "
@@ -1374,7 +1410,74 @@ def check_the_board_centres_on_the_window_not_its_pane() -> bool:
     return c.report()
 
 
-CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
+
+def check_no_colour_is_written_by_hand() -> bool:
+    """
+    Every colour comes off `T`, and until now nothing was checking.
+
+    CLAUDE.md has said "no colour literals in Bert" for a long time and the
+    rule was kept by hand, which is to say not kept: `#EAF1FA` was the hover
+    on the Undo button, on the running order's fold button and on the
+    figures' -- a pale blue that works in light and is a flare on a dark
+    toolbar, in whichever theme nobody happened to be looking at. That is the
+    exact failure the rule exists to prevent, and it sat there through three
+    passes over this palette.
+
+    Two things it must not flag. **Docstrings**, because the reasoning for a
+    colour often quotes the measurement that chose it -- this file and
+    `btn_css` both do. And **HTML entities**: `&#8594;` is a right arrow, and
+    a looser pattern reads `#8594` as a colour.
+    """
+    c = Check("no colour is written by hand")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    # The palettes are the one place a hex belongs.
+    palette = set()
+    for n in tree.body:
+        if isinstance(n, ast.Assign) and any(
+                getattr(t, "id", "") in ("LIGHT", "DARK") for t in n.targets):
+            palette.update(range(n.lineno, n.end_lineno + 1))
+
+    docstrings = set()
+    for n in ast.walk(tree):
+        body = getattr(n, "body", None)
+        if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                          ast.AsyncFunctionDef)) and body:
+            first = body[0]
+            if (isinstance(first, ast.Expr)
+                    and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                docstrings.update(range(first.lineno, first.end_lineno + 1))
+
+    # Three or six digits and a boundary after, so `&#8594;` is an arrow.
+    hexes = re.compile(r"#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})"
+                       + chr(92) + "b")
+    loose = []
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Constant) and isinstance(n.value, str)):
+            continue
+        if n.lineno in palette or n.lineno in docstrings:
+            continue
+        for hit in hexes.findall(n.value):
+            loose.append(f"line {n.lineno}: {hit}")
+
+    c.equal(loose, [],
+            "every colour comes off T -- a hex typed into a stylesheet works "
+            "in one theme and is silently wrong in the other")
+
+    # And the palettes really are where they are assumed to be, or the two
+    # exclusions above would quietly hide the whole file.
+    c.ok(palette, "the palettes were found to exclude")
+    c.ok(len(palette) < len(src.splitlines()) / 2,
+         "and they are a small part of the file, not most of it")
+
+    return c.report()
+
+
+CHECKS = (check_nothing_freezes_a_colour,
+          check_no_colour_is_written_by_hand, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
           check_a_ticket_wears_its_tag, check_needs_attention_is_the_alarm,
@@ -1390,7 +1493,7 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_a_card_stands_off_the_board_it_sits_on,
           check_a_card_is_edged_in_its_own_tag,
           check_a_control_sits_under_the_card_it_is_on,
-          check_the_light_ramp_has_four_levels,
+          check_the_light_ramp_has_five_levels,
           check_a_filter_says_how_many_it_holds,
           check_a_status_gives_up_its_noun_not_its_state,
           check_the_board_is_centred_and_keeps_its_scrollbar,
