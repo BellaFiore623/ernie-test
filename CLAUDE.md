@@ -1251,6 +1251,24 @@ so the name is *picked* in Bert instead of typed.
   may offer anything -- and must offer *both* when a query is ambiguous rather
   than choosing: `dukes` returns Duke's Omaha and Duke's Root Control, and
   settles nothing.
+- **A name the roster has never heard of says so, and is still accepted.**
+  `client_note()` puts a caution under the box -- amber, because this is a
+  pending state and not an error, and 6.4:1 against the palest card it can
+  sit on. It is about what somebody **just typed**: a card that arrived
+  carrying a retired customer is not a mistake anybody is making now, and
+  warning every time it is opened is nagging. An alias counts as known --
+  `Dukes Root Control` is a misspelling the board has used nine times and the
+  alias table already points it at PIP-8605, so it is a name that resolves.
+- **The alternative was measured and cost more than it saved.** Making the
+  title read-only and composing it from the fields eliminates the typo, and
+  against production: **ten cards carry titles the fields cannot hold** -- no
+  prefix, no parseable date, no structure -- and the title box is the only
+  way to repair one, which is what the red edge asks for. Worse, **twenty-nine
+  more would be silently renamed on the next save**, `04aug26` becoming
+  `04Aug26`, each one a real thread rename at two per ten minutes posting a
+  system message into a customer thread. Bert is also not the only writer:
+  36 people open threads in Discord by hand, so unreadable titles keep
+  arriving whatever the editor does.
 - The dropdown is **pick-or-type**. A customer exists before Jira hears about
   them, and a card already carrying an unoffered client keeps it -- but it is
   **shown, not offered**: put in the box, never added to the list. It used to

@@ -1350,6 +1350,46 @@ def client_matches(typed, roster, limit=CLIENT_HITS):
     return [c for _, _, c in out[:limit]]
 
 
+def client_known(typed, roster) -> bool:
+    """Whether the roster has heard of this name, punctuation aside.
+
+    Aliases count. `Dukes Root Control` is a misspelling the board has used
+    nine times and the alias table already points it at PIP-8605, so somebody
+    typing it is naming a customer -- badly, but nameably. It is a name that
+    resolves, which is the question here.
+    """
+    q = client_squash(typed)
+    if not q:
+        return False
+    for c in roster or []:
+        if q == client_squash(c.get("short_name")):
+            return True
+        if any(q == client_squash(a) for a in (c.get("aliases") or [])):
+            return True
+    return False
+
+
+def client_note(typed, roster, opened_with="") -> str:
+    """The caution under the Client box, or nothing.
+
+    Only about what somebody **just typed**. A card already carrying a name
+    the roster has never heard of -- a retired customer, or one from before
+    the roster existed -- is not a mistake anybody is making now, and warning
+    every time that card is opened is nagging rather than helping.
+
+    A caution and not a refusal. A customer exists before Jira hears about
+    them, and the box is pick-or-type for that reason; this only says which
+    of the two just happened, so a slip is caught at the moment it is made
+    rather than at the moment somebody reads the board.
+    """
+    typed = (typed or "").strip()
+    if not typed or client_known(typed, roster):
+        return ""
+    if client_squash(typed) == client_squash(opened_with):
+        return ""
+    return "not a customer Jira knows \u2014 it will be typed as-is"
+
+
 class ClientCombo(Combo):
     """The customer list, picked rather than typed.
 
@@ -2182,6 +2222,25 @@ class Card(QFrame):
         self.f_client = ClientCombo(
             self.board.roster,
             d.get("client_override") or d.get("client_raw") or "")
+        # What the card already carried, so the caution below can tell a name
+        # somebody has just typed from one the card arrived with.
+        self._client_opened_with = self.f_client.text()
+        self.client_state = QLabel()
+        self.client_state.setWordWrap(True)
+        self.client_state.setStyleSheet(
+            f"color:{T.AMBER_FG}; font-size:11px; padding:1px 0 3px 0;"
+            f" background:transparent;")
+        self.client_state.hide()
+        client_box = QVBoxLayout()
+        client_box.setContentsMargins(0, 0, 0, 0)
+        client_box.setSpacing(2)
+        client_box.addWidget(self.f_client)
+        client_box.addWidget(self.client_state)
+        client_holder = QWidget()
+        client_holder.setStyleSheet("background:transparent;")
+        client_holder.setLayout(client_box)
+        self.f_client.currentTextChanged.connect(self._say_client)
+
         self.f_work = WorkBar(d.get("work_items") or [], editing=True)
 
         self.f_title = QLineEdit(d.get("name") or "")
@@ -2225,7 +2284,7 @@ class Card(QFrame):
 
         form.addRow("Thread title", title_holder)
         form.addRow("Tag", self.f_queue)
-        form.addRow("Client", self.f_client)
+        form.addRow("Client", client_holder)
         form.addRow("Work items", self.f_work)
 
         # Only when starting one. Ernie opens the thread, so it posts a line
@@ -2276,6 +2335,16 @@ class Card(QFrame):
 
     def _title_edited(self, _text):
         self._title_touched = True
+
+    def _say_client(self, _text=None):
+        """Show or hide the caution under the Client box."""
+        lab = getattr(self, "client_state", None)
+        if lab is None:
+            return
+        note = client_note(self.f_client.text(), self.board.roster,
+                           getattr(self, "_client_opened_with", ""))
+        lab.setText(note)
+        lab.setVisible(bool(note))
 
     def _suggest_title(self, _text=None):
         """Keep the title in step with the client, until someone types in it.

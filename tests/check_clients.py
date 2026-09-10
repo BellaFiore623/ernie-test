@@ -798,7 +798,74 @@ def check_an_unlisted_client_is_shown_not_offered() -> bool:
     return c.report()
 
 
+
+def check_a_name_the_roster_does_not_know_says_so() -> bool:
+    """
+    A caution at the moment the slip is made, not a refusal.
+
+    Asked for after `Trafford NJKNKNKNLN` went into a title unremarked. The
+    alternative on the table was making the title read-only and composing it
+    from fields, which was measured against production and turned out to cost
+    more than it saved: ten cards carry titles the fields cannot hold, and
+    twenty-nine more would be silently renamed on the next save -- each a real
+    Discord rename at two per ten minutes, for capitalisation nobody asked to
+    change. So the title box stays and the client box speaks up instead.
+
+    Never a block. A customer exists before Jira hears about them, which is
+    why the box is pick-or-type at all; this only says which of the two just
+    happened.
+    """
+    c = Check("a name the roster does not know says so")
+
+    c.ok(bert.client_note("Trafford NJKNKNKNLN", ROSTER),
+         "a typo is called out")
+    c.equal(bert.client_note("Trafford Borough", ROSTER), "",
+            "a real customer is not")
+    c.equal(bert.client_note("trafford borough", ROSTER), "",
+            "whatever the case")
+    c.equal(bert.client_note("Duke's Root Control", ROSTER), "",
+            "and whatever the punctuation")
+
+    # An alias is a spelling the board has genuinely used, and the alias
+    # table already points it at a client -- so it is a name that resolves,
+    # badly spelled or not, and calling it unknown would be wrong.
+    c.equal(bert.client_note("Dukes Root Control", ROSTER), "",
+            "a spelling the board has used before resolves, so it is known")
+
+    for blank in ("", "   ", None):
+        c.equal(bert.client_note(blank, ROSTER), "",
+                f"{blank!r} says nothing -- an empty client is the title "
+                f"hint's business, not this one's")
+
+    return c.report()
+
+
+def check_it_does_not_nag_about_what_the_card_arrived_with() -> bool:
+    """
+    The caution is about what somebody just typed.
+
+    A card carrying a retired customer, or one from before the roster
+    existed, is not a mistake anybody is making now. Warning every time that
+    card is opened is nagging, and a warning that is always on is furniture --
+    the same reason the roster-staleness indicator stays quiet for six hours.
+    """
+    c = Check("it does not nag about what the card arrived with")
+
+    c.equal(bert.client_note("HydroEdge", ROSTER, opened_with="HydroEdge"), "",
+            "a name the card already had is left alone")
+    c.ok(bert.client_note("HydroEdge", ROSTER, opened_with=""),
+         "but the same name typed fresh is called out")
+    c.equal(bert.client_note("HydroEdge ", ROSTER, opened_with="HydroEdge"), "",
+            "and trailing space is not a change")
+    c.ok(bert.client_note("HydroEdgex", ROSTER, opened_with="HydroEdge"),
+         "while a letter added to it is")
+
+    return c.report()
+
+
 CHECKS = (check_a_name_typed_in_part_still_finds_its_client,
+          check_a_name_the_roster_does_not_know_says_so,
+          check_it_does_not_nag_about_what_the_card_arrived_with,
           check_an_unlisted_client_is_shown_not_offered,
           check_the_search_still_refuses_to_choose,
           check_nonsense_still_finds_nothing,
