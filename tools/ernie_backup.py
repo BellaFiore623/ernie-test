@@ -5,8 +5,8 @@ Uses SQLite's online backup API -- a plain file copy is NOT safe in WAL mode
 and can produce a corrupt snapshot.
 
     python ernie_backup.py                    # back up ./ernie.db
-    python ernie_backup.py --keep 60          # keep 60 days instead of 30
-    python ernie_backup.py --verify latest    # check the newest backup opens
+    python ernie_backup.py --keep 60          # keep 60 backups instead of 30
+    python ernie_backup.py --verify           # check the newest backup opens
 """
 
 from __future__ import annotations
@@ -38,10 +38,18 @@ def backup(db: str, outdir: str, keep: int) -> pathlib.Path:
     mb = dest.stat().st_size / 1_000_000
     print(f"wrote {dest}  ({mb:.1f} MB)")
 
-    # rotation
-    old = sorted(out.glob("ernie-*.db"))[:-keep]
-    for f in old:
-        f.unlink()
+    # Rotation, by count rather than by age -- the flag is a number of
+    # backups, whatever the usage line used to say.
+    #
+    # The `-wal` and `-shm` beside a backup go with it. Globbing `*.db`
+    # alone unlinked the database and left its two companions behind for
+    # ever, which is how three-week-old orphans came to be sitting in here
+    # with nothing to belong to.
+    for f in sorted(out.glob("ernie-*.db"))[:-keep]:
+        for part in (f, f.with_name(f.name + "-wal"),
+                     f.with_name(f.name + "-shm")):
+            if part.exists():
+                part.unlink()
         print(f"  removed {f.name}")
     return dest
 
@@ -64,7 +72,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="ernie.db")
     ap.add_argument("--outdir", default="backups")
-    ap.add_argument("--keep", type=int, default=30)
+    ap.add_argument("--keep", type=int, default=30,
+                    help="how many backups to keep, oldest deleted first")
     ap.add_argument("--verify", action="store_true",
                     help="open the new backup and check it")
     a = ap.parse_args()
