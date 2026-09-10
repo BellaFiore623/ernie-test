@@ -1480,6 +1480,25 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
+**Dark's quality is that the eye rests on one value, and that is what light
+was missing.** Measured over a rendered board, 95% of dark's pixels sit in a
+single luminance band and only text and accents rise out of it -- mean 0.026.
+Light was three bright bands, 45% at 0.6, 31% at 0.8 and 19% at 0.7, mean
+0.671: twenty-six times the light, spread so there was nowhere to rest. The
+31% was the cards, which is what got noticed.
+
+So the whole ramp moved down together, and **together** is the load-bearing
+word: bringing the cards down alone would have closed the step that says a
+card is a thing sitting on a surface. Every ratio that carries meaning is
+unchanged -- card over workspace still 1.12, border still 4.2x off its own
+fill -- and the board simply emits less. After: **mean 0.552, 56% in one
+band.** Two things had to move with it. The fills' *saturation* came down,
+because the same HLS saturation yields more chroma at a lower lightness and
+left alone would have taken them to 27-44 against the 15-26 they were. And
+the inks came down, because at the old values five of them fell under 4.5:1
+on the new grounds -- accent worst at 3.3. **Moving a ground without moving
+the ink on it is how a palette goes quietly unreadable.**
+
 **The cards came down to the room, not the room up to the cards.** Reported
 a third time, and the diagnosis was sharper than mine: the chrome was fine by
 then and the glare was coming off the *card surfaces* -- 0.91 luminance on a

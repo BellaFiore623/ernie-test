@@ -210,95 +210,78 @@ SEARCH_HINT_PAD = 16
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    # A grey workspace with work surfaces that are *lighter*, not white. The
-    # last pass put the cards at 0.91 luminance on a 0.79 ground, which is a
-    # near-white slab taking up most of the window -- reported as glare
-    # coming off the cards themselves once the chrome around them had already
-    # come down. So the cards came down to meet the room rather than the room
-    # rising to meet the cards.
+    # The whole ramp, moved down together.
     #
-    # Five levels, darkest first, each a step and none of them a leap:
+    # Dark's real quality is not that it is dark, it is that **the eye rests
+    # on one value**: measured over a rendered board, 95% of dark's pixels sit
+    # in a single luminance band and only text and accents rise out of it.
+    # Light was three bright bands -- 45% at 0.6, 31% at 0.8, 19% at 0.7 --
+    # with a mean of 0.671 against dark's 0.026, twenty-six times the light.
+    # The 31% was the cards.
     #
-    #   well     the outer chrome -- toolbar, the floor beside the column
-    #   feed     the activity bar, which recedes furthest of the sections
-    #   panel    the running order and the figures
-    #   canvas   the workspace, which is the board column and nothing else
-    #   surface  the cards
+    # So the cards came down and the ramp came with them, which is the part
+    # that matters: bringing the cards down alone would have closed the step
+    # that says a card is a thing sitting on a surface. Every ratio that
+    # carries meaning is unchanged -- card over workspace is still 1.12, the
+    # border still stands 4.2x off its own fill -- and the whole thing simply
+    # emits less.
     #
-    # The card stands 1.12x over the workspace -- a step, where it used to be
-    # a jump -- and the *border* still carries the tag at 3.8x its own fill.
-    # That relationship is the one doing the work; the fill only has to be
-    # told from the room, not shouted across it.
-    "ink": "#20252B", "muted": "#464C53", "line": "#B9C0C8",
-    "surface": "#E3E6EA", "canvas": "#D5DAE0", "panel": "#D1D6DC",
-    # The activity bar sits under the sections either side of the board, so
-    # the history recedes when nobody is reading it. Measured, it is 1.04
-    # against `panel` -- near the edge of what an eye picks up, and kept
-    # because the direction is right even where the size of it is marginal.
-    "feed": "#CDD2D8",
+    # The inks came down too, and had to: at the old values five of them fell
+    # under 4.5:1 on the new grounds -- accent worst at 3.3. Moving a ground
+    # without moving the ink on it is how a palette goes quietly unreadable.
+    "ink": "#20252B", "muted": "#42474E", "line": "#A2ABB7",
+    "surface": "#D0D5DB", "canvas": "#C4CAD1", "panel": "#BDC4CC",
+    # The activity bar, under the sections either side of the board.
+    "feed": "#B9C0C9",
     # Raised controls -- the Qt Button role. Under the surface in light and
     # over it in dark, because "raised" is toward the light end in one and
     # the dark end in the other.
-    "beside": "#DCE0E5",
+    "beside": "#CACFD5",
     # What a button, a field or a work-item bubble is drawn on: a step under
-    # the card, in both themes. The Undo button was a white object on a
-    # darker bar, which is the same glare the cards had.
-    "control": "#D5D9DE",
-    "well": "#C9CED5",
-    # Badge fills, a step *under* the card rather than over it -- on a card
-    # this tone a lighter badge reads as a hole rather than a chip.
-    "amber_bg": "#E6D8C3", "amber_fg": "#6E4806",
-    "red_bg": "#EDD3D3", "red_fg": "#8E2828", "red_edge": "#C43C3C",
-    "ok_fg": "#255629", "ok_bg": "#C9E4CD", "accent": "#26619E",
-    "info_bg": "#CCDBEA", "info_fg": "#1B3A5C",
-    "grey_fg": "#4E545A",
+    # the card, in both themes.
+    "control": "#C3C8D0",
+    "well": "#B5BCC5",
+    # Badge fills, a step under the card rather than over it.
+    "amber_bg": "#D6C6AC", "amber_fg": "#613F05",
+    "red_bg": "#DDBFBF", "red_fg": "#822525", "red_edge": "#C43C3C",
+    "ok_fg": "#225026", "ok_bg": "#A5D3AA", "accent": "#1C4976",
+    "info_bg": "#B7C8D8", "info_fg": "#1B3A5C",
+    "grey_fg": "#42474D",
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#DADEE3",
-    "on_accent": "#FFFFFF", "hover_bg": "#C0D2E5",
-    "neutral": ("#727272", "#E6E6E6", "#33373A"),
-    # (stripe, fill, ink). The fills are mixed **onto the card base** rather
-    # than onto white, which is what keeps them a tint of the room instead of
-    # a pastel block dropped into it. Chroma 15-26 against 6-12 before: on a
-    # near-white card that much colour glared, and on this one it reads as
-    # the tag. The stripe is the tag colour taken down in lightness and not
-    # in saturation -- same hue, same cast, dark enough to hold an edge.
+    "chip_bg": "#C9CED5",
+    "on_accent": "#FFFFFF", "hover_bg": "#ABBFD5",
+    "neutral": ("#626262", "#D5D5D5", "#33373A"),
+    # (stripe, fill, ink). The fills are mixed onto the card base, and their
+    # saturation came *down* as the base did: the same HLS saturation yields
+    # more chroma at a lower lightness, and left alone it would have taken
+    # these to 27-44 against the 15-26 they were. They sit at 15-19.
+    # The stripes went darker to hold their edge against a darker fill --
+    # 4.2x, where leaving them put would have been 3.2.
     "queue": {
-        "PROD": ("#A1660C", "#EDE5D7", "#5A320A"),
-        "OPS":  ("#5B7C2C", "#DEE9CF", "#27500A"),
-        "ENG":  ("#3C75BA", "#DEE6F0", "#1B3A5C"),
-        "CS":   ("#8F5AC2", "#EAE3F2", "#3D2154"),
+        "PROD": ("#89560A", "#DBD4C9", "#5A320A"),
+        "OPS":  ("#4D6925", "#CFD7C4", "#27500A"),
+        "ENG":  ("#32629E", "#CED5DE", "#1B3A5C"),
+        "CS":   ("#7E44B7", "#D9D2E1", "#3D2154"),
     },
-    # The band header's strip: above the column, under the cards. Between the
-    # two on purpose -- level with the cards and the header reads as part of
-    # the run rather than the thing naming it.
+    # The band header's strip: above the column, under the cards.
     "band_tint": {
-        "unassigned": "#EADFDF", "critical": "#EADFDF", "high": "#E5E1D9",
-        "medium": "#DDE2E8", "low": "#E2E2E2",
+        "unassigned": "#D7CDCD", "critical": "#D7CDCD", "high": "#D3CEC7",
+        "medium": "#CACFD6", "low": "#CECECE",
     },
-    # (fill, outline). The outline is what says which band it is and none of
-    # them moved -- those are the severity marks.
-    #
-    # Unassigned carries a red wash, which it did not before. The argument
-    # for the plain neutral was that a blank card reads as one nobody has
-    # picked up -- true, and it left the largest band on the board as the
-    # brightest, flattest thing in the window, which is the opposite of what
-    # three passes at this palette were for. Dark has always washed it: its
-    # unassigned is #301D1C, quieter than its critical at #3A2422, and light
-    # mirrors that relationship rather than making the two alike -- chroma 11
-    # against 15. The two most urgent states looking similar is already
-    # accepted here; the status embed makes the same trade for the same
-    # reason.
+    # (fill, outline). The outlines are the severity marks and none of them
+    # moved. Unassigned keeps its red wash, quieter than critical's, the way
+    # dark has always had it.
     "band_card": {
-        "unassigned": ("#EFE4E4", "#C43C3C"), "critical": ("#F1E2E2", "#C43C3C"),
-        "high": ("#ECE5D9", "#D19434"), "medium": ("#DFE7EF", "#7099CB"),
-        "low": ("#E6E6E6", "#B7BCC2"),
+        "unassigned": ("#DDD2D2", "#C43C3C"), "critical": ("#E0D1D1", "#C43C3C"),
+        "high": ("#DBD3C8", "#D19434"), "medium": ("#CED5DE", "#7099CB"),
+        "low": ("#D5D5D5", "#B7BCC2"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
-        "unassigned": "#8E2828", "critical": "#8E2828", "high": "#6E4806",
-        "medium": "#22588F", "low": "#454B51",
+        "unassigned": "#822525", "critical": "#822525", "high": "#613F05",
+        "medium": "#1C4976", "low": "#42474D",
     },
 
 }
