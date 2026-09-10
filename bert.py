@@ -1756,6 +1756,29 @@ def status_forms(text):
     return forms
 
 
+def attention_text(n) -> str:
+    """`1 needs attention`, `2 need attention`, and nothing at nought.
+
+    The verb agrees with the count, which is the half that was wrong: it read
+    "1 need attention" for as long as there has been a count there. It sits
+    beside the logo on every board in the company, which is a good argument
+    for it reading like English.
+    """
+    if not n:
+        return ""
+    return f"{n} need{'s' if n == 1 else ''} attention"
+
+
+def a_few(n, one: str, many: str) -> str:
+    """`1 change`, `3 changes` -- the noun and its verb, agreeing.
+
+    `card(s)` is fine in a log, where the reader is looking for a number.
+    In a sentence somebody reads it is a small piece of grit, and these are
+    tooltips written to be read.
+    """
+    return f"{n} {one if n == 1 else many}"
+
+
 def queue_counts(cards):
     """How many open tickets wear each tag.
 
@@ -4990,9 +5013,11 @@ class Bert(QMainWindow):
             n = skew.get("cards") or 0
             self._say_shared(
                 "shared board · can't read the other board", T.RED_FG,
-                f"{n} card(s) in #ernie-state are written in format "
+                f"{a_few(n, 'card', 'cards')} in #ernie-state "
+                f"{'is' if n == 1 else 'are'} written in format "
                 f"v{skew.get('their_v')} and this machine speaks "
-                f"v{skew.get('our_v')}, so they are being skipped -- and "
+                f"v{skew.get('our_v')}, so "
+                f"{'it is' if n == 1 else 'they are'} being skipped -- and "
                 f"nothing done here is reaching the other board either. "
                 f"Waiting will not fix it: "
                 f"{who_is_behind(skew.get('their_v'), skew.get('our_v'))}.")
@@ -5030,9 +5055,10 @@ class Bert(QMainWindow):
         elif waiting:
             text = f"shared board · {waiting} to send"
             colour = T.AMBER_FG
-            tip = (f"{waiting} change(s) made here that the shared copy in "
-                   "#ernie-state hasn't been told about yet. They go out on "
-                   "the next cycle.")
+            tip = (f"{a_few(waiting, 'change', 'changes')} made here that "
+                   f"the shared copy in #ernie-state hasn't been told about "
+                   f"yet. {'It goes' if waiting == 1 else 'They go'} out on "
+                   f"the next cycle.")
         else:
             text, colour = "shared board · up to date", T.MUTED
             tip = ("This board matches the shared copy in #ernie-state, which "
@@ -5772,7 +5798,7 @@ class Bert(QMainWindow):
         # did anything with -- the board itself says how much there is.
         problems = sum(1 for c in shown if needs_triage(c))
         self.count.setText(
-            f"<span style='color:{T.RED_FG}'>{problems} need attention</span>"
+            f"<span style='color:{T.RED_FG}'>{attention_text(problems)}</span>"
             if problems else "")
 
         # Straight down the order the server sent. Unassigned used to float its

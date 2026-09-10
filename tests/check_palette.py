@@ -1476,7 +1476,61 @@ def check_no_colour_is_written_by_hand() -> bool:
     return c.report()
 
 
+
+def check_a_count_agrees_with_its_verb() -> bool:
+    """
+    "1 need attention" sat beside the logo for as long as there was a count.
+
+    Reported, and it is worth a check rather than a careful edit: the number
+    is almost always more than one on a real board, so the singular is the
+    case nobody sees until the day the board is nearly clear -- which is
+    exactly the day somebody is looking at that number.
+    """
+    c = Check("a count agrees with its verb")
+
+    c.equal(bert.attention_text(1), "1 needs attention", "one needs")
+    c.equal(bert.attention_text(2), "2 need attention", "two need")
+    c.equal(bert.attention_text(11), "11 need attention", "and eleven do")
+    c.equal(bert.attention_text(0), "",
+            "nought says nothing at all rather than '0 need attention'")
+
+    c.equal(bert.a_few(1, "card", "cards"), "1 card", "one card")
+    c.equal(bert.a_few(3, "card", "cards"), "3 cards", "three cards")
+    c.equal(bert.a_few(0, "change", "changes"), "0 changes",
+            "and nought takes the plural, as English does")
+
+    # `card(s)` is fine in a log and grit in a sentence, so the tooltips that
+    # a person actually reads should not carry it.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    # Docstrings excluded, the same way the colour-literal check excludes
+    # them and for the same reason: the note explaining why a rule exists
+    # quotes the thing the rule forbids.
+    docs = set()
+    for n in ast.walk(tree):
+        body = getattr(n, "body", None)
+        if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                          ast.AsyncFunctionDef)) and body:
+            f = body[0]
+            if (isinstance(f, ast.Expr) and isinstance(f.value, ast.Constant)
+                    and isinstance(f.value.value, str)):
+                docs.update(range(f.lineno, f.end_lineno + 1))
+    grit = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            if n.lineno in docs:
+                continue
+            if "(s)" in n.value or "(es)" in n.value:
+                grit.append(f"line {n.lineno}: {n.value.strip()[:44]}")
+    c.equal(grit, [],
+            "no sentence Bert shows says card(s) -- the count is known when "
+            "the sentence is built, so the word can agree with it")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour,
+          check_a_count_agrees_with_its_verb,
           check_no_colour_is_written_by_hand, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
