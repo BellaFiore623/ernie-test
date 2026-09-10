@@ -77,20 +77,56 @@ alive_from_pidfile() {          # the pids in it that are still running
   done < "$PIDFILE"
 }
 
+# Every Ernie process alive, whoever started it and whether or not this file
+# knows about it. The pidfile alone was not enough and could not be: it is
+# truncated on every start, so it only ever remembers the *previous*
+# generation. Leave a stack running, start again, let that second one die --
+# and the first becomes invisible to the guard for good, because the pids
+# that knew about it have been overwritten.
+#
+# Found in the sandbox at ten syncs and ten outboxes, none of them in the
+# pidfile, and one API from the first start of the day still holding the port
+# so every later API exited on bind and the board was served yesterday's code
+# for hours. The database survived it -- no duplicate cards, no duplicate
+# state messages -- but the outbox log carries 18 real rate limits from the
+# copies competing for one channel.
+#
+# The command line is the only thing that identifies these, so this finds
+# Ernie processes from *any* clone on the machine. That is the right side to
+# err on: two clones running two syncs against two databases and one Discord
+# channel is the same problem wearing a different hat.
+running_ernie() {
+  powershell -NoProfile -Command "
+    Get-CimInstance Win32_Process -Filter \"Name LIKE 'python%'\" |
+      Where-Object { \$_.CommandLine -match 'ernie_(sync|outbox|api)\.py' } |
+      ForEach-Object { \$_.ProcessId }" 2>/dev/null | tr -d '\r'
+}
+
 stop() {
   echo ""
   echo "stopping..."
   for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null; done
   kill_pidfile
+  kill_strays
   wait 2>/dev/null
   echo "stopped"
   exit 0
 }
+
+kill_strays() {                 # anything the pidfile never knew about
+  local n=0 wpid
+  for wpid in $(running_ernie); do
+    taskkill //PID "$wpid" //T //F >/dev/null 2>&1 && n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] && echo "  and $n process(es) no pidfile knew about"
+  return 0
+}
 trap stop INT TERM
 
 if [ -n "$JUST_STOP" ]; then
-  n=$(alive_from_pidfile | grep -c . || true)
+  n=$(running_ernie | grep -c . || true)
   kill_pidfile
+  kill_strays >/dev/null
   echo "stopped $n process(es)"
   exit 0
 fi
@@ -100,9 +136,11 @@ fi
 # Six of each were found running at once after a day of closing the window
 # rather than pressing Ctrl+C -- which is where the outbox's 429s came from,
 # and every start flashes a console window per process on the way past.
-LEFTOVER=$(alive_from_pidfile)
+# Asked of the machine, not of this file. See running_ernie above for why the
+# pidfile cannot answer this on its own.
+LEFTOVER=$(running_ernie)
 if [ -n "$LEFTOVER" ]; then
-  echo "a stack this script started is still running:"
+  echo "Ernie is already running:"
   for wpid in $LEFTOVER; do echo "  pid $wpid"; done
   echo ""
   echo "stop it first:  ./run.sh stop"
