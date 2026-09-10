@@ -247,28 +247,28 @@ LIGHT = {
     # The inks came down too, and had to: at the old values five of them fell
     # under 4.5:1 on the new grounds -- accent worst at 3.3. Moving a ground
     # without moving the ink on it is how a palette goes quietly unreadable.
-    "ink": "#20252B", "muted": "#42474E", "line": "#A2ABB7",
-    "surface": "#D0D5DB", "canvas": "#C4CAD1", "panel": "#BDC4CC",
+    "ink": "#242424", "muted": "#464646", "line": "#ABABAB",
+    "surface": "#D5D5D5", "canvas": "#CACACA", "panel": "#C4C4C4",
     # The activity bar, under the sections either side of the board.
-    "feed": "#B9C0C9",
+    "feed": "#C0C0C0",
     # Raised controls -- the Qt Button role. Under the surface in light and
     # over it in dark, because "raised" is toward the light end in one and
     # the dark end in the other.
-    "beside": "#CACFD5",
+    "beside": "#CFCFCF",
     # What a button, a field or a work-item bubble is drawn on: a step under
     # the card, in both themes.
-    "control": "#C3C8D0",
-    "well": "#B5BCC5",
+    "control": "#C8C8C8",
+    "well": "#BCBCBC",
     # Badge fills, a step under the card rather than over it.
     "amber_bg": "#D6C6AC", "amber_fg": "#613F05",
     "red_bg": "#DDBFBF", "red_fg": "#822525", "red_edge": "#C43C3C",
     "ok_fg": "#225026", "ok_bg": "#A5D3AA", "accent": "#1C4976",
     "info_bg": "#B7C8D8", "info_fg": "#1B3A5C",
-    "grey_fg": "#42474D",
+    "grey_fg": "#464646",
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#C9CED5",
+    "chip_bg": "#CECECE",
     "on_accent": "#FFFFFF", "hover_bg": "#ABBFD5",
     "neutral": ("#626262", "#D5D5D5", "#33373A"),
     # (stripe, fill, ink). The fills are mixed onto the card base, and their

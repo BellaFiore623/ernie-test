@@ -1678,6 +1678,34 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
+**Light's chrome is grey, and it is the only grey in the window.** A census
+of the rendered board counted **98.5% of the screen at chroma 10 or more, and
+1.5% reading as grey** -- the chrome alone was 68% of it, every token at
+chroma 13-16 and every one of them blue. That is a coloured application with
+more colour on top, rather than a grey one with colour where colour means
+something.
+Reported as everything looking too cool, which was the right instinct with
+the wrong cause: **dark sits at the same hue**, 213-216 against light's
+212-217. What differs is the cost. Light's chrome emits **38x** the blue
+dark's does, so a tint invisible on a near-black surface is a wash on a
+bright one -- the same shape as the two findings before it, where the value
+was right and the quantity was not.
+**Every luminance is unchanged**, which is what made it safe: each token is
+the grey of exactly its old luminance, so every ratio in this section is
+still the one it was measured at. Card over workspace 1.12, ink on a card
+10.45, muted on the workspace 5.67, hairline 1.57. After: 70.8% of the screen
+reads as grey.
+**Grey rather than warm, and that is the half that decided it.** Measured as
+chromatic distance from each card fill to the workspace it sits on, ignoring
+lightness: a cool ground leaves **ENG and Medium at 1.1** -- the blue tags
+were the same colour as the room -- and a warm one at hue 34 leaves **PROD
+and High at 1.7**. A ground with a hue of its own hides whichever tags share
+it, so warm would have moved the failure rather than removed it. Grey's worst
+is 4.0, and its only near-zero is `low`, which is the colourless band and is
+meant to stand off by lightness alone. `check_palette.py` holds all of it.
+**Dark keeps its cast on purpose** -- the same tint costs it almost nothing,
+and its neutrals are what its whole bottom end is built from.
+
 **Dark's quality is that the eye rests on one value, and that is what light
 was missing.** Measured over a rendered board, 95% of dark's pixels sit in a
 single luminance band and only text and accents rise out of it -- mean 0.026.

@@ -18,6 +18,7 @@ that ships.
 
 import ast
 import colorsys
+import math
 import pathlib
 import re
 
@@ -1654,7 +1655,91 @@ def check_all_three_sections_fold_the_same_way() -> bool:
     return c.report()
 
 
+def check_lights_chrome_is_grey_and_nothing_hides_in_it() -> bool:
+    """
+    The field is grey, so the things that carry meaning are the coloured ones.
+
+    A census of the rendered light board found **98.5% of the screen at
+    chroma 10 or more, and only 1.5% reading as grey** -- the chrome alone was
+    68% of it, every token at chroma 13-16 and every one of them blue. That is
+    a coloured application with more colour on top, rather than a grey one
+    with colour where colour means something.
+
+    It was reported as everything looking too cool, which was the right
+    instinct with the wrong cause: **dark sits at the same hue**, 213-216
+    against light's 212-217. What differs is the cost. Light's chrome emits
+    **38x** the blue dark's does, so a tint invisible on a near-black surface
+    is a wash on a bright one.
+
+    **The luminances did not move**, which is what made this safe: each token
+    is the grey of exactly its old luminance, so every ratio the palette
+    depends on is the one it was measured at.
+
+    The second half is why grey beat warm, and it is the half that decided it.
+    Measured as chromatic distance (CIELAB a*b*, lightness ignored) from each
+    card fill to the workspace it sits on:
+
+        ground        worst tag       what vanishes
+        cool (was)        1.1         ENG and Medium, into a blue ground
+        warm 34           1.7         PROD and High, into a warm one
+        neutral           4.0         nothing
+
+    A ground with a hue of its own hides whichever tags share it. Warm would
+    have moved that failure rather than removed it.
+    """
+    c = Check("light's chrome is grey and nothing hides in it")
+
+    CHROME = ("surface", "canvas", "panel", "feed", "beside", "control",
+              "well", "chip_bg", "ink", "muted", "line", "grey_fg")
+    worst = max(hue_spread(bert.LIGHT[k]) for k in CHROME)
+    c.ok(worst <= 2,
+         f"every chrome token is a grey (worst is {worst} levels off)")
+
+    # Dark is left alone on purpose: the same tint costs it almost nothing,
+    # and its neutrals are what its whole bottom end is built from.
+    c.ok(hue_spread(bert.DARK["canvas"]) > 2,
+         "dark keeps its cast, where the same tint emits 38x less")
+
+    # Nothing may share the ground's hue, because the ground has none.
+    def gap(a, b):
+        """Chromatic distance, lightness ignored -- 'stands out against'."""
+        def lab(h):
+            r, g, b = (x / 255 for x in rgb(h))
+            r, g, b = [x / 12.92 if x <= 0.04045
+                       else ((x + 0.055) / 1.055) ** 2.4 for x in (r, g, b)]
+            X = 0.4124 * r + 0.3576 * g + 0.1805 * b
+            Y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            Z = 0.0193 * r + 0.1192 * g + 0.9505 * b
+            def f(t):
+                return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+            fx, fy, fz = f(X / 0.95047), f(Y), f(Z / 1.08883)
+            return 500 * (fx - fy), 200 * (fy - fz)
+        (a1, b1), (a2, b2) = lab(a), lab(b)
+        return math.hypot(a1 - a2, b1 - b2)
+
+    ground = bert.LIGHT["canvas"]
+    for q, (_, fill, _) in bert.LIGHT["queue"].items():
+        d = gap(fill, ground)
+        c.ok(d >= 3.0,
+             f"{q} stands off the workspace by {d:.1f} of colour, not just "
+             f"lightness")
+
+    # The bands, with one deliberate exception: `low` is the colourless band
+    # and is meant to be a plain grey, so it stands off by lightness alone.
+    for band, (fill, _) in bert.LIGHT["band_card"].items():
+        d = gap(fill, ground)
+        if band == "low":
+            c.ok(d < 1.0,
+                 "low is the one band with no colour of its own, and stays "
+                 "that way")
+        else:
+            c.ok(d >= 3.0, f"the {band} band's wash reads as a wash ({d:.1f})")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour,
+          check_lights_chrome_is_grey_and_nothing_hides_in_it,
           check_all_three_sections_fold_the_same_way,
           check_a_wrapper_round_an_input_paints_nothing,
           check_a_count_agrees_with_its_verb,
