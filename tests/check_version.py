@@ -387,7 +387,80 @@ def check_only_the_harmless_one_can_be_silenced() -> bool:
     return c.report()
 
 
-CHECKS = (check_only_the_harmless_one_can_be_silenced,
+def check_the_button_exists_only_when_there_is_somewhere_to_go() -> bool:
+    """
+    "Get the new build", and only when there is a build to get.
+
+    A button called *Update now* that opens a browser is the unsent mark
+    saying "pushing" over something that was never going to be pushed -- a
+    control has to do what it says. This one opens a page and is named for
+    that, and self-updating a running exe is a different project: Windows
+    locks the binary, so it wants a helper or an installer, and it runs into
+    the code-signing question rather than around it.
+
+    **Ernie publishes the address; Bert does not hold one.** So moving from
+    GitHub to Bitbucket or anywhere else is one line in an env file and a
+    restart of Ernie -- nobody holding a built Bert has to be sent a new one.
+    With the key unset there is no address, and with no address there is no
+    button.
+
+    **And the scheme is checked at both ends.** Bert is what hands the thing
+    to the desktop; a value nobody validated on the way in is a value
+    somebody trusts on the way out.
+    """
+    c = Check("the button exists only when there is somewhere to go")
+
+    for raw, want in (("https://example.test/x", "https://example.test/x"),
+                      ("http://example.test/x", "http://example.test/x"),
+                      ("file:///C:/windows", ""),
+                      ("javascript:alert(1)", ""),
+                      ("ftp://example.test/x", ""),
+                      ("  ", ""), ("", ""), (None, "")):
+        c.equal(api.clean_url(raw), want, f"clean_url({raw!r})")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    made = next((x for x in ast.walk(tree)
+                 if isinstance(x, ast.ClassDef) and x.name == "UpdateDialog"),
+                None)
+    body = ast.get_source_segment(src, made) or "" if made else ""
+    c.ok("if url:" in body, "no address, no button")
+
+    # The *labels*, off the AST, not the source text. Asked as "Update now"
+    # is not in the file, this failed on the comment explaining why it must
+    # not be -- the same trap the colour-literal check hit with docstrings
+    # quoting the hexes they rejected.
+    labels = [a.value for n in ast.walk(made)
+              if isinstance(n, ast.Call)
+              and getattr(n.func, "id", "") == "QPushButton"
+              for a in n.args if isinstance(a, ast.Constant)
+              and isinstance(a.value, str)]
+    c.ok("Get the new build" in labels,
+         f"and it says what it does ({labels})")
+    c.ok(not any("update now" in x.lower() for x in labels),
+         "rather than promising an update it does not perform")
+
+    wiring = next((x for x in ast.walk(tree)
+                   if isinstance(x, ast.FunctionDef) and x.name == "_check_build"),
+                  None)
+    w = ast.get_source_segment(src, wiring) or "" if wiring else ""
+    c.ok("urlparse" in w and "http" in w,
+         "and Bert checks the scheme itself before opening anything")
+
+    # The API has to be told where to read it from, or the key is dead.
+    apisrc = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+    c.ok("BERT_UPDATE_URL" in apisrc, "the API reads the key")
+    c.ok('"--env"' in apisrc, "off the same --env every other entry point takes")
+    c.ok("--env" in (ROOT / "run.sh").read_text(encoding="utf-8"),
+         "and run.sh passes one to it")
+    c.ok("BERT_UPDATE_URL" in (ROOT / "ernie-test.env.example").read_text(
+        encoding="utf-8"), "with the key documented in the env example")
+
+    return c.report()
+
+
+CHECKS = (check_the_button_exists_only_when_there_is_somewhere_to_go,
+          check_only_the_harmless_one_can_be_silenced,
           check_a_bert_that_is_behind_is_told,
           check_the_floor_cannot_lock_everybody_out,
           check_a_frozen_build_can_still_name_its_commit,

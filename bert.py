@@ -19,6 +19,7 @@ import pathlib
 import re
 import sys
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 
@@ -29,11 +30,11 @@ import httpx
 # agreement.
 import ernie_extract as ex
 import ernie_version
-from PySide6.QtCore import (
+from PySide6.QtCore import (QUrl, 
     QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize,
     QStringListModel, Qt, QThread, QTimer, Signal,
 )
-from PySide6.QtGui import (
+from PySide6.QtGui import (QDesktopServices, 
     QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon, QPainter,
     QPalette, QPen, QPixmap, QPolygonF,
 )
@@ -591,7 +592,8 @@ def build_standing(mine, theirs, floor):
     if floor and ernie_version.is_older(mine, floor):
         return "blocked", (
             f"This copy of Bert is {mine}. This Ernie needs {floor} or newer, "
-            f"so changes are paused until it is updated.")
+            f"so changes are paused until it is updated. The board is still "
+            f"here to read.")
     if ernie_version.is_older(mine, theirs):
         # Said as the good news it is. "Bert found a new update" over a
         # board that is working perfectly reads as an alarm, and an alarm
@@ -613,7 +615,7 @@ class UpdateDialog(QDialog):
     actionable and "you are on 0.9.0, Ernie is on 0.9.3" is.
     """
 
-    def __init__(self, parent, state, detail):
+    def __init__(self, parent, state, detail, url=""):
         super().__init__(parent)
         self.setWindowTitle("Update")
         dark_titlebar(self)
@@ -680,7 +682,30 @@ class UpdateDialog(QDialog):
         ok.clicked.connect(self.accept)
         under = QHBoxLayout()
         under.addStretch(1)
-        under.addWidget(ok)
+
+        # **Only when there is somewhere to go.** Ernie publishes where a new
+        # Bert comes from; with no `BERT_UPDATE_URL` set there is no build to
+        # fetch and no button, which is the whole reason it is published
+        # rather than built in. It says *get*, not *update now*: it opens a
+        # page. A button called "Update now" that only opens a browser is the
+        # unsent mark saying "pushing" over something that was never going to
+        # be pushed.
+        if url:
+            go = QPushButton("Get the new build")
+            go.setStyleSheet(btn_css())
+            go.setCursor(Qt.PointingHandCursor)
+            go.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
+            # First on the blocked one, because that is the person who has to
+            # do something; second on the other, where carrying on is a fair
+            # answer.
+            if state == "blocked":
+                under.addWidget(go)
+                under.addWidget(ok)
+            else:
+                under.addWidget(ok)
+                under.addWidget(go)
+        else:
+            under.addWidget(ok)
         said.addLayout(under)
 
         row.addLayout(said, 1)
@@ -5259,7 +5284,13 @@ class Bert(QMainWindow):
         # Set before the dialog, or a poll landing while it is open opens a
         # second one behind it.
         self._update_told = True
-        dlg = UpdateDialog(self, self.update_state, self.update_said)
+        # Scheme-checked here as well as in Ernie. Bert is what actually
+        # hands this to the desktop, and a value nobody validated on the way
+        # in is a value somebody trusts on the way out.
+        url = build.get("update_url") or ""
+        if urllib.parse.urlparse(url).scheme.lower() not in ("http", "https"):
+            url = ""
+        dlg = UpdateDialog(self, self.update_state, self.update_said, url)
         dlg.exec()
         if dlg.muted() and theirs:
             self.settings["update_muted"] = theirs

@@ -164,7 +164,7 @@ echo "starting [$ENVNAME]  db=$DB  port=$PORT"
 
 start sync   python ernie_sync.py --env "$ENVFILE" --db "$DB"
 [ "$OUTBOX" = yes ] && start outbox python ernie_outbox.py --env "$ENVFILE" --db "$DB"
-start api    python ernie_api.py --db "$DB" --port "$PORT" --host "$HOST"
+start api    python ernie_api.py --db "$DB" --port "$PORT" --host "$HOST" --env "$ENVFILE"
 
 sleep 2
 if curl -s "http://127.0.0.1:$PORT/health" > /dev/null 2>&1; then

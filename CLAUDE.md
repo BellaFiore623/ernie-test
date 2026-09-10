@@ -1558,6 +1558,26 @@ imports it. Bump it there and nowhere else.
   The checkbox states its own `::indicator`, because Fusion draws that from
   the palette's roles and against this dialog's ground it came out as a label
   with no box beside it.
+- **"Get the new build", and only when there is a build to get.** A button
+  called *Update now* that opens a browser is the unsent mark saying
+  *pushing* over something that was never going to be pushed -- a control has
+  to do what it says. Self-updating a running exe is a different project:
+  Windows locks the binary, so it wants a helper or an installer, and it runs
+  into the code-signing question rather than around it.
+  **Ernie publishes the address; Bert holds none.** `BERT_UPDATE_URL` in the
+  env file reaches `/health`'s `build` block, so moving from GitHub to
+  Bitbucket or anywhere else is **one line and a restart of Ernie** -- nobody
+  holding a built Bert has to be sent a new one. Unset means no address,
+  which means no button, which is the point: the control cannot exist without
+  somewhere to go. It is why the API takes `--env` at all -- it reads that one
+  key and nothing else; the API has no business with a token.
+  **The scheme is checked at both ends**, `http` and `https` only. Bert is
+  what hands the thing to the desktop, and a value nobody validated on the
+  way in is a value somebody trusts on the way out.
+  On the blocked dialog it comes **first**, because that is the person who has
+  to act; on the other it sits after *Alright*, where carrying on is a fair
+  answer. And the blocked wording says the board is still there to read, so
+  "paused" is not mistaken for "gone".
   The failure it replaces was a misleading one: `Api` calls `.json()` without
   checking the status, so an old Bert asking for a route its Ernie lacks got
   `{"detail": "Not Found"}`, then a KeyError, then a failed poll -- surfacing

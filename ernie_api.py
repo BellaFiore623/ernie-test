@@ -15,6 +15,8 @@ needed.
 from __future__ import annotations
 
 import argparse
+import os
+import urllib.parse
 import json
 import sqlite3
 import sys
@@ -28,6 +30,7 @@ from pydantic import BaseModel
 
 import ernie_extract as ex
 import ernie_version
+from ernie_sync import load_env
 
 DB = "ernie.db"
 UNDO_WINDOW_S = 60      # how long before Ernie posts to the thread
@@ -197,6 +200,31 @@ VALUE_LABEL = {
 # The most a single /events call will answer with. Bert asks for far less;
 # this is only here so a hand-typed limit cannot ask for the lot.
 EVENTS_MAX = 1000
+
+# Where a newer Bert is downloaded from, out of BERT_UPDATE_URL. Empty is
+# the ordinary answer -- there is no build to fetch yet -- and an empty one
+# means Bert shows no button at all, which is the point: the control cannot
+# exist without somewhere to go.
+UPDATE_URL = ""
+
+
+def clean_url(raw):
+    """A URL safe to hand to a desktop to open, or nothing.
+
+    http and https only. Bert opens whatever this says, so the one thing that
+    must not get through is a scheme that does something other than open a
+    page -- and the check belongs here as well as in Bert, because a value
+    nobody validated on the way in is a value somebody trusts on the way out.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    try:
+        scheme = urllib.parse.urlparse(raw).scheme.lower()
+    except ValueError:
+        return ""
+    return raw if scheme in ("http", "https") else ""
+
 
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
@@ -502,7 +530,11 @@ def health():
         "ok": bool(last and not last["error"]),
         # Which build is answering. Bert shows it, and the machine on the
         # other end of #ernie-state has no other way to ask.
-        "build": ernie_version.payload(),
+        # The build, plus where a newer Bert comes from. **Published rather
+        # than built in**, so moving from GitHub to Bitbucket or anywhere
+        # else is one line in an env file and a restart of Ernie -- no new
+        # Bert, and nothing to re-distribute to somebody holding an exe.
+        "build": {**ernie_version.payload(), "update_url": UPDATE_URL},
         "last_sync": dict(last) if last else None,
         "seconds_since_sync": stale,
         # Which read of Discord that age belongs to, so Bert can tell a new
@@ -1740,7 +1772,15 @@ if __name__ == "__main__":
     ap.add_argument("--db", default="ernie.db")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8787)
+    # The same `--env` every other entry point takes. This reads one key out
+    # of it -- where a new Bert comes from -- and nothing else; the API has
+    # no business with a token.
+    ap.add_argument("--env", default="ernie.env")
     a = ap.parse_args()
+
+    load_env(a.env)
+    # Module level, so no `global` -- this block *is* the module.
+    UPDATE_URL = clean_url(os.environ.get("BERT_UPDATE_URL"))
 
     DB = a.db
     print(f"ernie_api {ernie_version.describe()}")
