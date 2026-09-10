@@ -203,6 +203,10 @@ VALUE_LABEL = {
 # than through load.connect(), so schema.sql is never applied here and a
 # database that missed a migration fails at request time with an opaque
 # IndexError. Checked once at startup instead.
+# The most a single /events call will answer with. Bert asks for far less;
+# this is only here so a hand-typed limit cannot ask for the lot.
+EVENTS_MAX = 1000
+
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
     "clients": ["short_name", "offered"],
@@ -989,8 +993,12 @@ def events(since: Optional[str] = None, limit: int = 50):
     if since:
         sql += " AND e.occurred_at > ?"
         args.append(since)
+    # Clamped, because SQLite reads a negative LIMIT as *no limit* -- so
+    # `/events?limit=-1` quietly answered with the whole feed, which on
+    # production is every event there has ever been, from a route with no
+    # authentication in front of it.
     sql += " ORDER BY e.occurred_at DESC LIMIT ?"
-    args.append(limit)
+    args.append(max(1, min(int(limit), EVENTS_MAX)))
 
     out = rows(con.execute(sql, args))
     con.close()
