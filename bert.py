@@ -278,12 +278,20 @@ LIGHT = {
         "medium": "#DDE2E8", "low": "#E2E2E2",
     },
     # (fill, outline). The outline is what says which band it is and none of
-    # them moved -- those are the severity marks. Unassigned is the plain
-    # neutral, the one card with no colour of its own: it is not a priority,
-    # it is the absence of one, and the red 2px outline over it is the thing
-    # asking for a person.
+    # them moved -- those are the severity marks.
+    #
+    # Unassigned carries a red wash, which it did not before. The argument
+    # for the plain neutral was that a blank card reads as one nobody has
+    # picked up -- true, and it left the largest band on the board as the
+    # brightest, flattest thing in the window, which is the opposite of what
+    # three passes at this palette were for. Dark has always washed it: its
+    # unassigned is #301D1C, quieter than its critical at #3A2422, and light
+    # mirrors that relationship rather than making the two alike -- chroma 11
+    # against 15. The two most urgent states looking similar is already
+    # accepted here; the status embed makes the same trade for the same
+    # reason.
     "band_card": {
-        "unassigned": ("#E6E6E6", "#C43C3C"), "critical": ("#F1E2E2", "#C43C3C"),
+        "unassigned": ("#EFE4E4", "#C43C3C"), "critical": ("#F1E2E2", "#C43C3C"),
         "high": ("#ECE5D9", "#D19434"), "medium": ("#DFE7EF", "#7099CB"),
         "low": ("#E6E6E6", "#B7BCC2"),
     },
