@@ -71,6 +71,23 @@ CLIENTS = ("Ravanair", "St. Tammany", "Westmoreland County", "IPI",
 # Days open, oldest first, applied to the real cards that are already there.
 AGES = (152, 118, 110, 96, 95, 40, 21, 12, 5, 2)
 
+# Some tickets are retagged partway through -- which is the figure Julian
+# asked for, and it comes straight off `thread_titles` rather than out of
+# anything stored for the purpose. So the invented history has to contain
+# some, or the block reads as broken rather than as quiet.
+#
+# The mix is weighted the way the real one is described: production work that
+# turns into operations, mostly, with a few going back the other way and a
+# handful of engineering escalations. One ticket in five, which is enough to
+# fill the block at a 7-day window without making a retag look routine.
+RETAG_ODDS = 5
+RETAG = {
+    "PROD": (["OPS"] * 6) + ["ENG"] * 2 + ["CS"],
+    "OPS":  (["PROD"] * 3) + ["ENG"],
+    "ENG":  (["OPS"] * 2) + ["PROD"],
+    "CS":   ["OPS", "PROD"],
+}
+
 
 def iso(when: datetime) -> str:
     return when.isoformat()
@@ -115,9 +132,14 @@ def backdate_real_cards(con) -> int:
 
 
 def add_history(con, rng: random.Random) -> int:
-    """Closed tickets, month by month, going back six months."""
+    """Closed tickets, month by month, going back six months.
+
+    Answers `(made, retagged)` -- the second is how many of them changed tag
+    on the way, which is a separate line in the report because it is a
+    separate block on the panel.
+    """
     now = datetime.now(timezone.utc)
-    made = 0
+    made = retagged = 0
     for back, count in enumerate(reversed(PER_MONTH)):
         for i in range(count):
             # Somewhere inside that month, and the span decides when it opened.
@@ -146,6 +168,26 @@ def add_history(con, rng: random.Random) -> int:
                 (tid, iso(opened), name, queue, client, client.lower(),
                  opened.date().isoformat(), name.rsplit(" - ", 1)[-1],
                  "strict"))
+            # A retag is a second title row, and that is the whole of it --
+            # append-only, so the first one stays and the pair *is* the
+            # transition. Placed inside the ticket's own life rather than at
+            # a round offset, or every move in a window would land on the
+            # same day.
+            if span >= 2 and rng.randrange(RETAG_ODDS) == 0:
+                to = rng.choice(RETAG[queue])
+                when = opened + timedelta(
+                    days=rng.randint(1, max(1, span - 1)),
+                    hours=rng.randint(0, 23))
+                renamed = f"{to}: " + name.split(": ", 1)[1]
+                con.execute(
+                    """INSERT OR REPLACE INTO thread_titles
+                       (thread_id, observed_at, name, queue, client_raw,
+                        client_key, thread_date, summary, confidence)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (tid, iso(when), renamed, to, client, client.lower(),
+                     opened.date().isoformat(),
+                     renamed.rsplit(" - ", 1)[-1], "strict"))
+                retagged += 1
             con.execute(
                 """INSERT OR REPLACE INTO cards
                    (thread_id, priority, rank, updated_at, completed_at,
@@ -155,7 +197,7 @@ def add_history(con, rng: random.Random) -> int:
                  "imported"))
             made += 1
     con.commit()
-    return made
+    return made, retagged
 
 
 def main() -> None:
@@ -180,9 +222,10 @@ def main() -> None:
         return
 
     moved = backdate_real_cards(con)
-    made = add_history(con, random.Random(a.seed))
+    made, retagged = add_history(con, random.Random(a.seed))
     print(f"backdated {moved} real card(s) so they have an age")
     print(f"invented {made} closed ticket(s) across {len(PER_MONTH)} months")
+    print(f"{retagged} of them changed tag partway through")
     print(f"\nundo with:  python tools/fake_stats_data.py --db {a.db} --clear")
     con.close()
 

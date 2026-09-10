@@ -685,8 +685,54 @@ def stats(ageing: int = 5, days: int = 28):
             for k in ("open", "created", "closed"):
                 tally[k].setdefault(q, 0)
 
+        # 5. Tickets that changed tag while they were open -- PROD to OPS,
+        #    mostly, which is the pair Julian asked about: work that starts as
+        #    production and turns into operations.
+        #
+        #    **`thread_titles` already records this, so nothing new is
+        #    stored.** The tag *is* the title's prefix, the table is
+        #    append-only, and every revision carries the queue the parser read
+        #    off it -- so a tag change is already a row, with the time on it.
+        #    The two routes considered instead were a tag history written into
+        #    `#ernie-state` (which could only start counting from today) and
+        #    the other bot's log channel; neither is needed.
+        #
+        #    Discord's rename system messages are in the mirror too and were
+        #    the obvious source. They were measured and rejected: 573 of
+        #    production's messages have content that parses as a title and 550
+        #    of those were written by people, and `messages` does not store
+        #    Discord's message `type`, so a rename cannot be told from
+        #    somebody pasting a title into the chat. A figure that invents
+        #    transitions is worse than no figure.
+        #
+        #    Cards only, because the panel is about the board -- and
+        #    `#customer-support` is mirrored for history with
+        #    `generate_cards = 0`, so its threads are not tickets anybody
+        #    tracks.
+        #
+        #    The honest limit, and it is the same one the state-channel route
+        #    would have had: this counts changes Ernie was watching for. A
+        #    database whose threads have one title row each has nothing to
+        #    report, which is production until it runs this build.
+        moves = [{"from": r["was"], "to": r["queue"], "count": r["n"]}
+                 for r in con.execute(
+            """SELECT was, queue, COUNT(*) AS n
+                 FROM (SELECT ti.thread_id, ti.observed_at, ti.queue,
+                              LAG(ti.queue) OVER (PARTITION BY ti.thread_id
+                                                  ORDER BY ti.observed_at)
+                                AS was
+                         FROM thread_titles ti
+                         JOIN cards c USING (thread_id)
+                        WHERE ti.queue IS NOT NULL AND ti.queue <> '')
+                WHERE was IS NOT NULL AND was <> queue
+                  AND datetime(observed_at) >= datetime('now', :since)
+                GROUP BY was, queue
+                ORDER BY n DESC, was, queue""", {"since": since})]
+
         return {"completed": completed, "ageing": oldest,
-                "time_to_complete": took, "tally": tally}
+                "time_to_complete": took, "tally": tally,
+                "tag_moves": {"days": int(days), "moves": moves,
+                              "total": sum(m["count"] for m in moves)}}
     finally:
         con.close()
 

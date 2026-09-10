@@ -922,6 +922,43 @@ or worse, how long a ticket takes, or which ones have been open since April.
   way for that poll to fail. An Ernie too old to serve `/stats` answers `None`
   and the board carries on.
 
+- **Retagging is already in the mirror, so nothing new is stored for it.**
+  Julian asked how many tickets go from PROD to OPS as they change during a
+  ticket's life. The two routes offered were a tag history written into
+  `#ernie-state` -- which could only ever count from the day it was switched
+  on -- and a trawl of the other bot's log channel. Neither is needed:
+  **the tag is the title's prefix, `thread_titles` is append-only, and every
+  revision carries the queue the parser read off it**, so a tag change is
+  already a row with a time on it. `LAG()` over each thread's revisions in
+  `observed_at` order gives the pairs, and the window filters on
+  `observed_at` because that is the only date a move has -- not when the
+  thread opened, and not when it closed.
+  **Cards only.** `#customer-support` is mirrored for history with
+  `generate_cards = 0`, so a retitle there is not a ticket changing hands.
+  **A rename that keeps the tag is not a move**, which is most renames: the
+  client gets corrected, the summary gets sharpened.
+  **The rename system messages were measured and rejected.** They are in the
+  mirror -- Discord posts one into the thread on every rename -- and they were
+  the obvious source. But `messages` does not store Discord's message `type`,
+  and **573 of production's messages have content that parses as a title, 550
+  of them written by people**, so a rename cannot be told from somebody
+  pasting a title into the chat. A figure that invents transitions is worse
+  than no figure. Storing `type` on the way in would settle it and would let
+  the history before today be reconstructed exactly; nothing needs it yet.
+  **The honest limit is the one the state-channel route would have had too:**
+  this counts what Ernie was watching for. Production has 889 title rows for
+  889 threads -- one each, because it has never run this build -- so it reads
+  zero until it has. The sandbox showed it working the moment a thread was
+  renamed.
+  On the panel the block draws `PROD → OPS  21` with a bar in the
+  *destination's* colour: the arrow already says which way it went, and the
+  tag it became is what a reader is counting. Four tags make twelve possible
+  pairs and the panel is 244px wide, so past `STATS_MOVES_SHOWN` the tail is
+  **summed into one line rather than dropped** -- the rows have to add up to
+  the total, and a figure that does not add up is the first one somebody
+  stops believing. It sits straight after the tally, which cannot show a
+  ticket that arrived as one tag and left as another.
+
 - **A filter says how many it holds.** `PROD (3)`, `OPS (4)`. The checkboxes
   said which tags exist and nothing about how much was behind each, so the
   answer to "how much OPS work is there" was to click three boxes off and

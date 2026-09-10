@@ -272,8 +272,12 @@ def tallied(b, name, queue, created_days_ago, closed_days_ago=None):
                   "WHERE thread_id=?",
                   (iso(-created_days_ago * 86400),
                    iso(-created_days_ago * 86400), tid))
-    b.con.execute("UPDATE thread_titles SET queue=? WHERE thread_id=?",
-                  (queue, tid))
+    # The title row is dated with the thread, not left at the fixture's
+    # "an hour ago". A title observed after every later revision is not a
+    # history, and the retag figure reads the order of these rows.
+    b.con.execute("UPDATE thread_titles SET queue=?, observed_at=? "
+                  "WHERE thread_id=?",
+                  (queue, iso(-created_days_ago * 86400), tid))
     if closed_days_ago is not None:
         b.con.execute("UPDATE cards SET completed_at=?, completed_by=? "
                       "WHERE thread_id=?",
@@ -546,9 +550,201 @@ def check_the_window_moves_every_block_it_should() -> bool:
     return c.report()
 
 
+def retagged(b, tid, queue, days_ago, name=None):
+    """Another title revision on a thread that already has one.
+
+    `thread_titles` is append-only, which is the whole reason this figure
+    needs no new storage: the rows already sitting there *are* the history.
+    """
+    row = b.con.execute(
+        "SELECT name FROM thread_titles WHERE thread_id=? "
+        "ORDER BY observed_at DESC LIMIT 1", (tid,)).fetchone()
+    name = name or (queue + ": " + str(row["name"]).split(": ", 1)[-1])
+    b.con.execute(
+        """INSERT INTO thread_titles (thread_id, observed_at, name, queue,
+                                      confidence)
+           VALUES (?,?,?,?,?)""",
+        (tid, iso(-days_ago * 86400), name, queue, "strict"))
+    b.con.commit()
+
+
+def check_a_retag_is_already_in_the_mirror() -> bool:
+    """
+    How many tickets went from PROD to OPS, off `thread_titles` alone.
+
+    Asked for by Julian. The two routes offered were a tag history written
+    into `#ernie-state` -- which could only start counting from the day it
+    was switched on -- and a trawl of another bot's log channel. Neither is
+    needed: the tag *is* the title's prefix, the table is append-only, and
+    every revision already carries the queue the parser read off it, so a tag
+    change is a row with a time on it.
+
+    What this defends is that the reading is a *transition* rather than a
+    count of revisions: a rename that leaves the tag alone is not a move, and
+    a ticket retagged twice moved twice.
+    """
+    c = Check("a retag is already in the mirror")
+
+    with Board() as b:
+        one = tallied(b, "PROD: A - 01Jan26 - x", "PROD", 30)
+        retagged(b, one, "OPS", 20)
+        # Twice: PROD -> OPS -> ENG is two moves, not one and not three.
+        two = tallied(b, "PROD: B - 01Jan26 - x", "PROD", 30)
+        retagged(b, two, "OPS", 25)
+        retagged(b, two, "ENG", 10)
+        # A rename that keeps the tag. People retitle threads constantly --
+        # the client is corrected, the summary is sharpened -- and counting
+        # those would make the figure meaningless.
+        three = tallied(b, "PROD: C - 01Jan26 - x", "PROD", 30)
+        retagged(b, three, "PROD", 15,
+                 name="PROD: C - 01Jan26 - a better summary")
+        # And one that never moved at all.
+        tallied(b, "OPS: D - 01Jan26 - x", "OPS", 30)
+
+        api.DB = b.path
+        moves = api.stats(days=365)["tag_moves"]
+        counts = {(m["from"], m["to"]): m["count"] for m in moves["moves"]}
+
+        c.equal(counts.get(("PROD", "OPS")), 2,
+                "two tickets went PROD -> OPS")
+        c.equal(counts.get(("OPS", "ENG")), 1,
+                "and one carried on to ENG, counted as its own move")
+        c.ok(("PROD", "PROD") not in counts,
+             "a rename that keeps the tag is not a move")
+        c.equal(moves["total"], 3, "three moves in all")
+        c.equal(sum(m["count"] for m in moves["moves"]), moves["total"],
+                "and the total is the rows added up, so the block adds up")
+
+    return c.report()
+
+
+def check_the_window_moves_the_retags_too() -> bool:
+    """
+    The selector moves this block like every other one.
+
+    The same complaint that produced `check_the_window_moves_every_block_it_
+    should`: a timeframe control that leaves a block sitting still reads as
+    broken. A move is dated by *when the retag was observed*, which is the
+    only date it has -- not when the thread opened, and not when it closed.
+    """
+    c = Check("the window moves the retags too")
+
+    with Board() as b:
+        old = tallied(b, "PROD: A - 01Jan26 - x", "PROD", 300)
+        retagged(b, old, "OPS", 250)
+        new = tallied(b, "PROD: B - 01Jan26 - x", "PROD", 300)
+        retagged(b, new, "OPS", 2)        # an old ticket, retagged this week
+
+        api.DB = b.path
+        c.equal(api.stats(days=7)["tag_moves"]["total"], 1,
+                "one retag inside the week, though both threads are ancient")
+        c.equal(api.stats(days=365)["tag_moves"]["total"], 2,
+                "and both inside the year")
+        c.equal(api.stats(days=7)["tag_moves"]["days"], 7,
+                "the block says which window it is answering")
+
+        # The trap the outbox already fell into once: Python writes ISO8601
+        # with a T and SQLite's datetime('now') uses a space, so a raw string
+        # compare is wrong on the boundary day -- T sorts after space, so a
+        # retag earlier in the day than the cutoff reads as later.
+        src = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+        block = src.split("tag_moves", 1)[0].rsplit("moves = [", 1)[-1]
+        c.ok("datetime(observed_at)" in block
+             and "datetime('now', :since)" in block,
+             "and both sides of the comparison go through datetime()")
+
+    return c.report()
+
+
+def check_only_the_board_s_own_threads_count() -> bool:
+    """
+    `#customer-support` is mirrored for history, not for tickets.
+
+    Its threads carry `generate_cards = 0` and never become cards, so a
+    retitle there is not a ticket changing hands. The panel is about the
+    board, so the figure joins `cards`.
+    """
+    c = Check("only the board's own threads count")
+
+    with Board() as b:
+        tid = "support-001"
+        b.con.execute(
+            """INSERT INTO threads (thread_id, parent_id, guild_id, created_at,
+                                    first_seen_at, last_synced_at)
+               VALUES (?,?,?,?,?,?)""",
+            (tid, "support-channel", "guild", iso(-86400 * 30),
+             iso(-86400 * 30), iso()))
+        for when, queue in ((-86400 * 30, "PROD"), (-86400 * 10, "OPS")):
+            b.con.execute(
+                """INSERT INTO thread_titles (thread_id, observed_at, name,
+                                              queue, confidence)
+                   VALUES (?,?,?,?,?)""",
+                (tid, iso(when), queue + ": S - 01Jan26 - x", queue,
+                 "strict"))
+        b.con.commit()
+
+        api.DB = b.path
+        c.equal(api.stats(days=365)["tag_moves"]["total"], 0,
+                "a thread with no card contributes no move")
+
+        # Put a card under it and the same rows do count, which is what says
+        # the join is the reason rather than something else about the rows.
+        b.con.execute(
+            """INSERT INTO cards (thread_id, priority, rank, updated_at)
+               VALUES (?,?,?,?)""", (tid, "medium", 1000.0, iso()))
+        b.con.commit()
+        c.equal(api.stats(days=365)["tag_moves"]["total"], 1,
+                "and the same two rows do count once it is a ticket")
+
+    return c.report()
+
+
+def check_the_block_shows_a_tail_rather_than_dropping_it() -> bool:
+    """
+    Four tags make twelve possible pairs, and the panel is 244px wide.
+
+    So the block draws the common ones and sums the rest into a line. Summed
+    rather than dropped: the rows have to add up to the total under them, and
+    a figure that does not add up is the first one somebody stops believing.
+    """
+    c = Check("the block shows a tail rather than dropping it")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "_moves"), None)
+    c.ok(fn is not None, "the panel has a block for it")
+    body = (ast.get_source_segment(src, fn) or "") if fn else ""
+
+    c.ok("STATS_MOVES_SHOWN" in body, "it draws a bounded number of rows")
+    c.ok("rest" in body and "sum(" in body,
+         "and the ones past that are summed rather than dropped")
+    c.ok("tip=" in body,
+         "with the tail named in a tooltip, so nothing is actually hidden")
+    c.ok(bert.STATS_MOVES_SHOWN < 12,
+         "and the bound is under the twelve pairs four tags can make")
+
+    # Drawn where the tally is drawn: both are flows between the same tags
+    # over the same window, and the tally cannot show a ticket that arrived
+    # as one tag and left as another.
+    draw = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "set_stats"),
+                None)
+    shown = (ast.get_source_segment(src, draw) or "") if draw else ""
+    c.ok("tag_moves" in shown, "and set_stats reads the block")
+    c.ok(shown.index("tag_moves") > shown.index('data.get("tally")'),
+         "straight after the tally, which is the block beside it")
+
+    return c.report()
+
+
 CHECKS = (check_the_figures_are_what_they_claim,
           check_open_is_a_level_and_the_other_two_are_flows,
           check_the_window_moves_every_block_it_should,
+          check_a_retag_is_already_in_the_mirror,
+          check_the_window_moves_the_retags_too,
+          check_only_the_board_s_own_threads_count,
+          check_the_block_shows_a_tail_rather_than_dropping_it,
           check_the_rows_add_up,
           check_every_offered_tag_keeps_its_row,
           check_the_window_compares_dates_the_only_way_that_works,

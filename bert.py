@@ -119,6 +119,13 @@ STATS_WIDTH = 244          # what it opens at, not what it stays
 STATS_ROW_CHROME = 64      # the age column and the padding beside it
 STATS_OLD_D = 90           # a quarter open is a different kind of old
 STATS_MAX_AGE_S = 60       # these move when a ticket closes, not per poll
+# How many retag pairs are drawn before the rest are summed into one line.
+# Four tags make twelve possible pairs, and a block that can be twelve rows
+# of bars pushes everything under it off the panel; the tail is almost always
+# ones and twos, and the line that replaces it names them in its tooltip so
+# nothing is actually hidden.
+STATS_MOVES_SHOWN = 6
+GLYPH_MOVE = "\u2192"  # the arrow between two tags: PROD -> OPS
 # What the figures panel can be asked about, shortest first. Weeks up to a
 # month and then quarters, because that is how the work is actually talked
 # about -- "the last three weeks" is a sentence somebody says and "the last
@@ -3728,6 +3735,53 @@ class Stats(QWidget):
         holder.setStyleSheet("background:transparent;")
         return holder
 
+    def _moves(self, data):
+        """Where tickets went when somebody retagged them.
+
+        `PROD -> OPS  21`. The pair is the fact -- how much production work
+        turns out to be operations -- so both ends are named on every row
+        rather than grouping by one of them; PROD appearing in six rows for
+        six reasons is what grouping by the origin would give.
+
+        The bar is the destination's colour, because the arrow already says
+        which way it went and the tag it *became* is what a reader is
+        counting. It is measured against the biggest pair, like the completed
+        bars: the question is which move is common, not what share of all
+        moves any one of them is.
+        """
+        moves = (data or {}).get("moves") or []
+        box = QVBoxLayout()
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(2)
+        if not moves:
+            box.addWidget(self._line("nothing retagged", T.MUTED))
+        top = max([m["count"] for m in moves] or [1]) or 1
+        for m in moves[:STATS_MOVES_SHOWN]:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(self._line(
+                f"{m['from']} {GLYPH_MOVE} {m['to']}", T.MUTED))
+            row.addStretch(1)
+            row.addWidget(self._line(str(m["count"])))
+            box.addLayout(row)
+            box.addWidget(self._bar(m["count"] / top,
+                                    T.QUEUE.get(m["to"], T.NEUTRAL)[0]))
+        rest = moves[STATS_MOVES_SHOWN:]
+        if rest:
+            # Summed rather than dropped, so the rows still add up to the
+            # total below them -- a figure that does not add up is the first
+            # one somebody stops believing.
+            box.addWidget(self._line(
+                a_few(sum(m["count"] for m in rest), "other move",
+                      "other moves"),
+                T.MUTED,
+                tip="\n".join(f"{m['from']} {GLYPH_MOVE} {m['to']}  "
+                              f"{m['count']}" for m in rest)))
+        holder = QWidget()
+        holder.setLayout(box)
+        holder.setStyleSheet("background:transparent;")
+        return holder
+
     def clear(self):
         while self.body.count():
             it = self.body.takeAt(0)
@@ -3770,6 +3824,15 @@ class Stats(QWidget):
         if tally:
             self.body.addWidget(self._heading("Tickets"))
             self.body.addWidget(self._tally(tally))
+
+        # Retagging, straight after the tally: both are flows between the
+        # same four tags over the same window, and the tally's own `new` and
+        # `done` columns cannot show a ticket that arrived as one tag and
+        # left as another. Julian asked how much PROD becomes OPS.
+        tag_moves = data.get("tag_moves")
+        if tag_moves is not None:
+            self.body.addWidget(self._heading("Retagged"))
+            self.body.addWidget(self._moves(tag_moves))
 
         # 1. Completed across the window. The trend is the point: one number
         #    throws away the shape, and the shape is the news. It follows the
