@@ -42,7 +42,6 @@ interrupted and picked up again.
 from __future__ import annotations
 
 import argparse
-import os
 import pathlib
 import sqlite3
 import sys
@@ -62,6 +61,33 @@ CREATE TABLE IF NOT EXISTS backfill_message_types (
     seen       INTEGER NOT NULL
 )
 """
+
+
+def read_env(path: str) -> dict:
+    """KEY=VALUE out of an env file, by real path, or say so and stop.
+
+    `ernie_sync.load_env` resolves against *its own* directory and returns
+    **silently** when the file is not there, which is the wrong shape for
+    this: production's env need not live in the checkout, and it must not be
+    copied into one -- two copies of a token is how the two sets got mixed up
+    in the first place. A missing file here reported itself as "no
+    DISCORD_TOKEN", which sends the reader looking inside a file that does
+    not exist.
+    """
+    p = pathlib.Path(path).expanduser()
+    for cand in (p, pathlib.Path.cwd() / p,
+                 pathlib.Path(__file__).resolve().parent.parent / p):
+        if cand.is_file():
+            out = {}
+            for line in cand.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip("'\"")
+            out["__path__"] = str(cand)
+            return out
+    sys.exit(f"no such env file: {path}")
 
 
 def thread_history(d: S.Discord, tid: str):
@@ -179,18 +205,54 @@ def main() -> None:
                     help="say what would be read, make no request")
     a = ap.parse_args()
 
-    S.load_env(a.env)
-    token = os.environ.get("DISCORD_TOKEN")
-    guild = os.environ.get("DISCORD_GUILD_ID")
+    env = read_env(a.env)
+    token = env.get("DISCORD_TOKEN")
+    guild = env.get("DISCORD_GUILD_ID")
     if not token or not guild:
-        sys.exit(f"{a.env} has no DISCORD_TOKEN / DISCORD_GUILD_ID")
+        sys.exit(f"{env['__path__']} has no DISCORD_TOKEN / DISCORD_GUILD_ID")
 
-    # No writes are possible: `allow_writes_for` is left unset, so
-    # `Discord.write()` refuses whatever the env file says.
-    d = S.Discord(token, guild)
+    # This tool has no reason to hold a key that opens the door. An env file
+    # granting writes is a sandbox one, and a sandbox token against a
+    # production database would read the wrong server's history into it.
+    if env.get("ALLOW_DISCORD_WRITES"):
+        sys.exit(f"{env['__path__']} carries ALLOW_DISCORD_WRITES. This reads "
+                 f"and never writes, so it will not run with an env file that "
+                 f"grants writes -- point it at production's, which has no "
+                 f"such line.")
 
     con = sqlite3.connect(a.db)
     con.row_factory = sqlite3.Row
+
+    # The failure this exists to catch: the right token against the wrong
+    # database. Both halves are read out and compared before a single message
+    # is fetched, because the tool writes into rows keyed by message id and a
+    # mismatched pair would be filling in one server's mirror from another
+    # server's history -- silently, since every id would simply miss.
+    theirs = con.execute("""SELECT guild_id, COUNT(*) n FROM threads
+                            GROUP BY guild_id ORDER BY n DESC""").fetchall()
+    known = {r["guild_id"] for r in theirs if r["guild_id"]}
+    if known and guild not in known:
+        con.close()
+        sys.exit(f"refusing: {a.env} names guild {guild}, and every thread in "
+                 f"{a.db} belongs to {', '.join(sorted(known))}. One of the "
+                 f"two is the wrong one.")
+
+    # `allow_writes_for` is left unset, so `Discord.write()` refuses whatever
+    # any env file says -- and nothing in this file calls it. Asserted rather
+    # than assumed, because it is the one property that must hold.
+    d = S.Discord(token, guild)
+    assert not d.writes_allowed, "writes must be impossible here"
+
+    who = d.whoami()
+    print(f"bot {who['bot']!r} on {who['guild']!r} ({who['guild_id']}), "
+          f"writes={who['writes']}")
+    print(f"env {env['__path__']}")
+    print(f"db  {pathlib.Path(a.db).resolve()}  "
+          f"({sum(r['n'] for r in theirs)} threads, all in "
+          f"{', '.join(sorted(known)) or 'no guild'})\n")
+    if who["writes"]:
+        sys.exit("refusing: this client reports writes allowed")
+
     try:
         backfill(con, d, a.limit or None, a.dry_run)
     except KeyboardInterrupt:
