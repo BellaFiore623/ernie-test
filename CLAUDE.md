@@ -675,6 +675,17 @@ has been done, when it last moved and who moved it.
   ticket, client CR, assignee, each **only when known**: a thread with none of
   it draws none of those lines, because a format kept at the cost of the truth
   is not worth keeping.
+- **The sandbox no longer seeds those embeds, and that is not the same as
+  removing them.** `seed_test_server.py` used to imitate Python-Interface-Bot
+  so the parser had something real to read; the seeded threads carry only
+  Ernie's own status embed now, because Bert shows nothing from a Build
+  Request yet and another bot's panel in front of the one message Ernie owns
+  is clutter. **`ernie_extract` is untouched** -- production still has them,
+  and every rule above about `-- not found --`, `####` and the varying
+  "Existing Return ticket(s) (N)" count is still live there. So a sandbox
+  status embed draws none of the equipment/ticket/CR/assignee lines, which
+  the "only when known" rule already covers, and the parser paths are
+  exercised by the checks rather than by the board.
 - **The readable form, not the key.** Equipment is `thread_equipment.raw`
   (`EReel-1060`), which is what the job is called out loud, rather than the
   `equipment_master` PIP key the ticket carries; and a client CR is named off
