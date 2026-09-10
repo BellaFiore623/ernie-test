@@ -1261,6 +1261,48 @@ def client_label(c) -> str:
             if c.get("ambiguous") else short)
 
 
+# A word shorter than this is not compared loosely: `SCI`, `RJN`, `GFT` are
+# whole customer names, and at three letters almost anything resembles almost
+# anything. The exact, prefix and contains tiers already catch those.
+FUZZY_WORD_MIN = 4
+
+
+def client_words(text: str) -> list:
+    """A name as its words, squashed, long enough to be worth comparing.
+
+    Names are typed in part far more often than in full -- the first word and
+    then a guess, or the first word and then the wrong thing entirely.
+    """
+    return [w for w in (client_squash(x) for x in str(text or "").split())
+            if len(w) >= FUZZY_WORD_MIN]
+
+
+def client_fuzzy(q: str, typed: str, keys: list, raws: list) -> float:
+    """How much what was typed resembles one client, at its best.
+
+    Whole against whole **and word against word**, because comparing only the
+    whole strings punishes a name for the half that has not been typed yet:
+    `trafforf` against `traffordborough` is 0.61 and thrown away, while
+    against the word `trafford` it is 0.93. The letters were never the
+    problem. The same miss hides a name typed *past* -- somebody who gets
+    `Trafford` right and then keeps going scores 0.48 on the whole string and
+    1.0 on the first word.
+
+    Only ever puts a candidate in front of a person. `reconcile_aliases`
+    still refuses to merge on resemblance with nobody watching, and that rule
+    is untouched: `falmouth ma` and `falmouth me` are different places, and
+    this happily offers both.
+    """
+    best = max((difflib.SequenceMatcher(None, q, k).ratio()
+                for k in keys if k), default=0.0)
+    qw = client_words(typed)
+    kw = [w for raw in raws for w in client_words(raw)]
+    if qw and kw:
+        best = max(best, max(difflib.SequenceMatcher(None, a, b).ratio()
+                             for a in qw for b in kw))
+    return best
+
+
 def client_matches(typed, roster, limit=CLIENT_HITS):
     """The clients worth offering for what has been typed so far.
 
@@ -1297,8 +1339,9 @@ def client_matches(typed, roster, limit=CLIENT_HITS):
             # Only now is it worth the cost, and only against what the client
             # is actually called -- fuzzy against a whole summary matches
             # anything long enough.
-            best = max((difflib.SequenceMatcher(None, q, k).ratio()
-                        for k in [short] + names if k), default=0.0)
+            best = client_fuzzy(q, typed, [short] + names,
+                                [c.get("short_name") or ""]
+                                + list(c.get("aliases") or []))
             if best < CLIENT_FUZZY_MIN:
                 continue
             score = best
@@ -1345,8 +1388,16 @@ class ClientCombo(Combo):
         # paused, or never in the list -- stays on the card. Same reason the
         # queue dropdown keeps a retired tag: not offering it to anybody is
         # not the same as taking it off the one ticket that has it.
-        if current and current.lower() not in offered:
-            self.addItem(current, current)
+        #
+        # But it is **shown, not offered**: put in the box rather than added
+        # to the list. It used to be an item, and an item is something you
+        # can pick -- so a card whose title had a typo in it put that typo in
+        # the dropdown, under the same heading as the customers Jira knows
+        # about. Reported after `Trafford NJKNKNKNLN` turned up there. Bert
+        # cannot tell a retired client from a fat-fingered one: both are just
+        # a string the roster has never heard of. What it can do is stop
+        # dressing the second one up as a choice.
+        self._unlisted = bool(current) and current.lower() not in offered
 
         # The popup is filled by client_matches rather than filtered by the
         # completer, because the completer can only match the strings in the
@@ -1367,7 +1418,14 @@ class ClientCombo(Combo):
         # textEdited, so rebuilding the list is never mistaken for typing.
         self.lineEdit().textEdited.connect(self._offer)
 
-        self.setCurrentIndex(max(self.findData(current), 0) if current else 0)
+        if self._unlisted:
+            # Nothing to select, so put the text in the box directly. text()
+            # reads the line edit, so save() and is_dirty() see it either way.
+            self.setCurrentIndex(0)
+            self.setEditText(current)
+        else:
+            self.setCurrentIndex(
+                max(self.findData(current), 0) if current else 0)
         self.setEditText(current)
         # Picking the disambiguated line must put the short name in the box,
         # not the whole line including the summary.

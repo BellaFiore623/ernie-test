@@ -12,6 +12,8 @@ Every string in here is a real one off the production board.
 
 from __future__ import annotations
 
+import ast
+import pathlib
 import sys
 
 from support import Board, Check, iso
@@ -20,6 +22,9 @@ import bert
 import ernie_extract as ex
 import ernie_api as api
 import ernie_jira as J
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 # -- building the bits the Board fixture doesn't ---------------------------
@@ -664,7 +669,140 @@ def check_both_sides_of_a_collision_stay_offered() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_known_collision_stops_shouting,
+
+ROSTER = [
+    {"short_name": "Trafford Borough", "name": "Trafford Borough", "aliases": []},
+    {"short_name": "Duke's Root Control", "name": "Duke's Root Control",
+     "aliases": ["Dukes Root Control", "duke s root control"]},
+    {"short_name": "Duke's Omaha", "name": "Duke's Omaha", "aliases": []},
+    {"short_name": "Inspect.AI", "name": "Inspect.AI", "aliases": ["Inspect AI"]},
+    {"short_name": "SCI", "name": "SCI Infrastructure LLC.", "aliases": []},
+    {"short_name": "Falmouth MA", "name": "Falmouth MA", "aliases": []},
+    {"short_name": "Falmouth ME", "name": "Falmouth ME", "aliases": []},
+]
+
+
+def shorts(typed):
+    return [c["short_name"] for c in bert.client_matches(typed, ROSTER)]
+
+
+def check_a_name_typed_in_part_still_finds_its_client() -> bool:
+    """
+    The fuzzy tier compared whole against whole, and punished a partial name.
+
+    `trafforf` against `traffordborough` is 0.61 -- under the 0.72 floor --
+    and the miss is the half of the name that had not been typed yet, not the
+    letters that were wrong. Against the *word* `trafford` it is 0.93. Typing
+    on past the name hid the same way: somebody who gets `Trafford` right and
+    then keeps going scored 0.48 on the whole string and 1.0 on the word.
+
+    Reported from a real box: `Trafford NJKNKNKNLN` typed while aiming for
+    Trafford Borough, and the list offered nothing at all.
+    """
+    c = Check("a name typed in part still finds its client")
+
+    for typed in ("Trafford", "trafforf", "traford", "Trafford Bor",
+                  "Trafford NJK", "Trafford NJKNKNKNLN"):
+        c.ok("Trafford Borough" in shorts(typed),
+             f"{typed!r} offers Trafford Borough")
+
+    # Punctuation was always the common miss and still is.
+    c.ok("Duke's Root Control" in shorts("dukes root control"),
+         "an apostrophe left out still finds them")
+    c.ok("Inspect.AI" in shorts("inspect ai"), "and a dot")
+
+    return c.report()
+
+
+def check_the_search_still_refuses_to_choose() -> bool:
+    """
+    Looser matching must not become deciding.
+
+    `reconcile_aliases` refuses to merge on resemblance with nobody watching,
+    and that rule is untouched -- this one only puts candidates in front of a
+    person. The test of it is that an ambiguous query still returns *both*
+    rather than picking, which is the invariant a wider net could quietly
+    break by ranking one of them off the end of the list.
+    """
+    c = Check("the search offers rather than chooses")
+
+    dukes = shorts("dukes")
+    c.ok("Duke's Root Control" in dukes and "Duke's Omaha" in dukes,
+         f"'dukes' offers both customers, and settles nothing ({dukes})")
+
+    falmouth = shorts("falmouth")
+    c.equal(sorted(x for x in falmouth if x.startswith("Falmouth")),
+            ["Falmouth MA", "Falmouth ME"],
+            "and so does 'falmouth' -- two different places, 0.91 similar")
+
+    return c.report()
+
+
+def check_nonsense_still_finds_nothing() -> bool:
+    """A net wide enough to catch everything is not a search."""
+    c = Check("nonsense still finds nothing")
+
+    for typed in ("xyzzy", "zzzzzzzz", "qqqq", "12345"):
+        c.equal(shorts(typed), [], f"{typed!r} offers nobody")
+
+    # A three-letter name is never compared loosely: at that length almost
+    # anything resembles almost anything, and the exact and prefix tiers
+    # already catch the real ones.
+    c.ok("SCI" in shorts("sci"), "a short name is still found exactly")
+    c.ok("SCI" not in shorts("abc"),
+         "but not by any other three letters")
+
+    return c.report()
+
+
+
+def check_an_unlisted_client_is_shown_not_offered() -> bool:
+    """
+    A typo on a card must not become a thing you can pick.
+
+    The card's current client used to be added to the combo as an item when
+    the roster had never heard of it -- meant for a retired customer, which
+    is a real case: not offering one to anybody is not the same as taking it
+    off the ticket that has it. But Bert cannot tell a retired client from a
+    fat-fingered one; both are just a string the roster does not know. And an
+    item is something you can *pick*, so a card whose title read `Trafford
+    NJKNKNKNLN` put that in the dropdown beside the customers Jira knows
+    about. Reported from exactly that.
+
+    It is put in the box instead. `text()` reads the line edit, so `save()`
+    and `is_dirty()` see it either way -- which is the property that makes
+    showing it enough.
+
+    Read off the source: a `ClientCombo` needs a QApplication, and the checks
+    deliberately never make one.
+    """
+    c = Check("an unlisted client is shown, not offered")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    combo = next((n for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.ClassDef) and n.name == "ClientCombo"),
+                 None)
+    c.ok(combo is not None, "there is a ClientCombo")
+    if combo is None:
+        return c.report()
+    body = ast.get_source_segment(src, combo) or ""
+
+    c.ok("addItem(current" not in body,
+         "the card's own value is never added to the list")
+    c.ok("setEditText(current)" in body,
+         "it is put in the box instead, where it still saves")
+    # The roster's own rows are of course still items -- that is the list.
+    c.ok("self.addItem(label" in body,
+         "and every client the roster does know is still offered")
+
+    return c.report()
+
+
+CHECKS = (check_a_name_typed_in_part_still_finds_its_client,
+          check_an_unlisted_client_is_shown_not_offered,
+          check_the_search_still_refuses_to_choose,
+          check_nonsense_still_finds_nothing,
+          check_a_known_collision_stops_shouting,
           check_both_sides_of_a_collision_stay_offered,
           
     check_the_short_name_cuts_the_note_not_the_name,

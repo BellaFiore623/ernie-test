@@ -1252,7 +1252,27 @@ so the name is *picked* in Bert instead of typed.
   than choosing: `dukes` returns Duke's Omaha and Duke's Root Control, and
   settles nothing.
 - The dropdown is **pick-or-type**. A customer exists before Jira hears about
-  them, and a card already carrying an unoffered client keeps it.
+  them, and a card already carrying an unoffered client keeps it -- but it is
+  **shown, not offered**: put in the box, never added to the list. It used to
+  be an item, and an item is something you can pick, so a card whose title
+  read `Trafford NJKNKNKNLN` put that in the dropdown beside the customers
+  Jira knows about. Bert cannot tell a retired client from a fat-fingered one
+  -- both are just a string the roster has never heard of -- and what it can
+  do is stop dressing the second one up as a choice. `text()` reads the line
+  edit, so `save()` and `is_dirty()` see it either way, which is what makes
+  showing it enough.
+- **The fuzzy tier compares words as well as whole strings.** Comparing only
+  whole against whole punishes a name for the half that has not been typed
+  yet: `trafforf` against `traffordborough` is 0.61, under the 0.72 floor,
+  and the miss is the missing half rather than the wrong letters -- against
+  the *word* `trafford` it is 0.93. Typing on past the name hid the same way,
+  and that is how it was reported: `Trafford NJKNKNKNLN`, aiming for Trafford
+  Borough, offered nothing at all. Words under `FUZZY_WORD_MIN` are never
+  compared loosely, because `SCI`, `RJN` and `GFT` are whole customer names
+  and at three letters almost anything resembles almost anything.
+  A wider net is still only a net: `dukes` returns **both** Duke's, and
+  `falmouth` both Falmouths. Offering is not deciding, and
+  `reconcile_aliases` is untouched.
 
 ## The version number
 
