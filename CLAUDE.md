@@ -1541,7 +1541,23 @@ imports it. Bump it there and nowhere else.
   older Ernie does not send.
   **Below the floor is read-only**, which `writable()` gates alongside
   `connected` -- what a distrusted build would write cannot be trusted to
-  land. **Behind but above it is a note, not a wall.**
+  land. **Behind but above it is a note, not a wall**, and it has to *read*
+  like one: "Bert found a new update" over a board that is working perfectly
+  is an alarm, and an alarm that turns out to be nothing is how somebody
+  learns to click through the next one without reading it -- and the next one
+  is the blocked one. So it says the build is fine and nothing is paused,
+  before it says there is a newer one.
+  **And it can be silenced, for that build only.** The checkbox exists on the
+  harmless state and not on the blocked one -- the dialog is not what is
+  stopping anybody there, the floor is, so offering to hide it would promise
+  something it cannot do. `settings.update_muted` holds **Ernie's** version
+  rather than Bert's: "stop mentioning 0.9.9" should stop mentioning 0.9.9
+  and should speak up again at 0.9.10, where muting on Bert's own version
+  would silence every future release at once and amount to not having the
+  check.
+  The checkbox states its own `::indicator`, because Fusion draws that from
+  the palette's roles and against this dialog's ground it came out as a label
+  with no box beside it.
   The failure it replaces was a misleading one: `Api` calls `.json()` without
   checking the status, so an old Bert asking for a route its Ernie lacks got
   `{"detail": "Not Found"}`, then a KeyError, then a failed poll -- surfacing

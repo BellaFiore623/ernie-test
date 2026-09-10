@@ -245,6 +245,9 @@ def check_a_bert_that_is_behind_is_told() -> bool:
     """
     c = Check("a Bert that is behind is told")
 
+    def blocked_said():
+        return bert.build_standing("0.9.0", "0.9.3", "0.9.2")[1]
+
     ok = bert.build_standing("0.9.3", "0.9.3", "0.9.0")
     c.equal(ok[0], "ok", "the same build as Ernie is fine")
     c.equal(ok[1], "", "and says nothing")
@@ -254,6 +257,13 @@ def check_a_bert_that_is_behind_is_told() -> bool:
     c.ok("0.9.2" in behind[1] and "0.9.3" in behind[1],
          f"and names both numbers, because 'there is an update' is not "
          f"actionable ({behind[1]!r})")
+    # **It has to read as the good news it is.** "Bert found a new update"
+    # over a board that is working perfectly reads as an alarm, and an alarm
+    # that turns out to be nothing is how somebody learns to click through
+    # the next one without reading it -- and the next one is the blocked one.
+    c.ok("fine" in behind[1] and "paused" in behind[1],
+         "and says the build is fine and nothing is paused")
+    c.ok("paused until" in blocked_said(), "where the blocked one does not")
 
     blocked = bert.build_standing("0.9.0", "0.9.3", "0.9.2")
     c.equal(blocked[0], "blocked", "one under the floor is blocked")
@@ -328,7 +338,57 @@ def check_a_frozen_build_can_still_name_its_commit() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_bert_that_is_behind_is_told,
+def check_only_the_harmless_one_can_be_silenced() -> bool:
+    """
+    "Don't tell me about this one again", and only about *this one*.
+
+    Keyed on the version of Ernie somebody was told about, not on their own:
+    "stop mentioning 0.9.9" should stop mentioning 0.9.9 and should speak up
+    again when 0.9.10 turns up. Muting on Bert's own version would silence
+    every future release at once, which is the same as not having the check.
+
+    **A blocked board has no checkbox at all.** The dialog is not what is
+    stopping anybody -- the floor is -- so offering to hide it would promise
+    something it cannot do, and the board would stay read-only with nothing
+    on screen saying why.
+    """
+    c = Check("only the harmless one can be silenced")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def body(name, cls=None):
+        scope = tree
+        if cls:
+            scope = next((x for x in ast.walk(tree)
+                          if isinstance(x, ast.ClassDef) and x.name == cls), None)
+            if scope is None:
+                return ""
+        n = next((x for x in ast.walk(scope)
+                  if isinstance(x, ast.FunctionDef) and x.name == name), None)
+        return (ast.get_source_segment(src, n) or "") if n else ""
+
+    made = body("__init__", "UpdateDialog")
+    c.ok('if state == "behind"' in made and "QCheckBox" in made,
+         "the checkbox exists only for the state that is not a problem")
+    c.ok("indicator" in made,
+         "and its indicator is stated, or Fusion draws a label with no box")
+
+    wiring = body("_check_build")
+    c.ok("update_muted" in wiring, "the answer is remembered")
+    c.ok('build.get("version")' in wiring or "theirs" in wiring,
+         "against Ernie's version, so a newer one speaks up again")
+    c.ok('self.update_state == "behind"' in wiring
+         and wiring.index('self.update_state == "behind"')
+         < wiring.index("update_muted") + 200,
+         "and the mute is only consulted for that state")
+    c.ok("save_settings" in wiring, "and it survives a restart")
+
+    return c.report()
+
+
+CHECKS = (check_only_the_harmless_one_can_be_silenced,
+          check_a_bert_that_is_behind_is_told,
           check_the_floor_cannot_lock_everybody_out,
           check_a_frozen_build_can_still_name_its_commit,
           check_the_number_is_sayable,

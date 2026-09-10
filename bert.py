@@ -593,8 +593,13 @@ def build_standing(mine, theirs, floor):
             f"This copy of Bert is {mine}. This Ernie needs {floor} or newer, "
             f"so changes are paused until it is updated.")
     if ernie_version.is_older(mine, theirs):
+        # Said as the good news it is. "Bert found a new update" over a
+        # board that is working perfectly reads as an alarm, and an alarm
+        # that turns out to be nothing is how somebody learns to click
+        # through the next one without reading it.
         return "behind", (
-            f"You are on {mine}. Ernie is on {theirs}.")
+            f"This one is fine and nothing is paused \u2014 you are on {mine} "
+            f"and Ernie is on {theirs}. Worth updating when you get a chance.")
     return "ok", ""
 
 
@@ -643,6 +648,29 @@ class UpdateDialog(QDialog):
         said.addWidget(body)
         said.addStretch(1)
 
+        # **Only on the one that is not a problem.** A blocked board cannot
+        # be dismissed -- the dialog is not what is stopping anybody, the
+        # floor is, and offering to hide it would promise something it
+        # cannot do.
+        self.quiet = None
+        if state == "behind":
+            self.quiet = QCheckBox("Don't tell me about this one again")
+            # The indicator is stated, not left to the style. Fusion draws it
+            # from the palette's own roles, and against this dialog's ground
+            # that came out as a label with no box beside it at all -- a
+            # checkbox nobody can see is a checkbox nobody ticks.
+            self.quiet.setStyleSheet(
+                f"QCheckBox {{ color:{T.MUTED}; font-size:11px;"
+                f" background:transparent; }}"
+                f"QCheckBox::indicator {{ width:13px; height:13px;"
+                f" border:1px solid {T.LINE}; border-radius:3px;"
+                f" background:{T.CONTROL}; }}"
+                f"QCheckBox::indicator:hover {{ border-color:{T.ACCENT}; }}"
+                f"QCheckBox::indicator:checked {{ background:{T.ACCENT};"
+                f" border-color:{T.ACCENT}; }}")
+            self.quiet.setCursor(Qt.PointingHandCursor)
+            said.addWidget(self.quiet)
+
         # Under the text, which is where it was asked for -- and it is the
         # only button, because there is nothing here to decline. A blocked
         # board is blocked whatever this says.
@@ -656,6 +684,10 @@ class UpdateDialog(QDialog):
         said.addLayout(under)
 
         row.addLayout(said, 1)
+
+    def muted(self) -> bool:
+        """Whether to stop mentioning *this* build of Ernie."""
+        return bool(self.quiet and self.quiet.isChecked())
 
 
 def needs_triage(c) -> bool:
@@ -5210,10 +5242,28 @@ class Bert(QMainWindow):
         if self.update_state != was:
             self.render()               # the buttons follow writable()
 
-        # Once. A dialog on every poll would be its own outage.
-        if self.update_state != "ok" and not self._update_told:
+        # Once a session. A dialog on every poll would be its own outage.
+        if self.update_state == "ok" or self._update_told:
+            return
+        # And once a *build*, if somebody asked for that. Keyed on the
+        # version of Ernie they were told about rather than on their own:
+        # "stop mentioning 0.9.9" should stop mentioning 0.9.9, and should
+        # say something again when 0.9.10 turns up. There is no muting a
+        # blocked board -- that is the floor talking, not this.
+        theirs = build.get("version")
+        if (self.update_state == "behind"
+                and theirs and self.settings.get("update_muted") == theirs):
             self._update_told = True
-            UpdateDialog(self, self.update_state, self.update_said).exec()
+            return
+
+        # Set before the dialog, or a poll landing while it is open opens a
+        # second one behind it.
+        self._update_told = True
+        dlg = UpdateDialog(self, self.update_state, self.update_said)
+        dlg.exec()
+        if dlg.muted() and theirs:
+            self.settings["update_muted"] = theirs
+            self.save_settings()
 
     def _check_awaited(self):
         """Stop waiting once Discord has actually been read again.
