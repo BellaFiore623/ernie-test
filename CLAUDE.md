@@ -20,6 +20,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
 | `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
 | `ernie_jira.py` | Customer list, Jira → SQLite. Read-only against Jira. Off unless configured. |
+| `jira_client.py` | A standalone Jira CLI -- `test`, `search "JQL"`, fetch an issue. Nothing imports it; it is for looking at Jira by hand while working out a query. |
 | `ernie_version.py` | The version number, and which build is answering. Imported by everything that says one. |
 | `ernie_status.py` | The ticket's status, as a pinned message in its own thread. Rides with the outbox. |
 | `run.sh` | Starts the whole stack. `./run.sh test bert` |
@@ -36,10 +37,12 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `assets/bert_update.png` | The face Bert makes about a version mismatch. Shown by `UpdateDialog`. |
 | `requirements.txt` | httpx, fastapi, uvicorn, pydantic; PySide6 for Bert only. |
 | `ernie-test.env.example` | The env file's shape, with no values. Copied, not edited. |
+| `backups/` | Where `tools/ernie_backup.py` writes, and where the `.pre-migrate-` / `.pre-reseed-` snapshots live under `snapshots/`. Gitignored; 55 MB of them were sitting in the root. |
 | `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
 | `tests/` | `python tests/run.py`. Standard library, no network, no database of yours -- the fixture builds one from `schema.sql` in a temp directory. |
 | `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |
 | `TESTING.md` | Hand this to the tester. Both setups, start to finish. |
+| `SetupGuide.rtf` | The same ground as TESTING.md, in a form somebody can open without a code editor. |
 
 ## Hard rules
 
