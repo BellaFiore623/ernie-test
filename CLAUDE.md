@@ -151,8 +151,12 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   `new_value: None`, which looks enough like an archive to be believed. The
   entry carrying `{"key": "archived", "new_value": true}` names the person,
   `global_name` preferred over `username` the way the `started` line does.
-  **View Audit Log** was granted after this first shipped, so both sides are
-  live code: without it the client turns the 403 into `None` and the closure
+  **View Audit Log** is granted on the sandbox bot and has to be granted
+  separately on production's -- it is a per-role toggle on each server, and
+  the symptom of it missing is not an error but a feed that quietly says
+  "closed in Discord" and names nobody, for ever. Same trap as **Pin
+  Messages**, which is why that one is written down in four places. Both
+  sides are live code: without it the client turns the 403 into `None` and the closure
   is recorded unattributed. Naming somebody is a nicety; closing the ticket
   is the feature, and a revoked permission or a guild busy enough to push the
   archive past `AUDIT_LOOKBACK` must never hold it up.
