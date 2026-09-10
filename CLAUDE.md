@@ -1678,6 +1678,30 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
+**A theme previews as it is picked.** It is the one setting nobody can
+judge from its name, and the dialog used to ask for it and show the answer
+only after OK -- so choosing was a guess, and changing your mind meant
+opening the window again. Picking one now closes the dialog with
+`SettingsDialog.PREVIEW`, rebuilds the board in that palette and opens the
+dialog straight back on top of it, which from the outside reads as the
+control simply working.
+It has to go through the whole rebuild, because that is the only restyle
+there is -- every stylesheet is written where its widget is made, so there is
+no sheet to swap. The dialog is closed and reopened rather than kept, because
+the window it was parented to is the one being replaced.
+**Nothing is stored until OK**: a preview only calls `apply_theme`, and the
+fresh window loads what is on disk, so Cancel has something true to go back
+to and a board previewed into a theme nobody chose puts itself right. What
+had been typed rides across in `pending`, or looking at a colour would cost
+you a half-entered name.
+**And a window on its way out has to tell its deferred work.** `render()` and
+`_render_feed()` post `QTimer.singleShot`s to put their scrollbars back, and
+a `singleShot` cannot be stopped the way the poll timers can: they fired on
+the next turn of the loop, by which time the layouts and scrollbars were
+deleted C++ objects, and printed two tracebacks per rebuild. Survivable while
+a rebuild was something nobody did twice in a day; a preview does it on every
+pick. `_gone` is set beside `_swapping_theme` and both callbacks check it.
+
 **Dark is what a board opens as.** `THEME_DEFAULT` is `dark`, not `system`.
 Light was reported as tiring across four rounds by the person who uses this
 all day, and dark is the one measured as restful -- mean luminance 0.012 with

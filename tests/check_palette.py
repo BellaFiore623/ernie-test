@@ -1744,7 +1744,86 @@ def check_lights_chrome_is_grey_and_nothing_hides_in_it() -> bool:
     return c.report()
 
 
+def check_a_theme_previews_as_it_is_picked() -> bool:
+    """
+    A theme is the one setting nobody can judge from its name.
+
+    The dialog asked for it and showed the answer only after OK, so choosing
+    was a guess and changing your mind meant opening the window again.
+    Picking one now restyles the board underneath and puts the dialog
+    straight back, which reads as the control simply working.
+
+    Three things make that honest rather than a trick. **Nothing is stored
+    until OK** -- a preview only calls `apply_theme`, and the fresh window
+    loads what is actually on disk, so Cancel has something true to go back
+    to. **What was typed survives** the rebuild, or looking at a colour would
+    cost you a half-entered name. And **the deferred work is told the window
+    has gone**: `render()` and `_render_feed()` post `singleShot`s to put
+    their scrollbars back, which cannot be stopped the way a timer can, and
+    they fired on deleted C++ objects -- two tracebacks per rebuild. That was
+    survivable while a rebuild was a thing nobody did twice in a day, and a
+    preview does it on every pick.
+    """
+    c = Check("a theme previews as it is picked")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def body(name, cls=None):
+        """The source of a function, optionally the one inside a class.
+
+        Scoped, because `ast.walk` answers with whichever `__init__` it
+        reaches first and there are a dozen of them in this file.
+        """
+        scope = tree
+        if cls:
+            scope = next((x for x in ast.walk(tree)
+                          if isinstance(x, ast.ClassDef) and x.name == cls),
+                         None)
+            if scope is None:
+                return ""
+        n = next((x for x in ast.walk(scope)
+                  if isinstance(x, ast.FunctionDef) and x.name == name), None)
+        return (ast.get_source_segment(src, n) or "") if n else ""
+
+    c.ok(hasattr(bert.SettingsDialog, "PREVIEW"),
+         "the dialog has a third way out besides OK and Cancel")
+    c.ok(bert.SettingsDialog.PREVIEW not in (0, 1),
+         "and it cannot be mistaken for either of them")
+
+    dlg = body("_preview")
+    c.ok("resolve_theme" in dlg and "T.name" in dlg,
+         "a pick only previews when it would actually look different")
+
+    init = body("__init__", "SettingsDialog")
+    c.ok(init.index("setCurrentIndex") < init.index("currentIndexChanged"),
+         "the signal is connected after the index is set, so building the "
+         "dialog does not ask to preview what is already on screen")
+
+    opened = body("open_settings")
+    c.ok("PREVIEW" in opened and "rebuild_in_new_theme" in opened,
+         "and picking one rebuilds the board")
+    c.ok("open_settings(vals)" in opened,
+         "then opens the dialog again with what had been typed")
+    c.ok("save_settings" in opened and "PREVIEW" in opened.split("save_settings")[0],
+         "nothing is written until OK, which comes after the preview branch")
+    c.ok("resolve_theme" in opened.split("Cancelled")[-1],
+         "and cancelling puts back whatever is actually stored")
+
+    # The half that is not about themes at all: a window on its way out must
+    # not let its posted work touch widgets that are already deleted.
+    rebuild = body("rebuild_in_new_theme")
+    c.ok("_gone" in rebuild, "a window being swapped out says so")
+    c.ok("_gone" in body("_hold_scroll"),
+         "and the scroll restore checks before touching a layout")
+    c.ok("_gone" in body("_render_feed"),
+         "as does the feed's own")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour,
+          check_a_theme_previews_as_it_is_picked,
           check_lights_chrome_is_grey_and_nothing_hides_in_it,
           check_all_three_sections_fold_the_same_way,
           check_a_wrapper_round_an_input_paints_nothing,

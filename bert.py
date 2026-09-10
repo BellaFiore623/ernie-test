@@ -904,6 +904,12 @@ class SettingsDialog(QDialog):
     else's Ernie, and until now neither end could say so.
     """
 
+    # A third way out, besides OK and Cancel: "show me". Picking a theme
+    # closes the dialog with this, the window is rebuilt in that palette, and
+    # the dialog opens again on top of it -- so from the outside the board
+    # simply changes under an open Settings window.
+    PREVIEW = 2
+
     def __init__(self, parent, current, health=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -919,6 +925,14 @@ class SettingsDialog(QDialog):
         stored = current.get("theme", THEME_DEFAULT)
         self.theme.setCurrentIndex(
             THEMES.index(stored) if stored in THEMES else 0)
+        # Connected *after* the index is set, or building the dialog would
+        # fire it and ask for a preview of the theme already on screen.
+        #
+        # And only when the choice would actually look different: picking
+        # "Follow the desktop" on a machine whose desktop is already dark
+        # changes what is stored and changes nothing to look at, so there is
+        # nothing to preview and no reason to make the dialog blink.
+        self.theme.currentIndexChanged.connect(self._preview)
         form = QFormLayout()
         form.addRow("Your name", self.who)
         form.addRow("Theme", self.theme)
@@ -948,6 +962,10 @@ class SettingsDialog(QDialog):
         lay.addLayout(form)
         lay.addWidget(note)
         lay.addWidget(bb)
+
+    def _preview(self, *_):
+        if resolve_theme(self.theme.currentData()) != T.name:
+            self.done(self.PREVIEW)
 
     def values(self):
         return {"name": self.who.text().strip(),
@@ -4039,6 +4057,7 @@ class Bert(QMainWindow):
         if hasattr(hints, "colorSchemeChanged"):
             hints.colorSchemeChanged.connect(self.desktop_theme_changed)
         self._swapping_theme = False   # closing to reopen, not to quit
+        self._gone = False             # this window's widgets are deleted
         self.awaiting = False       # a manual refresh, waiting on the next
         self.await_run = None       # read of Discord. await_run is the read it
         self.await_since = 0.0      # started from, to tell a new one landing
@@ -4911,19 +4930,64 @@ class Bert(QMainWindow):
     def writable(self):
         return bool(self.name()) and self.connected
 
-    def open_settings(self):
-        was = self.settings.get("theme", THEME_DEFAULT)
-        dlg = SettingsDialog(self, self.settings, self.health)
-        if dlg.exec() == QDialog.Accepted:
-            self.settings.update(dlg.values())
+    def open_settings(self, pending=None):
+        """Settings, with the theme previewing as it is picked.
+
+        A theme is the one setting nobody can judge from its name, and the
+        dialog used to ask for it and then show the answer only after OK --
+        so choosing it was a guess, and changing your mind meant opening the
+        window again. Picking one now restyles the board underneath and puts
+        the dialog straight back, which reads as the control simply working.
+
+        It has to go through the whole rebuild, because that is the only
+        restyle there is: every stylesheet is written where its widget is
+        made, so there is no sheet to swap and no way to be sure a live
+        restyle missed none of the seventy-six. The dialog is therefore
+        closed and opened again rather than kept -- the window it was parented
+        to is the one being replaced.
+
+        **Nothing is stored until OK.** A preview only calls `apply_theme`;
+        the fresh window loads what is actually on disk, so Cancel has
+        something true to go back to and a board previewed into a theme
+        nobody chose puts itself right. `pending` carries whatever had been
+        typed into the dialog across the rebuild, so a name half entered is
+        not lost to looking at a colour.
+        """
+        seed = {**self.settings, **(pending or {})}
+        dlg = SettingsDialog(self, seed, self.health)
+        if pending:
+            # Where the pointer was. Reopening on a different widget would
+            # give the whole thing away.
+            dlg.theme.setFocus()
+        code = dlg.exec()
+        vals = dlg.values()
+
+        if code == SettingsDialog.PREVIEW:
+            fresh = self.rebuild_in_new_theme(vals["theme"])
+            # Through a timer, so the rebuild's own layout events have run
+            # before a modal loop starts on top of them.
+            QTimer.singleShot(0, lambda: fresh.open_settings(vals))
+            return
+
+        if code == QDialog.Accepted:
+            self.settings.update(vals)
             # Don't leave the old pair behind to be read back later.
             self.settings.pop("first_name", None)
             self.settings.pop("last_name", None)
-            SETTINGS.write_text(json.dumps(self.settings, indent=2))
-            if self.settings.get("theme", THEME_DEFAULT) != was:
+            self.save_settings()
+            # Only if the board is not already showing it -- after a preview
+            # it is, and rebuilding again would be a second flicker for
+            # nothing.
+            if resolve_theme(vals["theme"]) != T.name:
                 self.rebuild_in_new_theme()
                 return
             self.render()
+            return
+
+        # Cancelled. A preview may have left the board in a theme that was
+        # never stored, so put it back to whatever is.
+        if resolve_theme(self.settings.get("theme", THEME_DEFAULT)) != T.name:
+            self.rebuild_in_new_theme()
 
     def desktop_theme_changed(self, *_):
         """The desktop flipped. Only this board's business if it was following.
@@ -4937,8 +5001,12 @@ class Bert(QMainWindow):
             return                  # already showing what the desktop asks for
         self.rebuild_in_new_theme()
 
-    def rebuild_in_new_theme(self):
-        """Build the window again in the other palette.
+    def rebuild_in_new_theme(self, choice=None):
+        """Build the window again in the other palette. Answers the new one.
+
+        `choice` is for previewing: it restyles to a theme that has not been
+        stored anywhere, so the fresh window still loads whatever is on disk
+        and Cancel has something true to go back to.
 
         Every stylesheet here is written where its widget is made, which is
         what keeps each one next to the thing it explains -- and the price is
@@ -4948,7 +5016,7 @@ class Bert(QMainWindow):
         window once more cannot miss any. It costs the scroll position and one
         poll, on a setting nobody changes twice in a day.
         """
-        apply_theme(self.settings.get("theme", THEME_DEFAULT))
+        apply_theme(choice or self.settings.get("theme", THEME_DEFAULT))
         fresh = Bert(self.api.base)
         _OPEN.append(fresh)
         fresh.search.setText(self.search.text())     # a typed search survives
@@ -4959,12 +5027,22 @@ class Bert(QMainWindow):
         # never fires; and the timers stopped by hand, because a closed window
         # is not a deleted one and its poll would go on running behind this.
         self._swapping_theme = True
+        # **Deferred work has to be told, because it cannot be stopped.** The
+        # timers below are stoppable; the `QTimer.singleShot`s that `render()`
+        # and `_render_feed()` post to put the scrollbars back are not, and
+        # they fire on the next turn of the loop -- by which time this window
+        # is closed and its layouts and scrollbars are deleted C++ objects.
+        # Two tracebacks per rebuild, harmless and printed every time.
+        # Rebuilding used to be a thing nobody did twice in a day; previewing
+        # a theme does it on every pick, so it is worth saying so.
+        self._gone = True
         for t in (self.timer, self.clock, self.spin_timer, self.edge_timer):
             t.stop()
         self.close()
         if self in _OPEN:
             _OPEN.remove(self)
         self.deleteLater()
+        return fresh
 
     # -- polling -----------------------------------------------------------
 
@@ -6050,6 +6128,8 @@ class Bert(QMainWindow):
             return tuple(out)
 
         def put_back(tries=6, seen=None):
+            if self._gone:
+                return              # this window has been swapped out
             # A rebuild posts its layout requests rather than doing the work
             # there and then, so a position read before they are delivered is
             # the old one -- measured: the board still reported its old
@@ -6313,7 +6393,8 @@ class Bert(QMainWindow):
 
         # After a rebuild the layout hasn't settled
         bar = self.feed_scroll.verticalScrollBar()
-        QTimer.singleShot(0, lambda: bar.setValue(min(keep, bar.maximum())))
+        QTimer.singleShot(0, lambda: None if self._gone
+                          else bar.setValue(min(keep, bar.maximum())))
 
     @staticmethod
     def _feed_status(e, revoking):
