@@ -33,6 +33,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `tools/dump_threads.py` | Raw API JSON to disk. Read-only, for seeing what Discord actually sent. |
 | `tools/bashrc-snippet.sh` | Optional shell shortcuts. Nothing depends on it. |
 | `assets/bert_logo.png` | Bert's mark. `bert.py` resolves it relative to itself. |
+| `assets/bert_update.png` | The face Bert makes about a version mismatch. Shown by `UpdateDialog`. |
 | `requirements.txt` | httpx, fastapi, uvicorn, pydantic; PySide6 for Bert only. |
 | `ernie-test.env.example` | The env file's shape, with no values. Copied, not edited. |
 | `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
@@ -1521,12 +1522,39 @@ imports it. Bump it there and nowhere else.
   `build` block, and Bert's settings window. Bert shows **both** ends there,
   its own and whatever `/health` reported, because in the one-backend-two-Berts
   setup those are two checkouts and either can be the stale one.
-- **The build number is still not compared anywhere.** The *wire format* is,
-  and says so loudly -- see the state channel below -- but two machines on
-  0.9.0 and 0.8.1 with the same `FORMAT_VERSION` read each other perfectly and
-  nothing remarks on it. That is the right order to build these in: the format
-  is what actually breaks a board, and the build number is what an update
-  check will compare.
+- **The build number is compared now, and there are two of them.** The wire
+  format was always compared; this is the other half, and it arrived with the
+  exe. While everybody runs from source a `git pull` is the update and drift
+  is visible; a handed-out build is frozen at the day it was made and there is
+  no pull.
+  **`VERSION` is the newest; `MIN_BERT` is the floor** -- the oldest Bert this
+  Ernie will work with, raised **by hand** on a release that genuinely breaks
+  something. Refusing anything that is not exactly `VERSION` was the obvious
+  rule and is the wrong one here: `describe()` carries the commit, people run
+  from source, and every push would lock the other laptop out of a board it
+  reads perfectly well. So "you cannot use Bert unless it is up to date" is
+  true *when somebody decides it needs to be*.
+  `/health`'s `build` block carries both, `bert.build_standing()` is the pure
+  decision, and it **fails open at every step**: an Ernie that names no
+  version says nothing about ours, one that names no floor can never block. A
+  build check has no business taking a working board away over a field an
+  older Ernie does not send.
+  **Below the floor is read-only**, which `writable()` gates alongside
+  `connected` -- what a distrusted build would write cannot be trusted to
+  land. **Behind but above it is a note, not a wall.**
+  The failure it replaces was a misleading one: `Api` calls `.json()` without
+  checking the status, so an old Bert asking for a route its Ernie lacks got
+  `{"detail": "Not Found"}`, then a KeyError, then a failed poll -- surfacing
+  as **"Can't reach Ernie."** A stale Bert looked like a dead server.
+  **`MIN_BERT` above `VERSION` would lock everybody out at once**, from the
+  server, with the only fix a build that does not exist yet. It is one line to
+  get wrong in a release and there is no recovering from it in the field, so
+  `check_version.py` holds the two in order.
+- **A frozen build names its commit from a file.** There is no `.git` inside
+  an exe, so the packaging step writes the sha into `build_commit.txt` beside
+  the module and `_read_commit` reads it **before** walking `.git` -- a bundle
+  carrying a stamp is not a clone, and there is nothing underneath it worth
+  preferring.
 
 ## Running
 

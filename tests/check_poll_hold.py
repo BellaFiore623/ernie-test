@@ -52,6 +52,11 @@ class FakeBert:
     def _tick_freshness(self):
         pass
 
+    def _check_build(self):
+        # Which build is answering is a different question from what
+        # on_loaded does with a payload, and it is checked where it lives.
+        pass
+
     def _done_checking(self):
         pass
 

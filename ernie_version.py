@@ -29,6 +29,21 @@ import pathlib
 # other place that names a version imports this one.
 VERSION = "0.9.0"
 
+# The oldest Bert this Ernie will work with. **Raised by hand, on a release
+# that actually breaks something** -- not automatically, and not to match
+# VERSION. Everything between this and VERSION is a Bert that is behind and
+# still perfectly able to work, which is most of them: routes are added far
+# more often than they change shape, and Bert already survives a missing
+# `/stats` or `/clients/roster` without failing the poll the board depends
+# on.
+#
+# The alternative was refusing anything that is not exactly VERSION, and it
+# is the wrong rule for this project: `describe()` carries the commit, people
+# run from source, and every push would lock the other laptop out of a board
+# it can read perfectly well. This way "you cannot use Bert unless it is up
+# to date" is true when somebody decides it needs to be.
+MIN_BERT = "0.9.0"
+
 
 def _read_commit(root: pathlib.Path | None = None) -> str | None:
     """The short commit of the working copy this file sits in.
@@ -42,6 +57,21 @@ def _read_commit(root: pathlib.Path | None = None) -> str | None:
     shape this clone happens to have, which is not the shape worth testing.
     """
     here = (root or pathlib.Path(__file__).resolve().parent)
+
+    # A build written by the packager, for the case this function cannot
+    # answer at all: a frozen exe has no working copy, so `.git` is not there
+    # to read and the commit would be None for ever. The build step writes
+    # the sha into this file and it is carried along with the rest of the
+    # bundle -- one line, checked before the git walk rather than after,
+    # because a bundle that has one is not a clone and there is nothing under
+    # it worth preferring.
+    stamp = here / "build_commit.txt"
+    try:
+        if stamp.is_file():
+            return stamp.read_text(encoding="utf-8").strip()[:7] or None
+    except OSError:
+        pass
+
     git = here / ".git"
     try:
         if git.is_file():
@@ -87,6 +117,31 @@ def describe() -> str:
     return f"{VERSION} ({COMMIT})" if COMMIT else VERSION
 
 
+def as_tuple(v) -> tuple:
+    """A version as numbers, for comparing. Unreadable parts sort as 0.
+
+    Nothing here may raise. A build check that throws on a version it cannot
+    parse would take the board down over the *label* on a build, which is the
+    one thing this is not important enough to do.
+    """
+    out = []
+    for part in str(v or "").split("."):
+        digits = "".join(c for c in part if c.isdigit())
+        out.append(int(digits) if digits else 0)
+    return tuple(out) or (0,)
+
+
+def is_older(a, b) -> bool:
+    """Whether version `a` is behind version `b`.
+
+    Padded to the same length, so 0.9 and 0.9.0 are the same build rather
+    than one of them being behind.
+    """
+    x, y = as_tuple(a), as_tuple(b)
+    n = max(len(x), len(y))
+    return x + (0,) * (n - len(x)) < y + (0,) * (n - len(y))
+
+
 def payload() -> dict:
     """The build, for something that has to compare it rather than read it.
 
@@ -94,7 +149,7 @@ def payload() -> dict:
     board is on the same build wants the fields, not a sentence it would have
     to take back apart.
     """
-    return {"version": VERSION, "commit": COMMIT}
+    return {"version": VERSION, "commit": COMMIT, "min_bert": MIN_BERT}
 
 
 if __name__ == "__main__":

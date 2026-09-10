@@ -49,6 +49,8 @@ SETTINGS = pathlib.Path.home() / ".bert.json"
 # Beside the script rather than in the settings directory: it ships with the
 # code, and a checkout without it should still start.
 LOGO = pathlib.Path(__file__).parent / "assets" / "bert_logo.png"
+# The face Bert makes about a version mismatch.
+UPDATE_FACE = pathlib.Path(__file__).parent / "assets" / "bert_update.png"
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
@@ -560,6 +562,95 @@ def card_skin(data, editing=False):
     if editing:
         return tint, T.ACCENT, 1
     return tint, edge, 1
+
+
+def build_standing(mine, theirs, floor):
+    """Whether this Bert is behind, and how far. Answers (state, sentence).
+
+    Pure, and separate from the dialog that shows it, because the decision is
+    the part worth being sure about: this is what disables writing.
+
+    Three states. **blocked** is a Bert older than the floor its Ernie
+    publishes -- somebody has decided that build genuinely cannot be trusted
+    against this one, so the board goes read-only. **behind** is a Bert that
+    is merely not the newest, which is most of them and is not a reason to
+    stop anybody working. **ok** is everything else.
+
+    It fails *open* at every step it cannot answer. An Ernie that publishes
+    no floor is an older Ernie, not a demand; an Ernie that publishes no
+    version at all says nothing about ours. A build check has no business
+    taking a working board away over a missing field.
+    """
+    if not theirs:
+        return "ok", ""
+    if floor and ernie_version.is_older(mine, floor):
+        return "blocked", (
+            f"This copy of Bert is {mine}. This Ernie needs {floor} or newer, "
+            f"so changes are paused until it is updated.")
+    if ernie_version.is_older(mine, theirs):
+        return "behind", (
+            f"You are on {mine}. Ernie is on {theirs}.")
+    return "ok", ""
+
+
+class UpdateDialog(QDialog):
+    """Bert, having noticed.
+
+    A dialog rather than the banner the outage warning uses, because this one
+    has to be read once and acted on -- a strip along the top is for a state
+    somebody is living with, and being on the wrong build is a thing to go and
+    fix. It says the two numbers, because "there is an update" is not
+    actionable and "you are on 0.9.0, Ernie is on 0.9.3" is.
+    """
+
+    def __init__(self, parent, state, detail):
+        super().__init__(parent)
+        self.setWindowTitle("Update")
+        dark_titlebar(self)
+        self.setStyleSheet(f"QDialog {{ background:{T.CANVAS}; }}")
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(18, 18, 18, 14)
+        row.setSpacing(16)
+
+        face = QLabel()
+        if UPDATE_FACE.exists():
+            face.setPixmap(QPixmap(str(UPDATE_FACE)))
+        face.setAlignment(Qt.AlignTop)
+        face.setStyleSheet("background:transparent;")
+        row.addWidget(face)
+
+        said = QVBoxLayout()
+        said.setSpacing(8)
+        head = QLabel("Wait, Bert found a new update")
+        f = QFont()
+        f.setPointSize(12)
+        f.setWeight(QFont.DemiBold)
+        head.setFont(f)
+        head.setStyleSheet(f"color:{T.INK}; background:transparent;")
+        said.addWidget(head)
+
+        body = QLabel(detail)
+        body.setWordWrap(True)
+        body.setMinimumWidth(300)
+        body.setStyleSheet(f"color:{T.MUTED}; font-size:12px;"
+                           f" background:transparent;")
+        said.addWidget(body)
+        said.addStretch(1)
+
+        # Under the text, which is where it was asked for -- and it is the
+        # only button, because there is nothing here to decline. A blocked
+        # board is blocked whatever this says.
+        ok = QPushButton("Fine" if state == "blocked" else "Alright")
+        ok.setStyleSheet(btn_css())
+        ok.setCursor(Qt.PointingHandCursor)
+        ok.clicked.connect(self.accept)
+        under = QHBoxLayout()
+        under.addStretch(1)
+        under.addWidget(ok)
+        said.addLayout(under)
+
+        row.addLayout(said, 1)
 
 
 def needs_triage(c) -> bool:
@@ -4056,6 +4147,11 @@ class Bert(QMainWindow):
         hints = QApplication.styleHints()
         if hasattr(hints, "colorSchemeChanged"):
             hints.colorSchemeChanged.connect(self.desktop_theme_changed)
+        # Where this build stands against the one answering. Read on every
+        # poll; the dialog is shown once, the first time it is not "ok".
+        self.update_state = "ok"
+        self.update_said = ""
+        self._update_told = False
         self._swapping_theme = False   # closing to reopen, not to quit
         self._gone = False             # this window's widgets are deleted
         self.awaiting = False       # a manual refresh, waiting on the next
@@ -4928,7 +5024,10 @@ class Bert(QMainWindow):
         return f"{s.get('first_name', '')} {s.get('last_name', '')}".strip()
 
     def writable(self):
-        return bool(self.name()) and self.connected
+        # A blocked build is read-only for the same reason a lost connection
+        # is: what it would write cannot be trusted to land properly.
+        return (bool(self.name()) and self.connected
+                and self.update_state != "blocked")
 
     def open_settings(self, pending=None):
         """Settings, with the theme previewing as it is picked.
@@ -5074,6 +5173,34 @@ class Bert(QMainWindow):
         self.poller.failed.connect(self.on_failed)
         self.poller.start()
 
+    def _check_build(self):
+        """Where this build stands against the one that just answered.
+
+        Off the poll rather than at startup, because at startup there is
+        nothing to compare against yet -- `/health` is the only thing that
+        knows what Ernie is, and Bert has not asked it.
+        """
+        build = (self.health or {}).get("build") or {}
+        was = self.update_state
+        self.update_state, self.update_said = build_standing(
+            ernie_version.VERSION, build.get("version"), build.get("min_bert"))
+
+        if self.update_state != was and was == "blocked":
+            self.banner.hide()          # updated underneath us, or moved on
+        if self.update_state == "blocked":
+            self.banner.setText(self.update_said)
+            self.banner.setStyleSheet(
+                f"background:{T.RED_BG}; color:{T.RED_FG}; padding:7px;"
+                f" font-size:12px;")
+            self.banner.show()
+        if self.update_state != was:
+            self.render()               # the buttons follow writable()
+
+        # Once. A dialog on every poll would be its own outage.
+        if self.update_state != "ok" and not self._update_told:
+            self._update_told = True
+            UpdateDialog(self, self.update_state, self.update_said).exec()
+
     def _check_awaited(self):
         """Stop waiting once Discord has actually been read again.
 
@@ -5125,6 +5252,7 @@ class Bert(QMainWindow):
         self.health = p.get("health") or {}
         self.sharing = self.health.get("sharing")
         self.health_at = time.time()
+        self._check_build()
         if "stats" in p:
             # An empty answer still counts as one: without stamping it, a
             # stack with an older Ernie would ask again on every poll.
