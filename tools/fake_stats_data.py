@@ -21,6 +21,12 @@ outbox pass for ever.
 The real seeded cards are not duplicated, only *backdated* -- their threads
 keep their real ids, so the "open longest" rows still click through to a card
 that is really there.
+
+**Everything invented is closed**, and that is deliberate rather than an
+oversight. An invented *open* ticket would sit on the board looking like a
+real one, with no Discord thread behind it and nothing to click through to.
+So the open column is the real seeded cards and only those; it is the two
+flows -- created and closed -- that this fills in.
 """
 from __future__ import annotations
 
@@ -34,8 +40,25 @@ PREFIX = "fake-"
 
 # A rising trend, because that is the shape production has (27, 61, 63, 67,
 # 95 across five months) and a flat one tells you nothing about whether the
-# panel reads well.
-PER_MONTH = (14, 22, 26, 31, 44, 38)
+# panel reads well. Twelve months, because the figures panel offers a window
+# out to a year and a selector whose longest setting shows the same thing as
+# its second longest is a selector nobody trusts.
+PER_MONTH = (9, 11, 14, 12, 17, 19, 14, 22, 26, 31, 44, 38)
+
+# The tags, and roughly how the board is actually made up: PROD is most of
+# it. Invented history that was all one tag made the per-tag breakdown look
+# broken rather than empty -- every row but one at nought, on a panel built
+# to compare them.
+QUEUE_MIX = (["PROD"] * 6) + (["OPS"] * 3) + (["ENG"] * 2) + ["CS"]
+
+# What each tag's work tends to be called, so a title reads like the board's
+# rather than like a fixture.
+SUMMARY = {
+    "PROD": ("respool", "fiber snapped", "swap", "job", "reel service"),
+    "OPS":  ("bot swap", "no amber light", "escalation", "site visit"),
+    "ENG":  ("firmware", "what it's about", "sensor drift", "rev check"),
+    "CS":   ("training", "onboarding", "follow up"),
+}
 
 # Most jobs close quickly and a few drag for months. This is the spread that
 # makes the median worth quoting: the mean sits well above the middle.
@@ -104,8 +127,10 @@ def add_history(con, rng: random.Random) -> int:
             opened = closed - timedelta(days=span, hours=rng.randint(0, 23))
             tid = f"{PREFIX}{back}-{i}"
             client = rng.choice(CLIENTS)
-            name = (f"PROD: {client} - {opened.strftime('%d%b%y')} - "
-                    f"EReel-{1000 + rng.randint(0, 400)} job")
+            queue = rng.choice(QUEUE_MIX)
+            name = (f"{queue}: {client} - {opened.strftime('%d%b%y')} - "
+                    f"EReel-{1000 + rng.randint(0, 400)} "
+                    f"{rng.choice(SUMMARY[queue])}")
             con.execute(
                 """INSERT OR REPLACE INTO threads
                    (thread_id, parent_id, guild_id, created_at, first_seen_at,
@@ -118,8 +143,9 @@ def add_history(con, rng: random.Random) -> int:
                    (thread_id, observed_at, name, queue, client_raw,
                     client_key, thread_date, summary, confidence)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                (tid, iso(opened), name, "PROD", client, client.lower(),
-                 opened.date().isoformat(), "job", "strict"))
+                (tid, iso(opened), name, queue, client, client.lower(),
+                 opened.date().isoformat(), name.rsplit(" - ", 1)[-1],
+                 "strict"))
             con.execute(
                 """INSERT OR REPLACE INTO cards
                    (thread_id, priority, rank, updated_at, completed_at,

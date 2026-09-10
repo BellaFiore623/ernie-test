@@ -731,6 +731,52 @@ or worse, how long a ticket takes, or which ones have been open since April.
   the standard above being applied rather than an exception to it -- the query
   went with it rather than being left to run every refresh for a field nothing
   reads. The panel is headed **Stats**, which is what people call it.
+- **How much there is, how much came in, how much went out -- by tag, over a
+  window somebody picks.** `tally` in `/stats?days=N`, drawn as a table
+  because the three numbers are read together: "three open, eleven in, twenty
+  out" is a sentence about PROD, and the same figures as three separate lists
+  is three things to hold at once. `STATS_WINDOWS` offers 7 days through a
+  year, kept in `settings.stats_days`.
+- **Open is a level; created and closed are flows, and the labels say so.**
+  Open is the backlog *now* and does not move when the window does. Windowing
+  it would answer "opened inside the window and still open", which is a
+  different and much less useful question -- the work somebody is carrying
+  does not begin at the start of whatever window they chose. The columns are
+  `open`, `new` and `done` for that reason, and the tooltips spell it out.
+- **The rows have to add up, which is the whole reason `Other` exists.** A
+  card whose tag is retired -- or that has none -- still counts towards the
+  board, and dropping it would leave a table whose rows do not make its own
+  total. A figure that does not add up is the first one somebody stops
+  believing. `Other` appears only when it has something in it; every
+  *offered* tag keeps its row even at nought, so the shape of the list does
+  not change under a reader.
+- **In the toolbar's order, not the parser's.** The table walks `T.QUEUE`,
+  which is what the filter checkboxes walk, so it reads PROD OPS ENG CS --
+  the order already read once across the top of the window.
+  `ex.QUEUES_OFFERED` is a different order.
+- **The window compares dates with `datetime()` on both sides**, and the way
+  that fails is not the obvious one. For dates a day or more apart a raw
+  string compare gives the right answer anyway, because the digits differ
+  before the separator is reached. It goes wrong **only on the boundary day**,
+  and always in the same direction: `T` (0x54) sorts after a space (0x20), so
+  a thread opened earlier in the day than the cutoff compares as later and is
+  counted in a window it falls outside. Every figure reads slightly high and
+  nothing looks broken. `check_stats.py` puts a row four hours the wrong side
+  of a seven-day cutoff, which is the only place it shows.
+- **The panel scrolls.** It was a plain column with a stretch under it, which
+  was fine while three blocks fitted -- add a fourth and Qt does not clip the
+  overflow, it **squashes every block proportionally**: measured, the tally
+  asked for 134px and was given 11, so a six-row table drew as one line and
+  "time to close" was cut off the bottom edge. Nothing reported anything,
+  because nothing had failed. More blocks are coming as people say what they
+  want here, so it is a scroll area now rather than a height to keep an eye on.
+- **The window selector is built once and lives outside the body.**
+  `set_stats` throws the body away and builds it again whenever the numbers
+  change; a combo rebuilt under somebody's pointer loses its popup mid-choice
+  and would have to have its value restored from settings on every redraw.
+  Changing it clears `stats_at` and asks again straight away -- the figures
+  ride the slow lane, and a dropdown that takes a minute to change the numbers
+  under it reads as broken.
 - **Nothing is derived from `events`.** Production's is **empty**, and all 313
   of its completions read `completed_by = "imported"` -- they were inferred
   from archived threads, not recorded by anyone using Bert. So per-person and

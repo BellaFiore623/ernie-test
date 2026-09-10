@@ -39,7 +39,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QCompleter, QDialog, QDialogButtonBox,
-    QFormLayout,
+    QFormLayout, QGridLayout,
     QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout,
     QWidget,
@@ -113,6 +113,14 @@ STATS_WIDTH = 244          # what it opens at, not what it stays
 STATS_ROW_CHROME = 64      # the age column and the padding beside it
 STATS_OLD_D = 90           # a quarter open is a different kind of old
 STATS_MAX_AGE_S = 60       # these move when a ticket closes, not per poll
+# What the figures panel can be asked about, shortest first. Weeks up to a
+# month and then quarters, because that is how the work is actually talked
+# about -- "the last three weeks" is a sentence somebody says and "the last
+# 19 days" is not.
+STATS_WINDOWS = (("7 days", 7), ("2 weeks", 14), ("3 weeks", 21),
+                 ("4 weeks", 28), ("3 months", 91), ("6 months", 182),
+                 ("9 months", 273), ("1 year", 365))
+STATS_WINDOW_DEFAULT = 28
 GLYPH_LEFT = "\u00ab"
 GLYPH_RIGHT = "\u00bb"
 # Qt's QWIDGETSIZE_MAX, which PySide6 does not export. Undoes a
@@ -907,8 +915,9 @@ class Api:
     def roster(self):
         return self.client.get(f"{self.base}/clients/roster").json()
 
-    def stats(self):
-        return self.client.get(f"{self.base}/stats").json()
+    def stats(self, days=STATS_WINDOW_DEFAULT):
+        return self.client.get(f"{self.base}/stats",
+                               params={"days": days}).json()
 
     def new_ticket(self, fields, actor):
         return self._post("/tickets", {**fields, "actor": actor})
@@ -953,13 +962,15 @@ class Poller(QThread):
     loaded = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, api, want_roster=False, want_stats=False):
+    def __init__(self, api, want_roster=False, want_stats=False,
+                 stats_days=STATS_WINDOW_DEFAULT):
         super().__init__()
         self.api = api
         # The figures move when a ticket closes or ages a day, not every five
         # seconds, so they ride the slow lane with the roster rather than the
         # poll the board depends on.
         self.want_stats = want_stats
+        self.stats_days = stats_days
         # The customer list is 65 rows that change about hourly, so it does
         # not ride the five-second poll. It comes back on the polls that ask,
         # and it comes back here rather than on demand because fetching it
@@ -983,7 +994,7 @@ class Poller(QThread):
                 # An older Ernie has no such route. That is not a reason to
                 # fail the poll the board depends on.
                 try:
-                    p["stats"] = self.api.stats()
+                    p["stats"] = self.api.stats(self.stats_days)
                 except Exception:
                     p["stats"] = None
             self.loaded.emit(p)
@@ -3368,14 +3379,49 @@ class Stats(QWidget):
         top.addStretch(1)
         outer.addLayout(top)
 
+        # Outside the body on purpose. `set_stats` tears the body down and
+        # builds it again whenever the numbers change, which is every time
+        # the poll brings a different answer -- a combo rebuilt under
+        # somebody's pointer loses its popup mid-choice, and would have to
+        # have its value put back from settings on every redraw. This one is
+        # built once and never touched again.
+        self.window_box = Combo()
+        self.window_box.addItems([label for label, _ in STATS_WINDOWS])
+        self.window_box.setCursor(Qt.PointingHandCursor)
+        self.window_box.setToolTip(
+            "How far back Created and Closed count. Open is the backlog now "
+            "and does not move with it.")
+        want = board.settings.get("stats_days") or STATS_WINDOW_DEFAULT
+        self.window_box.setCurrentIndex(
+            next((i for i, (_, d) in enumerate(STATS_WINDOWS) if d == want), 3))
+        self.window_box.currentIndexChanged.connect(self._window_changed)
+        outer.addWidget(self.window_box)
+
         self.body = QVBoxLayout()
         self.body.setContentsMargins(0, 0, 0, 0)
         self.body.setSpacing(9)
         self.holder = QWidget()
         self.holder.setLayout(self.body)
         self.holder.setStyleSheet("background:transparent;")
-        outer.addWidget(self.holder)
-        outer.addStretch(1)
+
+        # The panel scrolls, the way the running order does. It used to be a
+        # widget in a plain layout with a stretch under it, which was fine
+        # while three blocks fitted -- add a fourth and Qt does not clip the
+        # overflow, it *squashes every block proportionally*: measured, the
+        # tally asked for 134px and was given 11, so a table of six rows was
+        # drawn as one line and "time to close" was cut off the bottom edge.
+        # Nothing said anything, because nothing had failed.
+        #
+        # More blocks are coming as people say what they want here, so this
+        # is the shape that survives that rather than a height to keep an eye
+        # on.
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setStyleSheet("background:transparent;")
+        self.scroll.setWidget(self.holder)
+        outer.addWidget(self.scroll, 1)
 
         self.hint = QLabel("waiting for Ernie")
         self.hint.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
@@ -3418,6 +3464,93 @@ class Stats(QWidget):
         lay.addStretch(100 - share)
         return holder
 
+    def days(self):
+        """The window the selector is on, in days."""
+        i = max(0, min(self.window_box.currentIndex(), len(STATS_WINDOWS) - 1))
+        return STATS_WINDOWS[i][1]
+
+    def _window_changed(self, *_):
+        """Kept, and asked for again straight away.
+
+        The figures ride the slow lane -- they move when a ticket closes, not
+        every five seconds -- but a dropdown that takes up to a minute to
+        change the numbers under it reads as broken. Clearing the stamp makes
+        the next poll fetch them, which is the same 5s round trip everything
+        else on this board runs at.
+        """
+        self.board.settings["stats_days"] = self.days()
+        self.board.save_settings()
+        self.board.stats_at = 0
+        self.board.refresh()
+
+    def _tally(self, tally):
+        """Open, created and closed, per tag, as a table.
+
+        A table rather than three lists, because the three numbers are read
+        together -- "three open, eleven in, twenty out" is a sentence about
+        PROD, and the same figures on three separate rows is three facts to
+        hold at once. It fits a 244px panel: a tag, then three columns.
+        """
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(3)
+
+        for col, (text, tip) in enumerate((
+                ("open", "Open right now. This is a backlog, not a count for "
+                         "the window -- it does not move when the window does."),
+                ("new", f"Threads opened in the last {self.days()} days."),
+                ("done", f"Tickets closed in the last {self.days()} days."))):
+            lab = self._line(text, T.MUTED, tip=tip)
+            lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(lab, 0, col + 1)
+
+        # In the toolbar's order, which is the palette's -- the filter
+        # checkboxes are built by walking T.QUEUE, so PROD OPS ENG CS is the
+        # order somebody has already read once across the top of the window.
+        # QUEUES_OFFERED is the parser's order and is not the same.
+        served = tally.get("queues") or []
+        order = ([q for q in T.QUEUE if q in served]
+                 + [q for q in served if q not in T.QUEUE])
+
+        row = 1
+        for q in order:
+            stripe = T.QUEUE.get(q, T.NEUTRAL)[0]
+            name = self._line(q, stripe)
+            grid.addWidget(name, row, 0)
+            for col, key in enumerate(("open", "created", "closed")):
+                n = (tally.get(key) or {}).get(q, 0)
+                # A nought is quiet: on a board where one tag does most of
+                # the work, the rest of the table is noughts and reading them
+                # as loud as the numbers makes the shape harder to see.
+                cell = self._line(str(n), T.INK if n else T.MUTED)
+                cell.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                grid.addWidget(cell, row, col + 1)
+            row += 1
+
+        # A painted strip, not QFrame.HLine: a framed line takes its colour
+        # from the palette's Mid role and ignores a stylesheet background, so
+        # it came out as a gap. The board's drop marker is a widget with a
+        # background for the same reason.
+        rule = QFrame()
+        rule.setFixedHeight(1)
+        rule.setStyleSheet(f"background:{T.LINE}; border:none;")
+        grid.addWidget(rule, row, 0, 1, 4)
+        row += 1
+
+        totals = tally.get("totals") or {}
+        grid.addWidget(self._line("all", T.MUTED), row, 0)
+        for col, key in enumerate(("open", "created", "closed")):
+            cell = self._line(str(totals.get(key, 0)))
+            cell.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(cell, row, col + 1)
+
+        grid.setColumnStretch(0, 1)
+        holder = QWidget()
+        holder.setLayout(grid)
+        holder.setStyleSheet("background:transparent;")
+        return holder
+
     def clear(self):
         while self.body.count():
             it = self.body.takeAt(0)
@@ -3453,6 +3586,13 @@ class Stats(QWidget):
 
         room = max(self.width() - STATS_ROW_CHROME, 60)
         fm = QFontMetrics(self.font())
+
+        # First, because it is the block somebody came to the panel for: how
+        # much there is, how much arrived, how much left, and of what.
+        tally = data.get("tally")
+        if tally:
+            self.body.addWidget(self._heading("Tickets"))
+            self.body.addWidget(self._tally(tally))
 
         # 1. Completed per month. The trend is the point: one number for this
         #    month throws away the shape, and the shape is the news.
@@ -3522,7 +3662,8 @@ class Stats(QWidget):
         """Fold down to a spine, so the board gets the width back."""
         self.folded = yes
         self.head.setVisible(not yes)
-        self.holder.setVisible(not yes)
+        self.window_box.setVisible(not yes)
+        self.scroll.setVisible(not yes)
         self.hint.setVisible(not yes and self._sig is None)
         if yes:
             # A range, not a fixed width. Fixed, the pane could not be
@@ -4075,6 +4216,20 @@ class Bert(QMainWindow):
             if panel.folded and sizes[i] > RAIL_FOLDED_W + UNFOLD_GRAB:
                 panel.set_folded(False, settle=False)
 
+    def save_settings(self) -> None:
+        """Write the layout somebody chose, and never make a fuss about it.
+
+        Four places were doing this identically -- the rail width, the
+        collapsed bands, the figures width and the feed height -- each with
+        its own `try` and its own comment saying the same thing. A layout is
+        not worth an error box, so a failure here is swallowed on purpose:
+        the worst case is that the window opens the way it did last time.
+        """
+        try:
+            SETTINGS.write_text(json.dumps(self.settings, indent=2))
+        except OSError:
+            pass
+
     def _remember_rail_width(self, *_):
         """Kept the way the feed height is, and for the same reason: a
         layout somebody chose should survive the next launch."""
@@ -4083,19 +4238,13 @@ class Bert(QMainWindow):
         w = self.rail.width()
         if w and w != self.settings.get("rail_width"):
             self.settings["rail_width"] = w
-            try:
-                SETTINGS.write_text(json.dumps(self.settings, indent=2))
-            except OSError:
-                pass    # a layout is not worth an error box
+            self.save_settings()
 
     def remember_collapsed(self, bands):
         """Kept the way the rail width is: a layout somebody chose should
         survive the next launch."""
         self.settings["rail_collapsed"] = sorted(bands)
-        try:
-            SETTINGS.write_text(json.dumps(self.settings, indent=2))
-        except OSError:
-            pass    # a layout is not worth an error box
+        self.save_settings()
 
     def _remember_stats_width(self, *_):
         """Kept the way the rail's width is, and for the same reason."""
@@ -4104,10 +4253,7 @@ class Bert(QMainWindow):
         w = self.stats_panel.width()
         if w and w != self.settings.get("stats_width"):
             self.settings["stats_width"] = w
-            try:
-                SETTINGS.write_text(json.dumps(self.settings, indent=2))
-            except OSError:
-                pass    # a layout is not worth an error box
+            self.save_settings()
 
     def _centre_board(self):
         """Keep the column in the middle of the **window**, not of its pane.
@@ -4208,10 +4354,7 @@ class Bert(QMainWindow):
         h = self.feed_panel.height()
         if h and h != self.settings.get("feed_height"):
             self.settings["feed_height"] = h
-            try:
-                SETTINGS.write_text(json.dumps(self.settings, indent=2))
-            except OSError:
-                pass    # a layout is not worth an error box
+            self.save_settings()
 
     def _feed_scale(self):
         """How much more of a line a closed row may show at this width.
@@ -4450,7 +4593,8 @@ class Bert(QMainWindow):
             return
         self.poller = Poller(
             self.api, want_roster=time.time() - self.roster_at > ROSTER_MAX_AGE_S,
-            want_stats=time.time() - self.stats_at > STATS_MAX_AGE_S)
+            want_stats=time.time() - self.stats_at > STATS_MAX_AGE_S,
+            stats_days=self.stats_panel.days())
         self.poller.loaded.connect(self.on_loaded)
         self.poller.failed.connect(self.on_failed)
         self.poller.start()

@@ -520,7 +520,7 @@ def health():
 
 
 @app.get("/stats")
-def stats(months: int = 6, ageing: int = 5):
+def stats(months: int = 6, ageing: int = 5, days: int = 28):
     """What the board looks like over time, rather than right now.
 
     Four numbers, and each earns its place by answering something the board
@@ -580,8 +580,61 @@ def stats(months: int = 6, ageing: int = 5):
         # a figure nobody acts on is furniture, and it is the same standard
         # the other three earn their place by. The query goes with it rather
         # than being left to run every refresh for a field nothing reads.
+        # 4. How much there is, how much arrived and how much left, split by
+        #    the tag. Three questions in one block because they are read
+        #    together -- "twelve open, nine in, seven out" is a sentence, and
+        #    the same three numbers on three separate screens is not.
+        #
+        #    **Open is a level; created and closed are flows.** Open is what
+        #    is on the plate *now* and does not move with the window, which
+        #    is why it is labelled so in the panel. Windowing it would answer
+        #    "opened in the last four weeks and still open", which is a
+        #    different and much less useful question -- the backlog somebody
+        #    is carrying does not start at the beginning of the window.
+        since = f"-{max(1, int(days))} days"
+        # datetime() on both sides. Python writes ISO8601 with a T and
+        # SQLite's datetime('now') uses a space, so a raw string compare is
+        # always false -- it silently broke the outbox once.
+        rows = con.execute(
+            """SELECT COALESCE(v.queue, '') AS queue,
+                      SUM(c.completed_at IS NULL) AS open,
+                      SUM(datetime(t.created_at) >= datetime('now', :since))
+                        AS created,
+                      SUM(c.completed_at IS NOT NULL
+                          AND datetime(c.completed_at)
+                              >= datetime('now', :since)) AS closed
+               FROM cards c
+               JOIN threads t USING (thread_id)
+               LEFT JOIN v_thread_current v ON v.thread_id = c.thread_id
+               GROUP BY queue""", {"since": since}).fetchall()
+
+        tally = {"days": int(days), "queues": [],
+                 "open": {}, "created": {}, "closed": {},
+                 "totals": {"open": 0, "created": 0, "closed": 0}}
+        for r in rows:
+            # A tag nothing offers any more still names the cards it is on --
+            # same rule as the dropdown. It goes under one heading rather
+            # than its own, or a queue retired years ago gets a column of
+            # zeroes for ever; but it is never dropped, because then the rows
+            # would not add up to the total and a figure that does not add up
+            # is the first one somebody stops believing.
+            q = r["queue"] if r["queue"] in ex.QUEUES_OFFERED else "Other"
+            for k in ("open", "created", "closed"):
+                tally[k][q] = tally[k].get(q, 0) + (r[k] or 0)
+                tally["totals"][k] += r[k] or 0
+        # Every offered tag gets a row even at nought, so the shape of the
+        # list does not change under somebody reading it; Other appears only
+        # when it has something in it.
+        tally["queues"] = list(ex.QUEUES_OFFERED) + (
+            ["Other"] if any(t.get("Other") for t in
+                             (tally["open"], tally["created"], tally["closed"]))
+            else [])
+        for q in tally["queues"]:
+            for k in ("open", "created", "closed"):
+                tally[k].setdefault(q, 0)
+
         return {"completed_by_month": by_month, "ageing": oldest,
-                "time_to_complete": took}
+                "time_to_complete": took, "tally": tally}
     finally:
         con.close()
 

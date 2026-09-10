@@ -23,6 +23,7 @@ from support import Board, Check, iso
 
 import bert
 import ernie_api as api
+import ernie_extract as ex
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -240,7 +241,223 @@ def check_it_folds_the_way_the_rail_folds() -> bool:
     return c.report()
 
 
+
+def tallied(b, name, queue, created_days_ago, closed_days_ago=None):
+    """A card with a tag, an age, and possibly an end."""
+    tid = b.card(name, "medium")
+    b.con.execute("UPDATE threads SET created_at=?, first_seen_at=? "
+                  "WHERE thread_id=?",
+                  (iso(-created_days_ago * 86400),
+                   iso(-created_days_ago * 86400), tid))
+    b.con.execute("UPDATE thread_titles SET queue=? WHERE thread_id=?",
+                  (queue, tid))
+    if closed_days_ago is not None:
+        b.con.execute("UPDATE cards SET completed_at=?, completed_by=? "
+                      "WHERE thread_id=?",
+                      (iso(-closed_days_ago * 86400), "imported", tid))
+    b.con.commit()
+    return tid
+
+
+def check_open_is_a_level_and_the_other_two_are_flows() -> bool:
+    """
+    The window moves created and closed. It must not move open.
+
+    Open is the backlog *now* -- what is on the plate. Windowing it would
+    answer "opened inside the window and still open", which is a different
+    and much less useful question: the work somebody is carrying does not
+    start at the beginning of whatever window they picked. The panel labels
+    the column `open` against `new` and `done` for that reason, and this is
+    the assertion that keeps the two apart.
+    """
+    c = Check("open is a level; created and closed are flows")
+
+    with Board() as b:
+        tallied(b, "PROD: A - 01Jan26 - x", "PROD", 400)          # old, open
+        tallied(b, "PROD: B - 01Jan26 - x", "PROD", 3)            # new, open
+        tallied(b, "OPS: C - 01Jan26 - x", "OPS", 300, 200)       # long closed
+        tallied(b, "OPS: D - 01Jan26 - x", "OPS", 10, 2)          # just closed
+        api.DB = b.path
+
+        week = api.stats(days=7)["tally"]
+        year = api.stats(days=365)["tally"]
+
+        c.equal(week["totals"]["open"], 2, "two are open")
+        c.equal(year["totals"]["open"], week["totals"]["open"],
+                "and the same two are open at every window, because open is "
+                "not a thing that happened inside one")
+
+        c.equal(week["totals"]["created"], 1, "one thread opened this week")
+        # Three, not four: the 400-day-old one is outside a year, which is
+        # the window doing its job at the far end as well as the near one.
+        c.equal(year["totals"]["created"], 3, "and three inside the year")
+        c.equal(week["totals"]["closed"], 1, "one ticket closed this week")
+        c.equal(year["totals"]["closed"], 2, "and two inside the year")
+
+        c.ok(year["totals"]["created"] > week["totals"]["created"],
+             "a wider window can only find more of a flow")
+
+    return c.report()
+
+
+def check_the_rows_add_up() -> bool:
+    """
+    Per tag, and the tags have to sum to the total.
+
+    Which is the whole reason `Other` exists. A card whose tag is retired --
+    or that has none at all -- still counts towards the board, and dropping
+    it would leave a table whose rows do not make its own total. A figure
+    that does not add up is the first one somebody stops believing.
+    """
+    c = Check("the per-tag rows add up to the total")
+
+    with Board() as b:
+        tallied(b, "PROD: A - 01Jan26 - x", "PROD", 5)
+        tallied(b, "OPS: B - 01Jan26 - x", "OPS", 5, 1)
+        # A queue that parses and is never offered, and one with no tag at
+        # all -- the two ways a card arrives without a column of its own.
+        tallied(b, "DATA: C - 01Jan26 - x", "DATA", 5)
+        tallied(b, "D - 01Jan26 - x", None, 5)
+        api.DB = b.path
+        t = api.stats(days=30)["tally"]
+
+        for key in ("open", "created", "closed"):
+            rows = sum(t[key][q] for q in t["queues"])
+            c.equal(rows, t["totals"][key],
+                    f"the {key} column sums to its total ({rows})")
+
+        c.ok("Other" in t["queues"], "a retired or missing tag has a home")
+        c.equal(t["open"]["Other"], 2,
+                "and both of them are in it rather than dropped")
+        c.ok("DATA" not in t["queues"],
+             "a retired queue gets no column of its own, or one retired years "
+             "ago carries a row of noughts for ever")
+
+    return c.report()
+
+
+def check_every_offered_tag_keeps_its_row() -> bool:
+    """A table whose rows appear and vanish is one nobody can scan."""
+    c = Check("every offered tag keeps its row, even at nought")
+
+    with Board() as b:
+        tallied(b, "PROD: only one - 01Jan26 - x", "PROD", 2)
+        api.DB = b.path
+        t = api.stats(days=30)["tally"]
+
+        for q in ex.QUEUES_OFFERED:
+            c.ok(q in t["queues"], f"{q} has a row with nothing in it")
+            for key in ("open", "created", "closed"):
+                c.ok(t[key].get(q) is not None,
+                     f"{q} has a {key} number rather than a gap")
+        c.ok("Other" not in t["queues"],
+             "but Other stays away until it has something in it")
+
+    return c.report()
+
+
+def check_the_window_compares_dates_the_only_way_that_works() -> bool:
+    """
+    `datetime()` on both sides, which is a hard rule here.
+
+    Python writes ISO8601 with a `T` and SQLite's `datetime('now')` uses a
+    space, so the two cannot be compared as strings. The failure is not the
+    obvious one and it took an attempt to find: for dates a day or more apart the
+    raw compare happens to give the right answer, because the digits differ
+    before the separator is reached. It only goes wrong **on the boundary
+    day itself** -- and there it always goes the same way, because `T` (0x54)
+    sorts after a space (0x20). So a thread opened earlier in the day than
+    the cutoff compares as *later* and is counted in a window it falls
+    outside.
+
+    Quietly, and always in the same direction: every figure reads slightly
+    high, by up to a day's worth of work at the far edge. Nothing looks
+    broken. This is the case that catches it.
+    """
+    c = Check("the window compares dates the only way that works")
+
+    with Board() as b:
+        stamp = b.con.execute(
+            "SELECT created_at FROM threads LIMIT 1").fetchone()
+        tid = tallied(b, "PROD: inside - 01Jan26 - x", "PROD", 1, 1)
+        held = b.con.execute("SELECT created_at FROM threads WHERE thread_id=?",
+                             (tid,)).fetchone()[0]
+        c.ok("T" in held,
+             f"the fixture stores a T, as the mirror does ({held[:19]})")
+
+        # Four hours the wrong side of a seven-day cutoff -- so on the same
+        # calendar date as the boundary, which is the only place this breaks.
+        tallied(b, "PROD: just outside - 01Jan26 - x", "PROD", 7 + 4 / 24,
+                7 + 4 / 24)
+
+        api.DB = b.path
+        t = api.stats(days=7)["tally"]
+        c.equal(t["totals"]["created"], 1,
+                "a thread opened four hours before a seven-day cutoff is "
+                "outside it -- compared as strings it reads as inside, "
+                "because T sorts after a space")
+        c.equal(t["totals"]["closed"], 1,
+                "and the same for a ticket closed four hours before it")
+
+        # And the ordinary case still works, so the fix has not gone the
+        # other way and started excluding things that are inside.
+        year = api.stats(days=365)["tally"]
+        c.equal(year["totals"]["created"], 2, "both are inside a year")
+
+    return c.report()
+
+
+def check_the_table_reads_in_the_toolbar_s_order() -> bool:
+    """
+    PROD OPS ENG CS, which is the order already read once across the window.
+
+    The filter checkboxes are built by walking `T.QUEUE`, so that is the
+    order somebody has in their head by the time they look at this panel.
+    `QUEUES_OFFERED` is the parser's order and is not the same one.
+    """
+    c = Check("the table reads in the toolbar's order")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    stats = next(n for n in ast.walk(tree)
+                 if isinstance(n, ast.ClassDef) and n.name == "Stats")
+    fn = next((n for n in stats.body if isinstance(n, ast.FunctionDef)
+               and n.name == "_tally"), None)
+    c.ok(fn is not None, "the panel draws the table in one place")
+    body = ast.get_source_segment(src, fn) or "" if fn else ""
+    c.ok("for q in T.QUEUE" in body,
+         "ordered by the palette, which is what the filters walk")
+
+    # The selector is built once and never rebuilt: set_stats tears the body
+    # down on every change, and a combo rebuilt under somebody's pointer
+    # loses its popup mid-choice.
+    init = ast.get_source_segment(src, next(
+        n for n in stats.body if isinstance(n, ast.FunctionDef)
+        and n.name == "__init__")) or ""
+    c.ok("self.window_box" in init, "the window selector is built once")
+    draw = ast.get_source_segment(src, next(
+        n for n in stats.body if isinstance(n, ast.FunctionDef)
+        and n.name == "set_stats")) or ""
+    c.ok("window_box" not in draw,
+         "and never touched by the redraw, which throws the body away")
+
+    # Every window the panel offers has to be one the API will take.
+    c.ok(all(isinstance(d, int) and d > 0 for _, d in bert.STATS_WINDOWS),
+         "every window is a positive number of days")
+    lens = [d for _, d in bert.STATS_WINDOWS]
+    c.equal(lens, sorted(lens), "and they are offered shortest first")
+    c.ok(bert.STATS_WINDOW_DEFAULT in lens,
+         "the default is one of the options, or the box opens on nothing")
+
+    return c.report()
+
+
 CHECKS = (check_the_figures_are_what_they_claim,
+          check_open_is_a_level_and_the_other_two_are_flows,
+          check_the_rows_add_up,
+          check_every_offered_tag_keeps_its_row,
+          check_the_window_compares_dates_the_only_way_that_works,
+          check_the_table_reads_in_the_toolbar_s_order,
           check_the_middle_not_the_mean,
           check_it_says_nothing_rather_than_something_wrong,
           check_the_month_label_reads_in_a_narrow_column,
