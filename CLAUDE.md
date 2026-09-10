@@ -281,6 +281,43 @@ activity feed, undo, and the outbox.
   is part of `Rail.set_cards`' signature, so a drag counts as a change and the
   rows rebuild; the rebuild is held behind `RAIL_REDRAW_MS` rather than run on
   every pixel of the drag.
+- **The window has three foldable sections and one fold button between
+  them.** The running order, the figures and the activity feed. `fold_button()`
+  is that control written once -- it had been written three times and had
+  already drifted, two copies differing only in the alpha of their hover tint,
+  0.12 against 0.14, which is nobody's decision and nothing anybody would
+  notice going wrong. **The glyph is the one thing that differs**, because
+  each folds toward its own edge: the rail left, the figures right, the feed
+  down. "Just like the running order" is about the control rather than the
+  arrow -- a panel that drops to the bottom marked with a leftward chevron is
+  a button describing somebody else's panel.
+  The feed was the one without it: a bare caret with no border, on a header
+  that happened to be clickable, so the reader who had found the other two had
+  no reason to think this was one. The header is still clickable underneath --
+  a wider target costs nothing -- but a label that merely happens to be
+  clickable does not say a section folds.
+- **Folding re-places the splitter, and the feed was the last panel to learn
+  it.** Narrowing the widget does not narrow the pane it sits in.
+  `_fit_feed` set a *fixed* height on the panel and returned, so the panel
+  came down to its caption and the splitter went on holding the pane at
+  whatever it last allotted: the heading, then three hundred pixels of empty
+  floor, then a handle stranded above it, and the board given none of the room
+  the fold was for. Reported as clicking the header collapsing "the content in
+  it" rather than the section, which is exactly what it was doing. Measured
+  after: `[380, 346]` open, `[696, 30]` folded -- **316px back to the board** --
+  and `[380, 346]` again on unfolding, because the layout somebody chose has to
+  survive a fold.
+  `_place_feed()` is the one place that moves the handle, called from the
+  button, because folding is the button's business. Not from `_fit_feed`,
+  which runs on every poll and would put the handle back under anybody
+  dragging it.
+- **And folded is a minimum, never a fixed height** -- the rule the two side
+  panels already follow, arrived at here the same way. Fixed, the pane cannot
+  be moved at all, and the handle is still sitting right there against the
+  caption. `_unfold_feed_by_drag` is `_unfold_by_drag` for the other axis: a
+  drag past `UNFOLD_GRAB` becomes the unfold, and it deliberately does *not*
+  re-place the pane, because the drag is already the height somebody is
+  choosing.
 - **The board and the feed are the two halves of a `QSplitter`**, so the
   height between them can be traded off -- some days the history is the thing
   being read. Neither half may carry a fixed height, or the handle has nothing

@@ -649,14 +649,26 @@ def check_the_feed_can_be_resized() -> bool:
     fit = _method("_fit_feed")
     # Rows are still held to one height -- that is a different question, and
     # what stops an undo shifting the list. It is the panel that must not be.
+    #
+    # **Not even folded.** This used to require exactly one setFixedHeight,
+    # on the folded branch, on the grounds that a folded feed is not something
+    # to drag open. Both halves of that were wrong in the same way the side
+    # panels were wrong before them: a fixed widget gives the handle nothing
+    # to move, and the handle is still sitting right there against the
+    # caption. Folded is a *minimum* now, with the maximum left open so the
+    # handle can pull it back out.
     fixed = [n for n in ast.walk(fit)
              if isinstance(n, ast.Call)
              and getattr(n.func, "attr", None) == "setFixedHeight"
              and getattr(getattr(n.func, "value", None), "attr", None) == "feed_panel"]
-    c.equal(len(fixed), 1, "the panel is given a fixed height exactly once")
-    c.ok(any(getattr(a, "id", None) == "FEED_FOLDED"
-             for n in fixed for a in ast.walk(n)),
-         "and only when folded, which the caret owns rather than the handle")
+    c.equal(len(fixed), 0,
+            "the panel is never given a fixed height, folded or not")
+    c.ok(any(isinstance(n, ast.Call)
+             and getattr(n.func, "attr", None) == "setMinimumHeight"
+             and getattr(getattr(n.func, "value", None), "attr", None)
+             == "feed_panel"
+             for n in ast.walk(fit)),
+         "it is held to a minimum instead, which is the spine when folded")
 
     c.ok(any(isinstance(n, ast.Call)
              and getattr(n.func, "attr", None) == "setMaximumHeight"
@@ -667,6 +679,39 @@ def check_the_feed_can_be_resized() -> bool:
     c.ok(any(isinstance(n, ast.Attribute) and n.attr == "_feed_sized"
              for n in ast.walk(fit)),
          "the handle is placed once, not on every poll")
+
+    # **The fold has to re-place the splitter**, which is the whole of the
+    # bug behind it: narrowing the widget does not narrow the pane it sits
+    # in, so folding left the caption, then three hundred pixels of empty
+    # floor, then a handle stranded above it -- and the board got none of the
+    # room the fold was for. Reported as the header collapsing "the content
+    # in it" rather than the section. The figures panel already knew this;
+    # the feed was the last one still learning it.
+    place = _method("_place_feed")
+    c.ok(place is not None, "there is one place that puts the handle")
+    body = ast.get_source_segment(src, place) or "" if place else ""
+    c.ok("setSizes" in body, "and it moves the splitter, not just the widget")
+    c.ok("FEED_FOLDED" in body,
+         "taking the pane down to the spine when the feed is folded")
+
+    toggle = _method("toggle_feed")
+    tbody = ast.get_source_segment(src, toggle) or "" if toggle else ""
+    c.ok("_place_feed" in tbody,
+         "and the button calls it, because folding is the button's business")
+
+    # A folded panel that cannot be dragged open is the complaint the side
+    # panels already answered. The feed folds along the other axis and needs
+    # the same answer.
+    drag = _method("_unfold_feed_by_drag")
+    c.ok(drag is not None, "a drag away from the bottom edge opens it again")
+    dbody = ast.get_source_segment(src, drag) or "" if drag else ""
+    c.ok("UNFOLD_GRAB" in dbody,
+         "past the same grab distance the side panels use")
+    c.ok("_place_feed" not in dbody,
+         "and it does not re-place the pane -- the drag is already the "
+         "height somebody is choosing")
+    c.ok("splitterMoved" in src and "_unfold_feed_by_drag" in src,
+         "wired to the handle that was doing nothing before")
 
     # And kept, or it has to be found again on every launch.
     remember = _method("_remember_feed_height")

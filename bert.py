@@ -4201,6 +4201,7 @@ class Bert(QMainWindow):
         self.split.setStretchFactor(0, 1)   # the board takes the slack
         self.split.setStretchFactor(1, 0)
         self.split.splitterMoved.connect(self._remember_feed_height)
+        self.split.splitterMoved.connect(self._unfold_feed_by_drag)
         outer.addWidget(self.split, 1)
 
         self.edge_timer = QTimer(self)
@@ -4453,12 +4454,19 @@ class Bert(QMainWindow):
         if not self.feed_folded:
             self._feed_sized = False
         self.feed_body.setVisible(not self.feed_folded)
+        self._say_feed_fold()
+        self._fit_feed()
+        # The button's business, so the button re-places the splitter. Folding
+        # the widget alone left the pane exactly as tall as it was.
+        self._place_feed()
+
+    def _say_feed_fold(self):
+        """The glyph and both tooltips, wherever the fold came from."""
         tip = ("Show the activity feed" if self.feed_folded
                else "Hide the activity feed")
         self.feed_fold_btn.setText(GLYPH_UP if self.feed_folded else GLYPH_DOWN)
         self.feed_fold_btn.setToolTip(tip)
         self.feed_head.setToolTip(tip)
-        self._fit_feed()
 
     def resizeEvent(self, e):
         """A resized window is a different picture of the same cards.
@@ -4686,9 +4694,17 @@ class Bert(QMainWindow):
         carries an Undo button, so it is measured, not predicted.
         """
         if self.feed_folded:
-            # Fixed on purpose: a folded feed is not something to drag open,
-            # the caret does that.
-            self.feed_panel.setFixedHeight(FEED_FOLDED)
+            # A range, not a fixed height -- the rule the two side panels
+            # already follow. `setFixedHeight` pins the *widget*, and the
+            # handle is still sitting right there against the caption, so
+            # dragging it did nothing and nothing on screen said why.
+            #
+            # The height itself is placed by `_place_feed`, from the fold
+            # gesture rather than from here: this runs on every poll, and
+            # putting the handle back on each one would snap it out from
+            # under anybody dragging it open.
+            self.feed_panel.setMinimumHeight(FEED_FOLDED)
+            self.feed_panel.setMaximumHeight(UNCAPPED)
             return
         # The rows went in a moment ago and the layout has not recomputed yet,
         # so ask it to before believing anything it says about its size.
@@ -4779,11 +4795,51 @@ class Bert(QMainWindow):
         # back under the person moving it.
         self._place_sides()
         if not self._feed_sized and self._feed_wants:
-            want = self.settings.get("feed_height") or self._feed_wants
-            total = self.split.height()
-            if total > want + BOARD_MIN_H:
-                self.split.setSizes([total - want, want])
-                self._feed_sized = True
+            self._place_feed()
+
+    def _place_feed(self):
+        """Put the handle where the fold says it belongs.
+
+        **Narrowing the widget does not narrow the pane it sits in**, and the
+        feed was the last panel still learning that. `setFixedHeight` took the
+        panel down to its caption and the splitter went on holding the pane at
+        whatever it last allotted, so folding left the heading, then three
+        hundred pixels of empty floor, then a handle stranded above it -- and
+        the board got none of the room the fold was for. Reported as clicking
+        the header collapsing "the content in it" rather than the section,
+        which is exactly what it was doing.
+
+        The same fix the figures panel already carries, in the same words: the
+        fold has to re-place the splitter, both ways.
+        """
+        total = self.split.height()
+        if not total:
+            return                      # asked before the window has a size
+        if self.feed_folded:
+            self.split.setSizes([total - FEED_FOLDED, FEED_FOLDED])
+            return
+        want = self.settings.get("feed_height") or self._feed_wants
+        if want and total > want + BOARD_MIN_H:
+            self.split.setSizes([total - want, want])
+            self._feed_sized = True
+
+    def _unfold_feed_by_drag(self, *_):
+        """A caption dragged away from the bottom opens the feed.
+
+        The counterpart of `_unfold_by_drag` for the other axis, and it
+        exists for the same reason: the button folds, but a handle sitting
+        against a folded panel has to do something, or the rule is one nobody
+        can see. It does not re-place the pane -- the drag is already the
+        height somebody is choosing.
+        """
+        if not self.feed_folded:
+            return
+        sizes = self.split.sizes()
+        if len(sizes) > 1 and sizes[1] > FEED_FOLDED + UNFOLD_GRAB:
+            self.feed_folded = False
+            self.feed_body.setVisible(True)
+            self._say_feed_fold()
+            self._fit_feed()
 
     # -- identity ----------------------------------------------------------
 
