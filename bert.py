@@ -2237,7 +2237,13 @@ class Card(QFrame):
         client_box.addWidget(self.f_client)
         client_box.addWidget(self.client_state)
         client_holder = QWidget()
-        client_holder.setStyleSheet("background:transparent;")
+        # No stylesheet. An unscoped `background:transparent` applies to the
+        # widget *and everything under it* -- and `Combo` carries no sheet of
+        # its own, so the rule reached the box and took its fill away. The
+        # field beside it survives the same line only because a QLineEdit is
+        # given field() directly and its own rule wins. A plain QWidget paints
+        # nothing without WA_StyledBackground anyway, so the rule was doing
+        # no work and one piece of damage.
         client_holder.setLayout(client_box)
         self.f_client.currentTextChanged.connect(self._say_client)
 
@@ -2257,7 +2263,8 @@ class Card(QFrame):
         title_box.addWidget(self.f_title)
         title_box.addWidget(self.title_state)
         title_holder = QWidget()
-        title_holder.setStyleSheet("background:transparent;")
+        # Nor here, for the same reason -- it was masked only by the line
+        # edit's own sheet, which is a latent version of the bug above.
         title_holder.setLayout(title_box)
 
         self.f_queue = Combo()

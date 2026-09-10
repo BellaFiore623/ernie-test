@@ -1529,7 +1529,52 @@ def check_a_count_agrees_with_its_verb() -> bool:
     return c.report()
 
 
+
+def check_a_wrapper_round_an_input_paints_nothing() -> bool:
+    """
+    An unscoped rule reaches the box inside it and takes its fill away.
+
+    The editor wraps two of its fields in a QWidget so a note can sit under
+    them, and both wrappers carried `background:transparent` with no
+    selector -- which applies to the widget *and everything under it*, the
+    trap this file already checks for tooltips. `Combo` carries no sheet of
+    its own, so the rule reached the Client box and it lost its fill.
+    Reported that way, and it is the same rule that has bitten the rail and
+    the board column before.
+
+    The line was doing no work either: a plain QWidget paints nothing without
+    `WA_StyledBackground`, so transparent is already what it does.
+    """
+    c = Check("a wrapper round an input paints nothing")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    card = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Card")
+    enter = next(n for n in card.body if isinstance(n, ast.FunctionDef)
+                 and n.name == "enter_edit")
+
+    styled = []
+    for n in ast.walk(enter):
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "setStyleSheet"):
+            continue
+        target = getattr(n.func.value, "id", "") or getattr(
+            n.func.value, "attr", "")
+        if not str(target).endswith("holder"):
+            continue
+        styled.append(f"line {n.lineno}: {target}")
+
+    c.equal(styled, [],
+            "no field wrapper sets a stylesheet -- an unscoped one cascades "
+            "into the input it is wrapping, and a scoped one would be a rule "
+            "that does nothing")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour,
+          check_a_wrapper_round_an_input_paints_nothing,
           check_a_count_agrees_with_its_verb,
           check_no_colour_is_written_by_hand, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,

@@ -1458,6 +1458,17 @@ amber on amber in High. `tests/check_palette.py` reads this off the source
 rather than building a `Band`: a widget built with no QApplication does not
 raise, it aborts the process, and the checks deliberately never make one.
 
+**A container's stylesheet must name the container** -- and a container that
+only holds things is better off with no stylesheet at all. The editor wraps
+two of its fields in a QWidget so a note can sit under them, and both carried
+`background:transparent` with no selector: `Combo` has no sheet of its own, so
+the rule reached the Client box and took its fill away. The field beside it
+survived the identical line only because a QLineEdit is handed `field()`
+directly and its own rule wins, which is a latent version of the same bug. The
+line was doing no work either -- a plain QWidget paints nothing without
+`WA_StyledBackground`, so transparent is already what it does.
+`tests/check_palette.py` holds the wrappers to carrying none.
+
 **A container's stylesheet must name the container.** `setStyleSheet("background: ...")`
 with no selector applies to the widget *and everything under it*, including
 the tooltip a child owns. `Rail` did that, so hovering a row in the running
