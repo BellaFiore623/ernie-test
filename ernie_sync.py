@@ -46,9 +46,20 @@ RESCAN_PER_CYCLE = 12  # threads rescanned per cycle; the rest wait their turn.
                        # the next one -- new cards, which is what people watch,
                        # are not delayed at all.
 RETRY_MAX_S = 30      # ride out a short 429 in write(); park anything longer
-CYCLE_SECONDS = 60    # a quiet cycle is ~14 GETs now, not ~101, so a
-                      # shorter interval still costs Discord less per hour
-                      # than the old 5-minute one did
+# Two beats, because the two halves of a cycle cost wildly different things
+# and only one of them is what anybody is waiting for. Measured against the
+# sandbox: a whole cycle is 13 GETs and ~4s, and **11 of those GETs and 3.5s
+# of that time are the edit rescan** -- which found nothing in either sampled
+# cycle, because an edit to an old message is rare. The part a new ticket
+# actually arrives through is the thread listing: **1 GET, 0.30s**.
+#
+# So the listing runs on its own short beat and everything expensive stays
+# where it was. Discord agrees this is free: the listing route answered
+# `x-ratelimit-remaining: 999/1000` on eight back-to-back calls, while
+# `/channels/{id}/messages` -- the rescan and the state pull -- is 5 per 5s
+# and 429s on the sixth. The cheap route is the one being asked more often.
+FAST_SECONDS = 5      # list threads, fetch what is new, recompute. 1 GET.
+CYCLE_SECONDS = 60    # and everything else, on the beat it already had
 
 
 def load_env(path: str = "ernie.env") -> None:
@@ -398,7 +409,36 @@ def backfill(con, d: Discord, stats: dict) -> None:
 # Cycle
 # --------------------------------------------------------------------------
 
-def cycle(con, d: Discord, guild_id: str, do_backfill: bool = False) -> dict:
+SYNC_RUNS_KEPT = 5_000   # ~7 hours of fast passes, or a fortnight of full ones
+
+
+def prune_runs(con) -> None:
+    """Keep the audit table bounded.
+
+    Every pass writes a `sync_runs` row and `/health` reads the newest
+    finished one, which is what Bert draws as "synced 20s ago" -- so the fast
+    pass has to write one or the board would report a staleness it does not
+    have. Twelve times the passes is twelve times the rows, and nothing was
+    ever deleting them. Trimmed on the full pass, so it is one statement a
+    minute rather than one every five seconds.
+    """
+    con.execute(
+        """DELETE FROM sync_runs WHERE run_id <=
+             (SELECT MIN(run_id) FROM
+                (SELECT run_id FROM sync_runs ORDER BY run_id DESC LIMIT ?))
+             - 1""", (SYNC_RUNS_KEPT,))
+    con.commit()
+
+
+def cycle(con, d: Discord, guild_id: str, do_backfill: bool = False,
+          full: bool = True) -> dict:
+    """One pass over Discord.
+
+    `full` is the difference between the two beats: without it this is the
+    listing, whatever is new in the threads it named, and the local
+    recompute -- the three things a new ticket has to go through, and 1 GET
+    when the board is quiet. The edit rescan is the other 11.
+    """
     stats = {"threads_seen": 0, "messages_new": 0, "edits_found": 0,
              "titles_changed": 0, "deletions_found": 0}
     run_id = con.execute("INSERT INTO sync_runs (started_at) VALUES (?)",
@@ -409,7 +449,12 @@ def cycle(con, d: Discord, guild_id: str, do_backfill: bool = False) -> dict:
 
         threads = sync_threads(con, d, guild_id, stats)
         sync_messages(con, d, threads, stats)
-        rescan_edits(con, d, stats)
+        if full:
+            # Rotating, so its cursor advances once a minute as it always
+            # has: a fast pass calling it would spin the rotation twelve
+            # times faster and spend 11 GETs a pass looking for something
+            # that turns up about never.
+            rescan_edits(con, d, stats)
         rebuild_derived(con, threads)
 
         con.execute(
@@ -436,8 +481,22 @@ def main() -> None:
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--backfill", action="store_true",
                     help="also pull archived history for channels not yet done")
-    ap.add_argument("--interval", type=int, default=CYCLE_SECONDS)
+    ap.add_argument("--fast", type=int, default=FAST_SECONDS,
+                    help="seconds between listing passes -- the beat a new "
+                         "ticket arrives on")
+    ap.add_argument("--interval", type=int, default=CYCLE_SECONDS,
+                    help="seconds between full passes: the edit rescan, the "
+                         "state channel and the customer roster")
     a = ap.parse_args()
+
+    # A fast beat longer than the full one is the two arguments swapped, and
+    # zero is a loop with no sleep in it. Both are worth saying rather than
+    # discovering from a rate limit.
+    if a.fast < 1:
+        sys.exit("--fast must be at least 1 second")
+    if a.fast > a.interval:
+        sys.exit(f"--fast {a.fast} is longer than --interval {a.interval}; "
+                 f"the fast pass is the one that runs more often")
 
     load_env(a.env)
 
@@ -473,16 +532,39 @@ def main() -> None:
         print(f"  watching #{c['name']} ({c['channel_id']}) -- {kind}")
 
     first = True
+    next_full = 0.0        # the first pass is a full one
     while True:
         t0 = time.time()
+        full = t0 >= next_full
+        if full:
+            next_full = t0 + a.interval
         try:
-            s = cycle(con, d, guild, do_backfill=a.backfill and first)
-            print(f"[{now()[:19]}] threads={s['threads_seen']} "
-                  f"new={s['messages_new']} edits={s['edits_found']} "
-                  f"titles={s['titles_changed']} deleted={s['deletions_found']} "
-                  f"({time.time()-t0:.1f}s)")
+            s = cycle(con, d, guild, do_backfill=a.backfill and first,
+                      full=full)
+            # A quiet fast pass says nothing. Twelve times the passes is
+            # twelve times the log, and eleven of every twelve lines would
+            # read "nothing happened" -- which buries the ones that matter in
+            # the file somebody opens when something has gone wrong.
+            noisy = (s["messages_new"] or s["edits_found"]
+                     or s["titles_changed"] or s["deletions_found"])
+            if full or noisy:
+                print(f"[{now()[:19]}] threads={s['threads_seen']} "
+                      f"new={s['messages_new']} edits={s['edits_found']} "
+                      f"titles={s['titles_changed']} "
+                      f"deleted={s['deletions_found']} "
+                      f"({time.time()-t0:.1f}s){'' if full else ' fast'}")
         except Exception as e:
             print(f"[{now()[:19]}] cycle failed: {e}", file=sys.stderr)
+
+        if not full:
+            # Everything below is on the slow beat by measurement: the state
+            # pull and the roster are both `/channels/{id}/messages`-shaped
+            # work against buckets far tighter than the thread listing's.
+            time.sleep(max(0.0, a.fast - (time.time() - t0)))
+            first = False
+            continue
+
+        prune_runs(con)
 
         # Pulling the state channel is Discord -> SQLite like everything else
         # here, so it belongs in this loop. Pushing the other way does not:
@@ -540,7 +622,9 @@ def main() -> None:
         first = False
         if a.once:
             return
-        time.sleep(a.interval)
+        # Against the top of this pass, not the end of it, so a slow pass
+        # does not push the next one out by however long it took.
+        time.sleep(max(0.0, a.fast - (time.time() - t0)))
 
 
 if __name__ == "__main__":

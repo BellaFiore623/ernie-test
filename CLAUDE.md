@@ -1132,6 +1132,55 @@ out to be. `run.sh` now records the **Windows** pids (`/proc/<job>/winpid`, not
 its own job numbers, which do not outlive it), refuses to start on top of a
 stack that is still up, and `./run.sh stop` ends them with `taskkill`.
 
+## How fast Discord reaches the board
+
+Two hops: `ernie_sync` pulls Discord into SQLite, and Bert polls the API every
+`POLL_MS` (5s). The sync used to be one 60-second cycle, so a new ticket was
+up to **65 seconds** old before it appeared. It is **two beats** now, and a
+new ticket is on the board in **0.3-10s, about 5 on average**.
+
+- **The split is by cost, and the two halves are nothing alike.** Measured
+  against the sandbox, a whole cycle is **13 GETs and ~4s** -- and **11 of
+  those GETs and 3.5s of that time are `rescan_edits`**, which found nothing
+  in either sampled cycle, because an edit to an old message is rare. What a
+  new ticket actually arrives through is the thread listing: **1 GET, 0.30s**,
+  and `sync_messages` costs **nothing at all** on a quiet board, because the
+  listing already carries Discord's `last_message_id` and a thread that has
+  not moved needs no request.
+- **Discord agrees the cheap half is free to ask more often.** Read off the
+  headers: the listing route answered `x-ratelimit-remaining: 999/1000` on
+  eight back-to-back calls, so it is effectively unmetered. The route the
+  rescan and the state pull use, `/channels/{id}/messages`, is **5 per ~5s**
+  and 429s on the sixth -- which is exactly why those stay on the slow beat.
+  Measured over a real minute of the loop: **37 GETs, 0.60/s**, against a
+  global ceiling of 50/s.
+- **`--fast` is the listing beat (5s); `--interval` is everything else (60s).**
+  The full pass does what a fast one does *plus* the rescan, the state channel
+  pull and the Jira roster, so nothing that was on a minute has moved. A fast
+  pass is `cycle(..., full=False)`.
+- **The local recompute is not the constraint.** `rebuild_derived` re-reads
+  every message of every active thread and re-extracts on *every* pass, which
+  sounds like the thing that would break -- measured at production's size, 50
+  threads and 1348 messages, it is **0.02s**.
+- **The sleep is measured from the top of the pass, not the end.** A full pass
+  takes about four seconds; sleeping five after it is a nine-second beat that
+  lurches once a minute. Measured after: a pass starts every 5.0s exactly.
+  `next_full` is a wall clock for the same reason, rather than a count of fast
+  passes.
+- **A quiet fast pass writes no log line.** Twelve times the passes would
+  otherwise be twelve times the log, and eleven of every twelve lines would
+  say nothing happened -- burying the ones somebody opened the file to find.
+- **`sync_runs` is trimmed, because the fast pass has to write to it.**
+  `/health` reads the newest *finished* row and Bert draws it as "synced 20s
+  ago", so a pass that recorded nothing would have the board reporting a
+  staleness it does not have. Twelve times the rows and nothing ever deleting
+  them; `prune_runs()` keeps `SYNC_RUNS_KEPT` and runs on the full beat, so it
+  is one statement a minute.
+- **Bert's own poll is the other 5 seconds** and was left alone. Halving it
+  would halve the average again, at twice the API load for a board that is
+  usually idle -- worth doing only if 5s stops feeling immediate.
+
+
 ## Testing with somebody else
 
 Two ways, and they are not the same setup. `TESTING.md` is the version to
