@@ -228,80 +228,89 @@ SEARCH_HINT_PAD = 16
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    # The whole ramp, moved down together.
+    # **Pitched where real light modes are pitched.** Measured against five of
+    # them -- GitHub, Linear, Notion, Atlassian, Stripe -- every one puts its
+    # canvas at luminance 1.00, its panels at 0.92-0.95, its borders at
+    # 0.69-0.80 and its text at 12-18:1. This palette sat at 0.59, 0.55, 0.41
+    # and 9.5:1: roughly half the luminance of any of them.
     #
-    # Dark's real quality is not that it is dark, it is that **the eye rests
-    # on one value**: measured over a rendered board, 95% of dark's pixels sit
-    # in a single luminance band and only text and accents rise out of it.
-    # Light was three bright bands -- 45% at 0.6, 31% at 0.8, 19% at 0.7 --
-    # with a mean of 0.671 against dark's 0.026, twenty-six times the light.
-    # The 31% was the cards.
+    # That was not a light mode, it was a dimmed one, and the muddy middle is
+    # the worst place to be -- too dark to read as crisp, too light to read as
+    # restful. It arrived one reasonable step at a time: light was reported as
+    # glaring, the answer each round was to bring the field down, and three
+    # rounds of that walked away from the thing being asked for. **Real light
+    # modes answer glare by going up, not down** -- a white ground, near-black
+    # text at 15:1, and comfort out of crispness rather than dimness.
     #
-    # So the cards came down and the ramp came with them, which is the part
-    # that matters: bringing the cards down alone would have closed the step
-    # that says a card is a thing sitting on a surface. Every ratio that
-    # carries meaning is unchanged -- card over workspace is still 1.12, the
-    # border still stands 4.2x off its own fill -- and the whole thing simply
-    # emits less.
+    # The structure was never wrong. Card over ground was 1.12 against their
+    # 1.05-1.08, border off fill 1.56 against their 1.23-1.43. It only needed
+    # moving up an octave.
     #
-    # The inks came down too, and had to: at the old values five of them fell
-    # under 4.5:1 on the new grounds -- accent worst at 3.3. Moving a ground
-    # without moving the ink on it is how a palette goes quietly unreadable.
-    "ink": "#242424", "muted": "#464646", "line": "#ABABAB",
-    "surface": "#D5D5D5", "canvas": "#CACACA", "panel": "#C4C4C4",
+    # Every value here is solved against the floors `check_palette.py` holds
+    # rather than chosen by eye: a fill of 0.96 puts the canvas at or under
+    # 0.886 to clear CARD_MIN, surface over canvas lands inside 1.10-1.30, a
+    # control sits CONTROL_MIN under the fill it is on, and a tag stripe
+    # stands EDGE_MIN off its own fill -- which is what keeps it dark enough
+    # to double as that tag's label in the figures panel, where it is drawn as
+    # text rather than as a line.
+    #
+    # Neutral, not tinted. A census of the old board found 98.5% of the screen
+    # at chroma 10 or more and 1.5% reading as grey; a ground with a hue of
+    # its own also hides whichever tags share it -- cool left ENG and Medium
+    # at 1.1 of colour from the workspace, warm would have done the same to
+    # PROD and High. Grey treats all four alike.
+    "ink": "#262626", "muted": "#5F5F5F", "line": "#C6C6C6",
+    "surface": "#FFFFFF", "canvas": "#EEEEEE", "panel": "#E7E7E7",
     # The activity bar, under the sections either side of the board.
-    "feed": "#C0C0C0",
-    # Raised controls -- the Qt Button role. Under the surface in light and
-    # over it in dark, because "raised" is toward the light end in one and
-    # the dark end in the other.
-    "beside": "#CFCFCF",
+    "feed": "#E0E0E0",
+    # Raised controls -- the Qt Button role.
+    "beside": "#F4F4F4",
     # What a button, a field or a work-item bubble is drawn on: a step under
     # the card, in both themes.
-    "control": "#C8C8C8",
-    "well": "#BCBCBC",
+    "control": "#E2E2E2",
+    "well": "#DADADA",
     # Badge fills, a step under the card rather than over it.
-    "amber_bg": "#D6C6AC", "amber_fg": "#613F05",
-    "red_bg": "#DDBFBF", "red_fg": "#822525", "red_edge": "#C43C3C",
-    "ok_fg": "#225026", "ok_bg": "#A5D3AA", "accent": "#1C4976",
-    "info_bg": "#B7C8D8", "info_fg": "#1B3A5C",
-    "grey_fg": "#464646",
+    "amber_bg": "#F9EEDA", "amber_fg": "#79510D",
+    "red_bg": "#FAEBEB", "red_fg": "#A12626", "red_edge": "#D54E4E",
+    "ok_fg": "#1C6033", "ok_bg": "#D9F2E2", "accent": "#245B99",
+    "info_bg": "#E8F0F8", "info_fg": "#24568F",
+    "grey_fg": "#5F5F5F",
     # A tag carrying a fact rather than a warning -- an equipment number, a
     # ticket count. Quiet on purpose: there are several per card and they are
     # reference, not news.
-    "chip_bg": "#CECECE",
-    "on_accent": "#FFFFFF", "hover_bg": "#ABBFD5",
-    "neutral": ("#626262", "#D5D5D5", "#33373A"),
-    # (stripe, fill, ink). The fills are mixed onto the card base, and their
-    # saturation came *down* as the base did: the same HLS saturation yields
-    # more chroma at a lower lightness, and left alone it would have taken
-    # these to 27-44 against the 15-26 they were. They sit at 15-19.
-    # The stripes went darker to hold their edge against a darker fill --
-    # 4.2x, where leaving them put would have been 3.2.
+    "chip_bg": "#E5E5E5",
+    "on_accent": "#FFFFFF", "hover_bg": "#E7F0F9",
+    "neutral": ("#959595", "#FBFBFB", "#454545"),
+    # (stripe, fill, ink). The fill is a whisper of the tag on a near-white
+    # card; the **stripe** carries it, and is dark rather than pale because it
+    # has to stand EDGE_MIN off that fill -- which is also what lets the
+    # figures panel draw it as the tag's label.
     "queue": {
-        "PROD": ("#89560A", "#DBD4C9", "#5A320A"),
-        "OPS":  ("#4D6925", "#CFD7C4", "#27500A"),
-        "ENG":  ("#32629E", "#CED5DE", "#1B3A5C"),
-        "CS":   ("#7E44B7", "#D9D2E1", "#3D2154"),
+        "PROD": ("#9E6D25", "#FDFAF7", "#583D16"),
+        "OPS":  ("#59831F", "#F8FCF3", "#324912"),
+        "ENG":  ("#3278CF", "#F8FAFD", "#1D4372"),
+        "CS":   ("#9858D8", "#FBFAFD", "#5B2490"),
     },
     # The band header's strip: above the column, under the cards.
     "band_tint": {
-        "unassigned": "#D7CDCD", "critical": "#D7CDCD", "high": "#D3CEC7",
-        "medium": "#CACFD6", "low": "#CECECE",
+        "unassigned": "#EAEAEA", "critical": "#EAEAEA",
+        "high": "#EAEAEA", "medium": "#EAEAEA",
+        "low": "#EAEAEA",
     },
-    # (fill, outline). The outlines are the severity marks and none of them
-    # moved. Unassigned keeps its red wash, quieter than critical's, the way
-    # dark has always had it.
+    # (fill, outline). Unassigned keeps its red wash, quieter than critical's,
+    # the way dark has always had it. `low` is the one band with no colour of
+    # its own and stands off by lightness alone.
     "band_card": {
-        "unassigned": ("#DDD2D2", "#C43C3C"), "critical": ("#E0D1D1", "#C43C3C"),
-        "high": ("#DBD3C8", "#D19434"), "medium": ("#CED5DE", "#7099CB"),
-        "low": ("#D5D5D5", "#B7BCC2"),
+        "unassigned": ("#FDF9F9", "#D54E4E"), "critical": ("#FDF9F9", "#D54E4E"),
+        "high": ("#FCF9F6", "#AE7A29"), "medium": ("#F8FAFD", "#4685D3"),
+        "low": ("#FAFAFA", "#AEAEAE"),
     },
     # Heading ink, one per band, the dark end of the colour it is washed in.
     "band_text": {
-        "unassigned": "#822525", "critical": "#822525", "high": "#613F05",
-        "medium": "#1C4976", "low": "#42474D",
+        "unassigned": "#A12626", "critical": "#A12626",
+        "high": "#654818", "medium": "#1E4F81",
+        "low": "#545454",
     },
-
 }
 
 # The neutral ramp is lifted from the PortalBear prototype, which had already
@@ -372,6 +381,16 @@ DARK = {
 # decision and the desktop does not overrule it.
 THEMES = ("system", "light", "dark")
 THEME_LABEL = {"system": "Follow the desktop", "light": "Light", "dark": "Dark"}
+# What a board with no setting yet opens as. **Dark, not the desktop.** Light
+# was reported as tiring across four rounds by the person who uses this all
+# day, and dark is the one measured as restful -- mean luminance 0.012 with
+# 95% of the screen inside a single band, against light's 0.573 spread over
+# three. Following the desktop would hand a fresh install whichever the
+# machine happened to be set to, which is a coin toss on the question that
+# has taken the most work to answer. Both other choices are one dropdown away
+# in Settings, and anybody who has already chosen keeps their choice: this is
+# only the fallback when the key is absent.
+THEME_DEFAULT = "dark"
 
 
 class Theme:
@@ -897,7 +916,7 @@ class SettingsDialog(QDialog):
         self.theme = Combo()
         for key in THEMES:
             self.theme.addItem(THEME_LABEL[key], key)
-        stored = current.get("theme", "system")
+        stored = current.get("theme", THEME_DEFAULT)
         self.theme.setCurrentIndex(
             THEMES.index(stored) if stored in THEMES else 0)
         form = QFormLayout()
@@ -4893,7 +4912,7 @@ class Bert(QMainWindow):
         return bool(self.name()) and self.connected
 
     def open_settings(self):
-        was = self.settings.get("theme", "system")
+        was = self.settings.get("theme", THEME_DEFAULT)
         dlg = SettingsDialog(self, self.settings, self.health)
         if dlg.exec() == QDialog.Accepted:
             self.settings.update(dlg.values())
@@ -4901,7 +4920,7 @@ class Bert(QMainWindow):
             self.settings.pop("first_name", None)
             self.settings.pop("last_name", None)
             SETTINGS.write_text(json.dumps(self.settings, indent=2))
-            if self.settings.get("theme", "system") != was:
+            if self.settings.get("theme", THEME_DEFAULT) != was:
                 self.rebuild_in_new_theme()
                 return
             self.render()
@@ -4912,7 +4931,7 @@ class Bert(QMainWindow):
         An explicit light or dark is a decision, and the desktop does not get
         to overrule it -- that is the whole difference between the two.
         """
-        if self.settings.get("theme", "system") != "system":
+        if self.settings.get("theme", THEME_DEFAULT) != "system":
             return
         if T.name == resolve_theme("system"):
             return                  # already showing what the desktop asks for
@@ -4929,7 +4948,7 @@ class Bert(QMainWindow):
         window once more cannot miss any. It costs the scroll position and one
         poll, on a setting nobody changes twice in a day.
         """
-        apply_theme(self.settings.get("theme", "system"))
+        apply_theme(self.settings.get("theme", THEME_DEFAULT))
         fresh = Bert(self.api.base)
         _OPEN.append(fresh)
         fresh.search.setText(self.search.text())     # a typed search survives
@@ -6471,7 +6490,7 @@ def main():
     # Fusion draws the same way on every desktop, which is what makes one
     # QPalette enough to carry the dark theme through Qt's own widgets.
     app.setStyle("Fusion")
-    apply_theme(load_settings().get("theme", "system"))
+    apply_theme(load_settings().get("theme", THEME_DEFAULT))
     w = Bert(a.api)
     _OPEN.append(w)
     w.show()

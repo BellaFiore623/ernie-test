@@ -1678,6 +1678,49 @@ application, which settles it whatever else cascades and is needed anyway --
 Qt draws tooltips itself and ignores the `ToolTipBase`/`ToolTipText` already
 in the palette, so they came out the system's pale yellow on a dark board.
 
+**Dark is what a board opens as.** `THEME_DEFAULT` is `dark`, not `system`.
+Light was reported as tiring across four rounds by the person who uses this
+all day, and dark is the one measured as restful -- mean luminance 0.012 with
+95% of the screen inside a single band, against light's spread over three.
+Following the desktop would hand a fresh install whichever the machine
+happened to be set to, which is a coin toss on the question that has taken
+the most work to answer. Both other choices are one dropdown away in
+Settings, and it is only the fallback when the key is absent, so anybody who
+has already chosen keeps their choice.
+
+**Light is pitched where real light modes are pitched, and that is up.**
+Measured against five of them -- GitHub, Linear, Notion, Atlassian, Stripe --
+every one puts its canvas at luminance **1.00**, its panels at 0.92-0.95, its
+borders at 0.69-0.80 and its text at **12-18:1**. This palette sat at 0.59,
+0.55, 0.41 and 9.5:1: roughly **half the luminance of any of them**.
+That was not a light mode, it was a dimmed one, and the muddy middle is the
+worst place to be -- too dark to read as crisp, too light to read as restful.
+It arrived one reasonable step at a time: light was reported as glaring, the
+answer each round was to bring the field down, and three rounds of that
+walked away from the thing being asked for. **Real light modes answer glare by
+going up** -- a white ground, near-black text at 15:1, and comfort out of
+crispness rather than dimness. Colour appears on small things, structure
+comes from hairlines, and none of them tint the field.
+**The structure was never wrong**, which is why this was a re-pitch rather
+than a redesign: card over ground was 1.12 against their 1.05-1.08, and
+border off fill 1.56 against their 1.23-1.43. It only needed moving up an
+octave. After: canvas 0.85, cards white, text 15.1:1, **92.8% of the screen
+reading as grey** and a mean luminance of 0.766.
+**Every value is solved against the floors `check_palette.py` already held**,
+rather than chosen by eye -- a fill of 0.96 puts the canvas at or under 0.886
+to clear `CARD_MIN`, surface over canvas lands inside 1.10-1.30, a control
+sits `CONTROL_MIN` under the fill it is on, and a tag stripe stands
+`EDGE_MIN` off its own fill. That last one pays for itself twice: **the
+figures panel draws a tag's stripe as its label**, so the same constraint that
+keeps a border visible on a white card is what keeps that text readable. A
+first pass with pale borders looked right and had unreadable tag labels; the
+checks would have caught it either way.
+**And the tag moved from the fill to the edge.** On a white card the fill is a
+whisper by design, so `check_lights_chrome_is_grey_and_nothing_hides_in_it`
+measures whichever of fill or stripe is carrying the tag rather than the fill
+alone -- the invariant is that a tag is legible against the room in colour and
+not only in lightness, not that any particular token carries it.
+
 **Light's chrome is grey, and it is the only grey in the window.** A census
 of the rendered board counted **98.5% of the screen at chroma 10 or more, and
 1.5% reading as grey** -- the chrome alone was 68% of it, every token at
@@ -1739,6 +1782,8 @@ was a jump -- and the border still carries the tag at 3.8x its own fill. The
 brightest thing in the light palette is now the card, at 0.79.
 
 **Five levels in light, and the workspace is the board column alone.**
+(The values below were the mid-grey pitch and have moved up an octave; the
+order and the roles are unchanged, which is the part that matters.)
 Darkest first: `well` is the outer chrome -- the toolbar, the floor either
 side of the centred board column, the space a folded panel leaves; `feed` is
 the activity bar, which recedes furthest of the sections so the history is

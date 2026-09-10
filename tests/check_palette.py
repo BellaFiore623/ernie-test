@@ -1717,23 +1717,29 @@ def check_lights_chrome_is_grey_and_nothing_hides_in_it() -> bool:
         (a1, b1), (a2, b2) = lab(a), lab(b)
         return math.hypot(a1 - a2, b1 - b2)
 
+    # **Measured on whatever carries the tag, which is not always the fill.**
+    # It was the fill while a card was a tint; on a white card the fill is a
+    # whisper by design and the *stripe* carries it, so measuring the fill
+    # alone would fail a palette that is doing the job better. What must hold
+    # is that the tag is legible against the room in colour and not only in
+    # lightness -- by whichever of the two is carrying it.
     ground = bert.LIGHT["canvas"]
-    for q, (_, fill, _) in bert.LIGHT["queue"].items():
-        d = gap(fill, ground)
+    for q, (stripe, fill, _) in bert.LIGHT["queue"].items():
+        d = max(gap(fill, ground), gap(stripe, ground))
         c.ok(d >= 3.0,
              f"{q} stands off the workspace by {d:.1f} of colour, not just "
              f"lightness")
 
     # The bands, with one deliberate exception: `low` is the colourless band
     # and is meant to be a plain grey, so it stands off by lightness alone.
-    for band, (fill, _) in bert.LIGHT["band_card"].items():
-        d = gap(fill, ground)
+    for band, (fill, edge) in bert.LIGHT["band_card"].items():
+        d = max(gap(fill, ground), gap(edge, ground))
         if band == "low":
             c.ok(d < 1.0,
                  "low is the one band with no colour of its own, and stays "
                  "that way")
         else:
-            c.ok(d >= 3.0, f"the {band} band's wash reads as a wash ({d:.1f})")
+            c.ok(d >= 3.0, f"the {band} band reads as its own colour ({d:.1f})")
 
     return c.report()
 
