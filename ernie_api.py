@@ -126,15 +126,6 @@ class MoveBody(BaseModel):
     key: Optional[str] = None
 
 
-class StatusBody(BaseModel):
-    build_state: Optional[str] = None
-    return_state: Optional[str] = None
-    direction: Optional[str] = None
-    action_item: Optional[str] = None
-    actor: str
-    key: Optional[str] = None
-
-
 class NewTicketBody(BaseModel):
     actor: str
     title: str
@@ -1266,43 +1257,15 @@ def move_card(thread_id: str, body: MoveBody):
         con.close()
 
 
-@app.post("/cards/{thread_id}/status")
-def set_status(thread_id: str, body: StatusBody):
-    """Update build/return state, direction, or the current action item."""
-    actor = require_actor(body.actor)
-    con = rw()
-    try:
-        cached = replay(con, body.key)
-        if cached:
-            return cached
-
-        card = load_card(con, thread_id)
-        guard_open(card, "update")
-
-        valid = {"needs_created", "created", "not_needed"}
-        changes = {}
-        for f in ("build_state", "return_state", "direction", "action_item"):
-            v = getattr(body, f)
-            if v is None or v == card[f]:
-                continue
-            if f.endswith("_state") and v not in valid:
-                raise HTTPException(400, f"{f} must be one of {sorted(valid)}")
-            changes[f] = v
-
-        for f, v in changes.items():
-            con.execute(f"UPDATE cards SET {f}=?, updated_at=? WHERE thread_id=?",
-                        (v, now_iso(), thread_id))
-            log_event(con, thread_id=thread_id, verb=f"set_{f}", actor=actor,
-                      old=card[f], new=v)
-
-        result = {"thread_id": thread_id, "changed": changes}
-        remember(con, body.key, result)
-        con.commit()
-        return result
-    finally:
-        con.close()
-
-
+# There was a `POST /cards/{thread_id}/status` here, and it is gone.
+# `cards.build_state`, `return_state`, `direction` and `action_item` were
+# retired when work items replaced all four -- the columns stay so undo can
+# still reach an old `edited` event, which is why `describe` and the undo
+# path still understand a `set_*` verb. The *route* was the only thing that
+# could still write them, and nothing has called it since: Bert does not
+# reference it, and neither database holds a single `set_*` event. An
+# unauthenticated POST that writes retired columns and logs events the feed
+# cannot render is not worth carrying into a build.
 @app.post("/cards/{thread_id}/complete")
 def complete(thread_id: str, body: ActorBody):
     """Mark done. Queues a thread message, held for the undo window."""

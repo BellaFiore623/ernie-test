@@ -113,7 +113,13 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   silently clearing it on the next save.
 - `cards.action_item`, `build_state`, `return_state` and `direction` are
   retired — work items replaced all four. Nothing shows or edits them; they
-  stay only so undo can reach an old `edited` event.
+  stay only so undo can reach an old `edited` event, which is why `describe`
+  and the undo path still understand a `set_*` verb.
+  **`POST /cards/{thread_id}/status` is gone**, though: it was the one thing
+  that could still write those four, and an unauthenticated POST that mutates
+  retired columns and logs events the feed cannot render is not worth
+  carrying. Nothing had called it — Bert never referenced it, and neither
+  database holds a single `set_*` event.
 - Ticket embeds carry no priority signal — `Priority` is always "High" and
   `Labels` always "Operations" in real data. Priority is set by hand in Bert.
 - `-- not found --` in an embed and `####` in an equipment ID are *pending*
