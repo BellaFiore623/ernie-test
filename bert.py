@@ -6008,8 +6008,16 @@ class Bert(QMainWindow):
         # below would have said -- is the one reading that is definitely
         # wrong, because Ernie is the only party that certainly did not.
         if e["verb"] == "completed" and new == CLOSED_IN_DISCORD:
-            return (f"{thread}<span style='color:{T.LINE}'> &middot; </span>"
-                    f"<b>closed in Discord</b>")
+            # The name when the audit log gave one, and no name rather than a
+            # wrong one when it did not. This branch used to drop the actor on
+            # the floor -- written when a Discord closure could never carry a
+            # name, and not revisited when View Audit Log made it possible. The
+            # row had the name the whole time and the line threw it away.
+            named = (e.get("actor_name") or "").strip()
+            dot = f"<span style='color:{T.LINE}'> &middot; </span>"
+            if named:
+                return f"<b>{named}</b> closed {thread}{dot}<b>in Discord</b>"
+            return f"{thread}{dot}<b>closed in Discord</b>"
 
         if e["verb"] == "priority_changed" and old in BANDS and new in BANDS:
             def band(b):

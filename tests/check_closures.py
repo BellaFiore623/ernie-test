@@ -440,6 +440,50 @@ def check_the_audit_log_is_asked_once_and_only_when_needed() -> bool:
     return c.report()
 
 
+
+def strip_tags(html):
+    import re
+    return re.sub("<[^>]+>", "", html).replace("&middot;", "-").strip()
+
+
+def check_the_feed_line_says_who_when_it_knows() -> bool:
+    """
+    The row carried the name and the line threw it away.
+
+    This branch was written when a Discord closure could never carry one --
+    the audit log was refused, so there was nobody to name -- and it was not
+    revisited when the permission arrived. The database had `actor_name` set
+    correctly the whole time; the sentence just did not use it. Reported as
+    "still doesn't say who", which was exactly right and was a display bug
+    rather than the collection failing.
+
+    `_feed_text` is a staticmethod that touches no widget, so this is the
+    real sentence rather than a guess about it.
+    """
+    c = Check("the feed line says who, when it knows")
+
+    def line(actor):
+        return strip_tags(bert.Bert._feed_text({
+            "verb": "completed", "new_value": bert.CLOSED_IN_DISCORD,
+            "actor_name": actor, "old_value": None,
+            "thread_name": "PROD: Trekk - 04aug26 - SSD0008"}))
+
+    named = line("Bella Fiore")
+    c.ok(named.startswith("Bella Fiore closed "),
+         f"a known closer leads the line ({named!r})")
+    c.ok("in Discord" in named, "and it still says where it happened")
+
+    for blank in (None, "", "   "):
+        anon = line(blank)
+        c.ok("closed in Discord" in anon,
+             f"{blank!r} reads as an unattributed closure ({anon!r})")
+        c.ok("Ernie" not in anon,
+             "and never falls through to Ernie, which is the one party that "
+             "certainly did not close it")
+
+    return c.report()
+
+
 CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_absence_is_the_question_never_the_answer,
           check_a_thread_it_cannot_read_is_never_declared_finished,
@@ -449,6 +493,7 @@ CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_undo_refuses_a_discord_closure,
           check_the_three_copies_of_the_marker_agree,
           check_it_names_whoever_archived_the_thread,
+          check_the_feed_line_says_who_when_it_knows,
           check_it_still_closes_when_the_audit_log_is_shut,
           check_it_never_attributes_a_closure_to_ernie,
           check_the_audit_log_is_asked_once_and_only_when_needed)
