@@ -565,8 +565,21 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
         for c in cards:
             content = render(c, pos[c.thread_id], actor)
             if len(content) > CONTENT_MAX:
+                # Skipped, and skipped for ever: nothing shortens it on a
+                # later pass, so this card's `synced_at` never advances and
+                # it wears "Pushing to Discord..." until somebody removes
+                # work items from it. That is the one way the mark can stick
+                # with nothing coming -- so it goes to **stderr**, where the
+                # other alarms in this file go, and into the counts the
+                # outbox prints, rather than into stdout with the routine
+                # chatter. Not reachable on either board today: the longest
+                # card renders 724 of 2000.
+                counts["too_long"] = counts.get("too_long", 0) + 1
                 print(f"  !! {c.thread_id} renders to {len(content)} chars, "
-                      f"over Discord's {CONTENT_MAX}")
+                      f"over Discord's {CONTENT_MAX} -- this card cannot be "
+                      f"shared and will keep saying it is unsent until it "
+                      f"has fewer or shorter work items",
+                      file=sys.stderr)
                 continue
             known = state.get(c.thread_id)
             sent = None

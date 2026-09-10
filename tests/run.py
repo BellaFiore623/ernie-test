@@ -26,6 +26,7 @@ import check_palette                                         # noqa: E402
 import check_poll_hold                                       # noqa: E402
 import check_started                                         # noqa: E402
 import check_message_type
+import check_outbox_retry
 import check_stats
 import check_title_history                            # noqa: E402
 import check_status                           # noqa: E402
@@ -46,7 +47,8 @@ MODULES = {"changelog": check_changelog, "state": check_state,
            "beats": check_sync_beats,
            "closures": check_closures,
            "msgtype": check_message_type,
-           "titles": check_title_history}
+           "titles": check_title_history,
+           "retry": check_outbox_retry}
 
 
 def main(argv: list[str]) -> int:

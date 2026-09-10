@@ -523,6 +523,43 @@ activity feed, undo, and the outbox.
   the window's font, reports a wider character, and cancels the calculation
   out so a wide board clips at the narrow width anyway. The scale never falls
   below 1, so a narrow board reads exactly as it did.
+- **A retry must not do again what already reached Discord.** Posting one
+  event takes up to four writes -- unarchive, rename, message, archive -- and
+  creating a ticket takes three: the thread, a note saying who started it,
+  then the opening message. Only the **last** was ever recorded, so a failure
+  anywhere threw away the record of everything before it and the retry began
+  at the top. Reported as changes showing up in Discord while the card went
+  on saying *Pushing to Discord…*, which is exactly what it looks like from
+  the board.
+  Two of those writes are harmless twice and two are not. Archiving a thread
+  that is already archived is the same as archiving it once. **Renaming is 2
+  per 10 minutes on a shared budget and posts a system message every time;
+  posting a message is a message; and opening a thread is a whole second
+  ticket.** Measured before the fix: an archive that failed twice put **three
+  identical "marked this complete" messages** into one customer thread, and an
+  opening message that failed twice left **three real threads** in the
+  customer channel for one ticket -- the board keeping the third, and the sync
+  free to pick the other two up later as fresh unassigned cards.
+  `events.sent_steps` and `new_threads.sent_steps` are the record, and
+  `note_step()` **commits between the writes**, which is the whole of it: a
+  pass that kept its steps in memory and wrote them at the end would lose them
+  in precisely the case they exist for. `new_threads.thread_id` is written the
+  instant the thread exists, so no retry can open a second one, and the card's
+  rows go in **before** the two messages rather than after -- a message that
+  fails should not keep a ticket somebody just started off the board. Those
+  local writes are guarded on the card not existing yet, because the work
+  items are a plain INSERT with a fresh uuid each and a second pass would give
+  the ticket every bubble twice. `posted_at` keeps the stored
+  `discord_message_id` through a `COALESCE`, or a retry that skipped the post
+  would wipe the id undo replies to.
+- **The one way the mark can stick with nothing coming is a card too long to
+  publish.** `publish()` skips a card whose state message renders over
+  Discord's 2000 characters, and nothing shortens it on a later pass -- so its
+  `synced_at` never advances and it says *Pushing to Discord…* for ever. It
+  goes to **stderr** with the other alarms and into the counts, rather than
+  into stdout with the routine chatter, because the fix is a person removing
+  work items. Not reachable on either board today: the longest card renders
+  724 of 2000.
 - Writes take an idempotency `key`; retries return the original result.
 - **One editor at a time, and the second click offers to finish the first.**
   `editor_is_busy()` used to say no and stop, leaving somebody to find the

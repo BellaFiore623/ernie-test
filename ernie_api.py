@@ -206,13 +206,13 @@ VALUE_LABEL = {
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
     "clients": ["short_name", "offered"],
-    "events": ["claimed_at"],
+    "events": ["claimed_at", "sent_steps"],
     "work_items": ["item_id", "done_at"],
     # Not read here, but the sync writes them every cycle and would fail one
     # thread at a time. Better to say so once, at startup, with the fix.
     "threads": ["owner_id"],
     "messages": ["author_display", "type"],
-    "new_threads": ["rank"],
+    "new_threads": ["rank", "sent_steps"],
 }
 
 

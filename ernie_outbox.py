@@ -126,6 +126,39 @@ ARCHIVES = {"completed"}
 UNARCHIVES = {"reopened", "undo_correction"}
 
 
+def steps_done(row) -> set:
+    """Which irreversible writes this row has already had.
+
+    Tolerant of a database that has not had `migrate_outbox_steps.py` run
+    against it: `check_schema` asks for the column at startup, but the outbox
+    starts without going through the API, and answering "none done yet" is
+    the behaviour this had before the column existed.
+    """
+    try:
+        raw = row["sent_steps"]
+    except (IndexError, KeyError):
+        return set()
+    return {x for x in (raw or "").split(",") if x}
+
+
+def note_step(con, table: str, key_col: str, key: str, done: set, step: str,
+              **extra) -> None:
+    """Write down an irreversible thing the moment it is done, and commit.
+
+    **The commit is the point.** Everything here used to be recorded once, at
+    the end, so a failure on the third write discarded the fact that the first
+    two had happened -- and the retry did them again. A rename is 2 per 10
+    minutes on a shared budget and posts a system message every time; a
+    message is a message. Neither is a thing to do twice because a later step
+    timed out.
+    """
+    done.add(step)
+    cols = ", ".join(["sent_steps=?"] + [f"{k}=?" for k in extra])
+    con.execute(f"UPDATE {table} SET {cols} WHERE {key_col}=?",
+                (",".join(sorted(done)), *extra.values(), key))
+    con.commit()
+
+
 def post_one(con, d: Discord, event) -> str:
     """
     Post a single event, then set the thread's archive state to match.
@@ -165,6 +198,12 @@ def post_one(con, d: Discord, event) -> str:
     # message when a thread name changes, so render() stays quiet for it.
     rename_to = event["new_value"] if verb == "renamed" else None
 
+    # What a previous attempt already got done. Both of the writes below are
+    # irreversible in a way the others are not -- unarchiving and archiving a
+    # thread twice is the same as doing it once, and renaming or posting twice
+    # is not.
+    done = steps_done(event)
+
     if not text and not rename_to:
         con.execute("UPDATE events SET posted_at=? WHERE event_id=?",
                     (now(), event["event_id"]))
@@ -179,11 +218,13 @@ def post_one(con, d: Discord, event) -> str:
             d.write("PATCH", f"/channels/{tid}", archived=False)
             con.execute("UPDATE threads SET archived=0 WHERE thread_id=?", (tid,))
 
-        if rename_to:
+        if rename_to and "renamed" not in done:
             d.write("PATCH", f"/channels/{tid}", name=rename_to)
+            note_step(con, "events", "event_id", event["event_id"],
+                      done, "renamed")
 
         msg = {}
-        if text:
+        if text and "message" not in done:
             body = {"content": text}
             if reply_to:
                 # fail_if_not_exists lets it post as a plain message if the
@@ -192,6 +233,10 @@ def post_one(con, d: Discord, event) -> str:
                 body["message_reference"] = {"message_id": reply_to,
                                              "fail_if_not_exists": False}
             msg = d.write("POST", f"/channels/{tid}/messages", **body)
+            # Recorded before the archive below, which is the write that was
+            # failing when this was found.
+            note_step(con, "events", "event_id", event["event_id"],
+                      done, "message", discord_message_id=msg.get("id"))
 
         # Now put it where it belongs.
         if verb in ARCHIVES:
@@ -204,8 +249,13 @@ def post_one(con, d: Discord, event) -> str:
                 "UPDATE threads SET archived=0, archived_by_ernie=0 WHERE thread_id=?",
                 (tid,))
 
+        # COALESCE, because a retry that skipped the post has no `msg` and
+        # must not wipe the id the earlier attempt already stored -- undo
+        # replies to that message.
         con.execute(
-            "UPDATE events SET posted_at=?, discord_message_id=? WHERE event_id=?",
+            """UPDATE events SET posted_at=?,
+                   discord_message_id=COALESCE(?, discord_message_id)
+               WHERE event_id=?""",
             (now(), msg.get("id"), event["event_id"]))
         return "sent"
 
@@ -265,84 +315,127 @@ def make_threads(con, d: Discord) -> dict:
 
     for row in due:
         try:
-            made = d.write("POST", f"/channels/{row['channel_id']}/threads",
-                           name=row["title"][:100], type=11,
-                           auto_archive_duration=10080)
-            tid = made["id"]
+            # **The thread is remembered the instant it exists.** Its id used
+            # to be written only after both messages had gone out, so a
+            # message that failed threw it away and the retry opened a
+            # *second thread for the same ticket*: measured, an opening
+            # message failing twice left three real threads in the customer
+            # channel, the board keeping the third and the sync picking the
+            # other two up later as fresh unassigned cards.
+            tid = row["thread_id"]
+            done = steps_done(row)
+            if not tid:
+                made = d.write("POST",
+                               f"/channels/{row['channel_id']}/threads",
+                               name=row["title"][:100], type=11,
+                               auto_archive_duration=10080)
+                tid = made["id"]
+                con.execute("UPDATE new_threads SET thread_id=? "
+                            "WHERE draft_id=?", (tid, row["draft_id"]))
+                con.commit()
 
+            # The card is written before the two messages rather than after
+            # them, so a message that fails still leaves the ticket on the
+            # board where somebody put it -- and recorded here at all rather
+            # than left to the sync, which would bring the card back a cycle
+            # later and in unassigned, losing the band the + was pressed in.
+            # The sync reconciles these rows on its next pass anyway; they
+            # are written the way it writes them.
+            #
+            # Guarded on the card not existing yet, because a retry reaches
+            # this a second time: the work items are a plain INSERT with a
+            # fresh uuid each, so running it twice would give the ticket every
+            # bubble twice.
+            ts = now()
+            if not con.execute("SELECT 1 FROM cards WHERE thread_id=?",
+                               (tid,)).fetchone():
+                con.execute(
+                    """INSERT OR IGNORE INTO threads (thread_id, parent_id,
+                                                      guild_id, created_at,
+                                                      first_seen_at,
+                                                      last_synced_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (tid, row["channel_id"], d.guild_id, ts, ts, ts))
+                # Parsed, through the one writer the sync uses. Writing just
+                # the name left queue and client NULL until a sync cycle
+                # filled them in, so a ticket whose title reads perfectly well
+                # came up grey with "unknown client" the moment its thread
+                # existed.
+                load.record_title(con, tid, row["title"], ts)
+                # Where the board has been showing it. rank is the order and
+                # the only one, so it has to say what the board says -- MAX
+                # plus a step put the card at the bottom of the band, and a
+                # ticket somebody had just written slid away from them as soon
+                # as it became real.
+                #
+                # The draft carries its own rank now, because it can be
+                # dragged while it waits: recomputing the band's edge here
+                # would take a ticket somebody had moved down into Medium and
+                # put it back at the top. A row written before that column
+                # existed has none, and falls back to the edge it would have
+                # been given.
+                rank = row["rank"]
+                if rank is None:
+                    edge = con.execute(
+                        "SELECT MIN(rank) AS m FROM cards WHERE priority=?",
+                        (row["priority"],)).fetchone()
+                    rank = (load.RANK_STEP if edge["m"] is None
+                            else edge["m"]) - load.RANK_STEP
+                con.execute(
+                    """INSERT OR IGNORE INTO cards (thread_id, priority, rank,
+                                                    updated_at)
+                       VALUES (?,?,?,?)""",
+                    (tid, row["priority"], rank, ts))
+                for n, body in enumerate(json.loads(row["work_json"] or "[]")):
+                    con.execute(
+                        """INSERT INTO work_items (item_id, thread_id, body,
+                                                   position, created_at,
+                                                   created_by)
+                           VALUES (?,?,?,?,?,?)""",
+                        (str(uuid.uuid4()), tid, body, float(n + 1), ts,
+                         row["actor"]))
+
+                if row["complete_on_arrival"]:
+                    # Closed while it was still a draft. Done here rather than
+                    # left to Bert, which has nothing to press by then -- the
+                    # card left the board when the button was pressed.
+                    closer = row["completed_by"] or row["actor"]
+                    con.execute(
+                        "UPDATE cards SET completed_at=?, completed_by=?, "
+                        "updated_at=? WHERE thread_id=?",
+                        (ts, closer, ts, tid))
+                    # With a dispatch, so the thread says it closed the same
+                    # way every other closure does. It is undoable from the
+                    # feed from here on, which is the first moment there is
+                    # anything to undo.
+                    con.execute(
+                        """INSERT INTO events (event_id, occurred_at,
+                                               actor_name, thread_id, verb,
+                                               dispatch_after)
+                           VALUES (?,?,?,?,?,?)""",
+                        (str(uuid.uuid4()), ts, closer, tid, "completed",
+                         (datetime.now(timezone.utc)
+                          + timedelta(seconds=UNDO_WINDOW_S)).isoformat()))
+                con.commit()
+
+            # The two messages, each remembered as it lands. Ernie opens the
+            # thread and then says whose it is: there is no map from a Bert
+            # install to a Discord account, so the bot is the author and the
+            # name from settings goes in as plain text.
             who = (row["actor"] or "").strip()
-            if who:
+            if who and "note" not in done:
                 d.write("POST", f"/channels/{tid}/messages",
                         content=f"Thread started by {who} from the board.")
-            if row["first_message"]:
+                note_step(con, "new_threads", "draft_id", row["draft_id"],
+                          done, "note")
+            if row["first_message"] and "first" not in done:
                 d.write("POST", f"/channels/{tid}/messages",
                         content=row["first_message"])
+                note_step(con, "new_threads", "draft_id", row["draft_id"],
+                          done, "first")
 
-            # Recorded here rather than waiting for the sync to notice it: the
-            # card would otherwise arrive a cycle later and land in unassigned,
-            # losing the band somebody chose by pressing the + in it. The sync
-            # reconciles both rows on its next pass anyway -- they are written
-            # the way it writes them.
-            ts = now()
-            con.execute(
-                """INSERT OR IGNORE INTO threads (thread_id, parent_id, guild_id,
-                                                  created_at, first_seen_at,
-                                                  last_synced_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (tid, row["channel_id"], d.guild_id, ts, ts, ts))
-            # Parsed, through the one writer the sync uses. Writing just the
-            # name left queue and client NULL until a sync cycle filled them
-            # in, so a ticket whose title reads perfectly well came up grey
-            # with "unknown client" the moment its thread existed.
-            load.record_title(con, tid, row["title"], ts)
-            # Where the board has been showing it. rank is the order and the
-            # only one, so it has to say what the board says -- MAX + a step
-            # put the card at the bottom of the band, and a ticket somebody
-            # had just written slid away from them as soon as it became real.
-            #
-            # The draft carries its own rank now, because it can be dragged
-            # while it waits: recomputing the band's edge here would take a
-            # ticket somebody had moved down into Medium and put it back at
-            # the top. A row written before that column existed has none, and
-            # falls back to the edge it would have been given.
-            rank = row["rank"]
-            if rank is None:
-                edge = con.execute(
-                    "SELECT MIN(rank) AS m FROM cards WHERE priority=?",
-                    (row["priority"],)).fetchone()
-                rank = (load.RANK_STEP if edge["m"] is None
-                        else edge["m"]) - load.RANK_STEP
-            con.execute(
-                """INSERT OR IGNORE INTO cards (thread_id, priority, rank,
-                                                updated_at)
-                   VALUES (?,?,?,?)""", (tid, row["priority"], rank, ts))
-            for n, body in enumerate(json.loads(row["work_json"] or "[]")):
-                con.execute(
-                    """INSERT INTO work_items (item_id, thread_id, body, position,
-                                               created_at, created_by)
-                       VALUES (?,?,?,?,?,?)""",
-                    (str(uuid.uuid4()), tid, body, float(n + 1), ts, row["actor"]))
-
-            if row["complete_on_arrival"]:
-                # Closed while it was still a draft. Done here rather than
-                # left to Bert, which has nothing to press by then -- the card
-                # left the board when the button was pressed.
-                who = row["completed_by"] or row["actor"]
-                con.execute(
-                    "UPDATE cards SET completed_at=?, completed_by=?, "
-                    "updated_at=? WHERE thread_id=?", (ts, who, ts, tid))
-                # With a dispatch, so the thread says it closed the same way
-                # every other closure does. It is undoable from the feed from
-                # here on, which is the first moment there is anything to undo.
-                con.execute(
-                    """INSERT INTO events (event_id, occurred_at, actor_name,
-                                           thread_id, verb, dispatch_after)
-                       VALUES (?,?,?,?,?,?)""",
-                    (str(uuid.uuid4()), ts, who, tid, "completed",
-                     (datetime.now(timezone.utc)
-                      + timedelta(seconds=UNDO_WINDOW_S)).isoformat()))
             con.execute("UPDATE new_threads SET thread_id=?, posted_at=? "
-                        "WHERE draft_id=?", (tid, ts, row["draft_id"]))
+                        "WHERE draft_id=?", (tid, now(), row["draft_id"]))
             counts["made"] += 1
         except Exception as e:
             con.execute(

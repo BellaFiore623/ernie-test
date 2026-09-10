@@ -297,7 +297,12 @@ CREATE TABLE IF NOT EXISTS new_threads (
     -- answer. Flagged here instead, and make_threads closes it the moment the
     -- thread exists, so the intent survives the wait.
     complete_on_arrival INTEGER NOT NULL DEFAULT 0,
-    completed_by  TEXT
+    completed_by  TEXT,
+    -- As on events. thread_id carries the first of the three writes, so a
+    -- retry never opens a second thread for one ticket -- measured, an
+    -- opening message that failed twice left three real threads in the
+    -- customer channel, two of them orphaned.
+    sent_steps    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_new_threads_due ON new_threads(posted_at, attempts);
@@ -324,7 +329,16 @@ CREATE TABLE IF NOT EXISTS events (
     posted_at       TEXT,
     discord_message_id TEXT,
     attempts        INTEGER NOT NULL DEFAULT 0,
-    last_error      TEXT
+    last_error      TEXT,
+    -- Irreversible things already done in Discord for this row, written the
+    -- moment each one lands. Posting an event takes up to four writes and
+    -- only the last one used to be recorded, so a failure anywhere threw
+    -- away the record of everything before it: a retry renamed a thread that
+    -- was already renamed and posted a message that was already there.
+    -- Measured, an archive that failed twice put three identical "marked this
+    -- complete" messages into one customer thread while the card went on
+    -- saying it was still pushing.
+    sent_steps      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_events_feed ON events(occurred_at DESC);
