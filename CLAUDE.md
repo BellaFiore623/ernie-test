@@ -763,6 +763,13 @@ or worse, how long a ticket takes, or which ones have been open since April.
   counted in a window it falls outside. Every figure reads slightly high and
   nothing looks broken. `check_stats.py` puts a row four hours the wrong side
   of a seven-day cutoff, which is the only place it shows.
+- **The blocks stack from the top, and the leftover goes under them.**
+  `setWidgetResizable` stretches the holder to the viewport, and a
+  `QVBoxLayout` with nothing to absorb the surplus hands it out *between* the
+  items -- so on a panel with less in it than the window is tall, the rows
+  spread down it like a menu. `set_stats` ends with `addStretch(1)` for that.
+  It only shows when the content is shorter than the panel, which is exactly
+  why it survived every render that had each block full.
 - **The panel scrolls.** It was a plain column with a stretch under it, which
   was fine while three blocks fitted -- add a fourth and Qt does not clip the
   overflow, it **squashes every block proportionally**: measured, the tally

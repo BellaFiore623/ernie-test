@@ -3681,6 +3681,15 @@ class Stats(QWidget):
             self.body.addWidget(self._line(
                 f"slowest {took['slowest_days']} days", T.MUTED))
 
+        # The blocks stack from the top and the leftover goes underneath
+        # them. The panel scrolls now, so `setWidgetResizable` stretches this
+        # widget to the viewport -- and with nothing to absorb the surplus a
+        # QVBoxLayout hands it out *between* the items, which spread the rows
+        # down the panel like a menu. It only shows when the content is
+        # shorter than the panel, which is why it survived the renders that
+        # had every block full.
+        self.body.addStretch(1)
+
 
     # -- folding, the way the rail folds -----------------------------------
 
