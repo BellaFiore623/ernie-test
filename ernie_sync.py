@@ -750,10 +750,22 @@ def main() -> None:
                 print(f"[{now()[:19]}] clients: {cs['seen']} seen, "
                       f"{cs['offered']} offered, "
                       f"{len(cs['written'])} aliases written")
-                for c in cs["collisions"]:
-                    print(f"    collision: {c['short_name']!r} <- "
-                          + ", ".join(x["client_id"] for x in c["clients"]),
-                          file=sys.stderr)
+                # Only when the set has changed. A known collision -- IPI
+                # has been two live customers since the roster arrived --
+                # would otherwise print every hour for ever, and an alarm
+                # that never stops is the one nobody reads when a new one
+                # turns up. Clearing speaks too, so the log says when it
+                # went away as well as when it came.
+                if ernie_jira.note_collisions(con, cs["collisions"]):
+                    if cs["collisions"]:
+                        for c in cs["collisions"]:
+                            print(f"    collision: {c['short_name']!r} <- "
+                                  + ", ".join(x["client_id"]
+                                              for x in c["clients"]),
+                                  file=sys.stderr)
+                    else:
+                        print(f"[{now()[:19]}] clients: no short-name "
+                              f"collisions any more")
         except Exception as e:
             print(f"[{now()[:19]}] client pull failed: {e}", file=sys.stderr)
 

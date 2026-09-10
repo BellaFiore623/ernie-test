@@ -299,6 +299,35 @@ def collisions(con) -> list[dict]:
             for k, v in sorted(seen.items()) if len(v) > 1]
 
 
+def collision_key(found: list) -> str:
+    """The collision set as one comparable string, order-independent."""
+    return "; ".join(sorted(
+        f"{c['short_name']}={','.join(sorted(x['client_id'] for x in c['clients']))}"
+        for c in found))
+
+
+def note_collisions(con, found: list) -> bool:
+    """Record the set, and say whether it is news.
+
+    A collision is worth reporting the first time and not once an hour for
+    ever after -- IPI has been two live customers since the roster arrived,
+    a rule for it is owed, and repeating it hourly turns the one line that
+    would matter into scenery. So the *set* is remembered and only a change
+    speaks: a new collision shouts, and so does the last one clearing.
+    """
+    key = collision_key(found)
+    was = con.execute("SELECT pairs FROM client_collisions WHERE id = 1").fetchone()
+    if was is not None and was["pairs"] == key:
+        return False
+    con.execute(
+        """INSERT INTO client_collisions (id, seen_at, pairs) VALUES (1,?,?)
+           ON CONFLICT(id) DO UPDATE SET seen_at=excluded.seen_at,
+                                         pairs=excluded.pairs""",
+        (now(), key))
+    con.commit()
+    return True
+
+
 def reconcile_aliases(con, actor: str = "auto") -> dict:
     """
     Point every client spelling already on the board at the client it means.

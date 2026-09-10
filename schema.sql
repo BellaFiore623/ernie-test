@@ -387,6 +387,26 @@ CREATE TABLE IF NOT EXISTS state_format_skew (
 );
 
 
+-- The collisions the last pull reported, so a known one stops shouting.
+--
+-- Two live customers can shorten to one dropdown label -- IPI is both
+-- PIP-2136 and PIP-3927 -- and that is worth saying the first time and not
+-- once an hour for ever after. A rule for it is owed and not yet written, so
+-- the report has to stay; what it must not be is furniture. One row, like
+-- state_format_skew, because it is one fact about this machine rather than a
+-- history.
+--
+-- `pairs` is the set as text, sorted, so "has this changed" is a string
+-- compare and a collision appearing or clearing is the only thing that
+-- speaks. An absent row means nothing has ever been reported, which is also
+-- the right answer for a database that has never pulled.
+CREATE TABLE IF NOT EXISTS client_collisions (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    seen_at   TEXT NOT NULL,
+    pairs     TEXT NOT NULL
+);
+
+
 -- Which events have already been written to the change-log channel.
 -- Per event rather than a high-water mark: a change replayed from the other
 -- board carries the timestamp it originally happened at, so events do not

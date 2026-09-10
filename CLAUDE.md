@@ -1182,10 +1182,22 @@ so the name is *picked* in Bert instead of typed.
   **before any cutting**: `Wilson Excavating: ACTIVE FOR 3RD PARTY CODING
   *INACTIVE*` carries its marker after the colon.
 - **Two customers may shorten to the same label and both be live.** `IPI : El
-  Paso` and `IPI : *REP*` both read as `IPI`. A list with the same word twice
-  is worse than the typos it replaces, so a collision is reported rather than
-  written and forgotten, and `/clients/roster` flags the rows and sends the
-  full summary along to tell them apart.
+  Paso` and `IPI : *REP*` both read as `IPI`. **Both are kept and both are
+  offered** -- asked and answered 2026-09-10: keep them, a rule for telling
+  them apart comes later. Nothing refuses to write the second row and nothing
+  drops one from the dropdown, because silently hiding one of two live
+  customers is the wrong-customer failure this whole feature exists to stop.
+  `/clients/roster` flags the rows and sends the full summary along, and
+  `client_label()` shows it beside the short name, which is what tells them
+  apart: `IPI · IPI : El Paso`.
+- **A known collision stops shouting.** It was printed on every hourly pull,
+  which for something already known and deliberately accepted is scenery --
+  and an alarm that fires for ever is the one nobody reads when a new one
+  turns up. `note_collisions()` remembers the set in `client_collisions`
+  (one row, like `state_format_skew`) and only a **change** speaks. Clearing
+  speaks too, so the log says when it went away as well as when it came, and
+  the set is keyed order-independently: the order a query happens to return
+  two client ids in is not news.
 - **`client_aliases` resolves the spellings already on the board, and never
   guesses.** Tier 1 goes through the ticket's Client CR key -- the thread says
   `PIP-8605`, so its title spelling means `PIP-8605`, and no strings are

@@ -18,6 +18,7 @@ from support import Board, Check, iso
 
 import bert
 import ernie_extract as ex
+import ernie_api as api
 import ernie_jira as J
 
 
@@ -571,7 +572,101 @@ def check_the_roster_follows_jira_but_not_over_a_correction():
     return c.report()
 
 
-CHECKS = (
+
+def check_a_known_collision_stops_shouting() -> bool:
+    """
+    Worth saying once. Not worth saying every hour for ever.
+
+    IPI has been two live customers since the roster arrived -- `IPI : El
+    Paso` and `IPI : *REP*` -- and both are kept on purpose, because a list
+    with the same word twice is still better than picking the wrong customer.
+    A rule for telling them apart is owed and not yet written, so the report
+    has to stay. What it must not be is scenery: an alarm that fires hourly
+    for something already known is the one nobody reads when a *new*
+    collision turns up.
+
+    The set is remembered, and only a change speaks -- which means clearing
+    speaks too, so the log says when it went away as well as when it came.
+    """
+    c = Check("a known collision stops shouting")
+
+    IPI = [{"short_name": "ipi",
+            "clients": [{"client_id": "PIP-2136"}, {"client_id": "PIP-3927"}]}]
+    # The same set, listed the other way round: the same news, not new news.
+    SWAPPED = [{"short_name": "ipi",
+                "clients": [{"client_id": "PIP-3927"},
+                            {"client_id": "PIP-2136"}]}]
+    PLUS = IPI + [{"short_name": "sci",
+                   "clients": [{"client_id": "PIP-1"}, {"client_id": "PIP-2"}]}]
+
+    with Board() as b:
+        c.ok(J.note_collisions(b.con, IPI), "the first one speaks")
+        c.ok(not J.note_collisions(b.con, IPI), "the second time is quiet")
+        c.ok(not J.note_collisions(b.con, SWAPPED),
+             "and so is the same set in another order -- the order a query "
+             "happens to return rows in is not news")
+        c.ok(J.note_collisions(b.con, PLUS), "a new collision speaks")
+        c.ok(not J.note_collisions(b.con, PLUS), "then goes quiet too")
+        c.ok(J.note_collisions(b.con, IPI),
+             "one of them clearing speaks, because that is news as well")
+        c.ok(J.note_collisions(b.con, []), "and the last one clearing does")
+        c.ok(not J.note_collisions(b.con, []),
+             "after which there is nothing to say")
+
+    # A database that has never pulled has no row, and that has to read as
+    # "nothing reported yet" rather than as "no collisions".
+    with Board() as b:
+        c.equal(b.con.execute("SELECT COUNT(*) FROM client_collisions"
+                              ).fetchone()[0], 0, "no row until a pull")
+        c.ok(J.note_collisions(b.con, IPI),
+             "so the first pull on a fresh database still speaks")
+
+    return c.report()
+
+
+def check_both_sides_of_a_collision_stay_offered() -> bool:
+    """
+    Keep both, which is what was asked for while the rule is owed.
+
+    The detection only *reports*: nothing refuses to write the second row,
+    nothing drops one from the dropdown, and the editor tells them apart by
+    showing each one's Jira summary beside the short name. Picking the wrong
+    customer is the failure this whole feature exists to stop, and silently
+    hiding one of two live ones would be exactly that.
+    """
+    c = Check("both sides of a collision stay offered")
+
+    with Board() as b:
+        for cid, name in (("PIP-2136", "IPI : El Paso"),
+                          ("PIP-3927", "IPI : *REP*")):
+            b.con.execute(
+                """INSERT INTO clients (client_id, name, name_key, short_name,
+                                        offered, synced_at)
+                   VALUES (?,?,?,?,1,?)""",
+                (cid, name, name.lower(), "IPI", iso()))
+        b.con.commit()
+
+        found = J.collisions(b.con)
+        c.equal(len(found), 1, "the collision is seen")
+        c.equal(len(found[0]["clients"]), 2, "as two clients under one label")
+
+        api.DB = b.path
+        offered = [x for x in api.client_roster()["clients"]
+                   if (x["short_name"] or "").lower() == "ipi"]
+        c.equal(len(offered), 2, "and both are still offered to the editor")
+        c.ok(all(x["ambiguous"] for x in offered),
+             "each flagged, so the editor knows to show the summary")
+        labels = {bert.client_label(x) for x in offered}
+        c.equal(len(labels), 2,
+                f"and the two read differently in the list ({labels})")
+        c.ok(all("IPI" in l for l in labels), "both still called IPI")
+
+    return c.report()
+
+
+CHECKS = (check_a_known_collision_stops_shouting,
+          check_both_sides_of_a_collision_stay_offered,
+          
     check_the_short_name_cuts_the_note_not_the_name,
     check_only_the_starred_marker_retires_a_client,
     check_a_resync_keeps_a_hand_written_short_name,
