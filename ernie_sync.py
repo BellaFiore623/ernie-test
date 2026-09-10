@@ -51,6 +51,12 @@ RESCAN_PER_CYCLE = 12  # threads rescanned per cycle; the rest wait their turn.
                        # the next one -- new cards, which is what people watch,
                        # are not delayed at all.
 CLOSURE_CHECKS = 20   # threads asked about per pass when cards go quiet
+# Discord's audit-log action for a thread being edited, which is what an
+# archive is. **111, not 112** -- 112 is THREAD_DELETE, and asking for it
+# returns entries whose changes all read `new_value: None`, which looks
+# enough like an archive to be believed. Confirmed against a real archive.
+THREAD_UPDATE = 111
+AUDIT_LOOKBACK = 100  # entries scanned for the thread we are asking about
 RETRY_MAX_S = 30      # ride out a short 429 in write(); park anything longer
 # Two beats, because the two halves of a cycle cost wildly different things
 # and only one of them is what anybody is waiting for. Measured against the
@@ -282,6 +288,51 @@ def sync_threads(con, d: Discord, guild_id: str, stats: dict) -> list[dict]:
     return threads
 
 
+def who_archived(d: Discord, guild_id: str, wanted: set) -> dict:
+    """Who archived each of these threads, as far as the audit log knows.
+
+    The thread object does not carry it -- only the audit log does, and only
+    with **View Audit Log** on the bot's role. Without that this returns
+    nothing and the closure is recorded with no name, which is what it did
+    before the permission was granted; a revoked permission degrades the same
+    way rather than failing the pass.
+
+    One request, and only when there is something to attribute. The log is
+    guild-wide, so a busy server can push an archive past `AUDIT_LOOKBACK`
+    and out of reach: naming somebody is a nicety and never a reason to hold
+    up the closure itself.
+
+    Our own bot is skipped. It archives threads when somebody presses
+    Complete in Bert -- that path never reaches here, because the card is
+    already closed by then, but "ernie-test closed it" is exactly the
+    attribution worth never making.
+    """
+    if not wanted:
+        return {}
+    r = d.get(f"/guilds/{guild_id}/audit-logs",
+              action_type=THREAD_UPDATE, limit=AUDIT_LOOKBACK)
+    if not r:
+        return {}
+    me = (d.get("/users/@me") or {}).get("id")
+    users = {u["id"]: u for u in (r.get("users") or [])}
+    found = {}
+    for e in r.get("audit_log_entries") or []:
+        tid = e.get("target_id")
+        if tid not in wanted or tid in found:
+            continue        # entries are newest first, so the first is the one
+        if not any(c.get("key") == "archived" and c.get("new_value")
+                   for c in (e.get("changes") or [])):
+            continue
+        if e.get("user_id") == me:
+            found[tid] = None
+            continue
+        u = users.get(e.get("user_id")) or {}
+        # global_name over username, the same preference the `started` line
+        # uses: "Tyler" rather than "tyler_mazza".
+        found[tid] = u.get("global_name") or u.get("username") or None
+    return found
+
+
 def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
     """Cards whose thread has gone quiet: ask Discord whether it was closed.
 
@@ -304,9 +355,10 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
 
     The time is Discord's own `archive_timestamp`, not now: the event says
     when the work actually finished, which is the whole point of putting it
-    in the feed. Who did it is not available -- the thread object does not
-    carry it, and the audit log needs a View Audit Log permission the bot
-    does not have -- so the row names nobody rather than guessing.
+    in the feed. Who did it comes from the audit log, which needs **View
+    Audit Log** on the bot's role -- see `who_archived`. Without it, or when
+    the log no longer reaches back that far, the closure is recorded with no
+    name rather than not recorded at all.
     """
     gone = [r["thread_id"] for r in con.execute(
         """SELECT c.thread_id FROM cards c
@@ -317,6 +369,7 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
     if not gone:
         return
 
+    closed = {}
     for tid in gone[:CLOSURE_CHECKS]:
         t = d.get(f"/channels/{tid}")
         if not t:
@@ -326,23 +379,31 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
         meta = t.get("thread_metadata") or {}
         if not meta.get("archived"):
             continue
-        when = meta.get("archive_timestamp") or now()
+        closed[tid] = meta.get("archive_timestamp") or now()
+    if not closed:
+        return
+
+    # One audit call for however many closed, and none at all if none did.
+    by = who_archived(d, d.guild_id, set(closed))
+
+    for tid, when in closed.items():
+        who = by.get(tid)
         con.execute(
             "UPDATE threads SET archived=1, last_synced_at=? WHERE thread_id=?",
             (now(), tid))
         con.execute(
-            "UPDATE cards SET completed_at=?, updated_at=? WHERE thread_id=?",
-            (when, now(), tid))
+            "UPDATE cards SET completed_at=?, completed_by=?, updated_at=? "
+            "WHERE thread_id=?", (when, who, now(), tid))
         # dispatch_after NULL: it happened in Discord already, and posting
         # "closed" back into the thread would be Ernie telling the room what
         # it just watched somebody do -- the same rule `started` follows.
         # new_value carries where it happened, so the feed can say so without
         # inventing a person to attribute it to.
         con.execute(
-            """INSERT INTO events (event_id, occurred_at, thread_id, verb,
-                                   new_value, dispatch_after)
-               VALUES (?,?,?,?,?,NULL)""",
-            (str(uuid.uuid4()), when, tid, "completed", CLOSED_IN_DISCORD))
+            """INSERT INTO events (event_id, occurred_at, actor_name, thread_id,
+                                   verb, new_value, dispatch_after)
+               VALUES (?,?,?,?,?,?,NULL)""",
+            (str(uuid.uuid4()), when, who, tid, "completed", CLOSED_IN_DISCORD))
         stats["closed_in_discord"] = stats.get("closed_in_discord", 0) + 1
     con.commit()
 

@@ -25,18 +25,42 @@ import ernie_api as api
 import ernie_sync as S
 
 
+BOT_ID = "bot-1"
+
+
 class Answers:
-    """Discord, for the one call this asks it: GET /channels/{id}.
+    """Discord, for the two calls this makes: the thread, and the audit log.
 
     Records what was asked, so "it cost nothing" is a thing a check can
-    assert rather than a thing a comment claims.
+    assert rather than a thing a comment claims. It carries `guild_id`
+    because the real client does and the code reaches for it.
+
+    `audit` is None by default, which is the shape of a bot without **View
+    Audit Log** -- the client turns a 403 into None. That is the path this
+    shipped on before the permission was granted, so it is the default here.
     """
 
-    def __init__(self, replies):
+    def __init__(self, replies, audit=None):
         self.replies = replies          # thread_id -> reply, or None
+        self.audit = audit              # list of (thread_id, user) or None
+        self.guild_id = "guild-1"
         self.asked = []
+        self.audit_calls = 0
 
     def get(self, path, **kw):
+        if path.endswith("/audit-logs"):
+            self.audit_calls += 1
+            if self.audit is None:
+                return None
+            users, entries = {}, []
+            for tid, user in self.audit:
+                users[user["id"]] = user
+                entries.append({
+                    "target_id": tid, "user_id": user["id"],
+                    "changes": [{"key": "archived", "new_value": True}]})
+            return {"audit_log_entries": entries, "users": list(users.values())}
+        if path == "/users/@me":
+            return {"id": BOT_ID}
         tid = path.rsplit("/", 1)[-1]
         self.asked.append(tid)
         return self.replies.get(tid)
@@ -98,9 +122,10 @@ def check_a_thread_archived_in_discord_closes_its_card() -> bool:
                     "so saying so there is Ernie telling the room what it "
                     "just watched somebody do")
             c.equal(e["actor_name"], None,
-                    "naming nobody, because the thread object does not say "
-                    "who archived it and the audit log needs a permission "
-                    "the bot has not got")
+                    "naming nobody here, because this fake has no audit log "
+                    "to read -- which is the shape of a bot without View "
+                    "Audit Log. The permission is granted now; the checks "
+                    "below cover both sides of that")
 
         # The other card is untouched.
         c.equal(b.con.execute("SELECT completed_at FROM cards WHERE thread_id=?",
@@ -280,6 +305,141 @@ def check_the_three_copies_of_the_marker_agree() -> bool:
     return c.report()
 
 
+
+def check_it_names_whoever_archived_the_thread() -> bool:
+    """
+    The audit log is the only place that says who, and it needs a permission.
+
+    Granted after the first version shipped, so the code has to work both
+    ways: named when the log can be read, and recorded anyway when it cannot.
+    global_name over username -- "Tyler" rather than "tyler_mazza" -- which is
+    the preference the `started` line already uses.
+    """
+    c = Check("it names whoever archived the thread")
+
+    with Board() as b:
+        one, two = board_with_two(b)
+        d = Answers({one: archived_at(WHEN)},
+                    audit=[(one, {"id": "u-9", "username": "tyler_mazza",
+                                  "global_name": "Tyler"})])
+        S.reconcile_closures(b.con, d, {two}, {})
+
+        e = b.con.execute("SELECT actor_name FROM events WHERE thread_id=? "
+                          "AND verb='completed'", (one,)).fetchone()
+        c.equal(e["actor_name"], "Tyler",
+                "the feed names them, by the name Discord shows")
+        c.equal(b.con.execute("SELECT completed_by FROM cards WHERE thread_id=?",
+                              (one,)).fetchone()["completed_by"], "Tyler",
+                "and so does the card, which the state channel publishes")
+        c.equal(d.audit_calls, 1,
+                "one audit call for the pass, however many closed")
+
+    # Only a username, which is what an account with no display name has.
+    with Board() as b:
+        one, two = board_with_two(b)
+        d = Answers({one: archived_at(WHEN)},
+                    audit=[(one, {"id": "u-9", "username": "tyler_mazza"})])
+        S.reconcile_closures(b.con, d, {two}, {})
+        e = b.con.execute("SELECT actor_name FROM events WHERE thread_id=?",
+                          (one,)).fetchone()
+        c.equal(e["actor_name"], "tyler_mazza",
+                "falling back to the username when there is no display name")
+
+    return c.report()
+
+
+def check_it_still_closes_when_the_audit_log_is_shut() -> bool:
+    """
+    Naming somebody is a nicety. Closing the ticket is the feature.
+
+    A revoked permission, or a busy guild that has pushed the archive past
+    the lookback, must not hold up the closure -- it just goes unattributed,
+    which is exactly how this behaved before the permission existed.
+    """
+    c = Check("it still closes when the audit log is shut")
+
+    with Board() as b:
+        one, two = board_with_two(b)
+        d = Answers({one: archived_at(WHEN)})       # audit=None -> a 403
+        S.reconcile_closures(b.con, d, {two}, {})
+
+        row = b.con.execute("SELECT completed_at, completed_by FROM cards "
+                            "WHERE thread_id=?", (one,)).fetchone()
+        c.equal(row["completed_at"], WHEN, "the card still closes, on time")
+        c.equal(row["completed_by"], None, "with nobody named")
+        e = b.con.execute("SELECT actor_name, new_value FROM events "
+                          "WHERE thread_id=?", (one,)).fetchone()
+        c.equal(e["actor_name"], None, "and the event names nobody")
+        c.equal(e["new_value"], S.CLOSED_IN_DISCORD,
+                "but still says where it happened, so the feed reads")
+
+    # An archive the log knows nothing about: same outcome.
+    with Board() as b:
+        one, two = board_with_two(b)
+        d = Answers({one: archived_at(WHEN)}, audit=[])
+        S.reconcile_closures(b.con, d, {two}, {})
+        c.equal(b.con.execute("SELECT completed_at FROM cards WHERE thread_id=?",
+                              (one,)).fetchone()["completed_at"], WHEN,
+                "an archive past the lookback still closes the card")
+
+    return c.report()
+
+
+def check_it_never_attributes_a_closure_to_ernie() -> bool:
+    """
+    Our own bot archives threads when Complete is pressed in Bert.
+
+    That path does not reach here -- the card is already closed, so it is not
+    in the query -- but "ernie-test closed it" is the one attribution worth
+    making impossible rather than merely unlikely.
+    """
+    c = Check("it never attributes a closure to Ernie itself")
+
+    with Board() as b:
+        one, two = board_with_two(b)
+        d = Answers({one: archived_at(WHEN)},
+                    audit=[(one, {"id": BOT_ID, "username": "ernie-test",
+                                  "bot": True})])
+        S.reconcile_closures(b.con, d, {two}, {})
+
+        e = b.con.execute("SELECT actor_name FROM events WHERE thread_id=?",
+                          (one,)).fetchone()
+        c.equal(e["actor_name"], None,
+                "the closure is recorded with no name rather than Ernie's")
+        c.equal(b.con.execute("SELECT completed_at FROM cards WHERE thread_id=?",
+                              (one,)).fetchone()["completed_at"], WHEN,
+                "and it is still closed")
+
+    return c.report()
+
+
+def check_the_audit_log_is_asked_once_and_only_when_needed() -> bool:
+    """It is a guild-wide read, so it rides on there being something to name."""
+    c = Check("the audit log is asked once, and only when something closed")
+
+    with Board() as b:
+        one, two = board_with_two(b)
+        d = Answers({one: LIVE, two: LIVE},
+                    audit=[(one, {"id": "u-9", "username": "x"})])
+        S.reconcile_closures(b.con, d, set(), {})
+        c.equal(d.audit_calls, 0,
+                "nothing closed, so the log is not read at all")
+
+    with Board() as b:
+        one, two = board_with_two(b)
+        d = Answers({one: archived_at(WHEN), two: archived_at(WHEN)},
+                    audit=[(one, {"id": "u-9", "username": "x"}),
+                           (two, {"id": "u-8", "username": "y"})])
+        S.reconcile_closures(b.con, d, set(), {})
+        c.equal(d.audit_calls, 1, "two closures, still one call")
+        got = {r["thread_id"]: r["actor_name"] for r in b.con.execute(
+            "SELECT thread_id, actor_name FROM events WHERE verb='completed'")}
+        c.equal(got.get(one), "x", "and each is attributed to its own person")
+        c.equal(got.get(two), "y", "not to whoever came first")
+
+    return c.report()
+
+
 CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_absence_is_the_question_never_the_answer,
           check_a_thread_it_cannot_read_is_never_declared_finished,
@@ -287,4 +447,8 @@ CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_a_card_bert_closed_is_not_found_again,
           check_it_does_not_close_the_same_card_twice,
           check_undo_refuses_a_discord_closure,
-          check_the_three_copies_of_the_marker_agree)
+          check_the_three_copies_of_the_marker_agree,
+          check_it_names_whoever_archived_the_thread,
+          check_it_still_closes_when_the_audit_log_is_shut,
+          check_it_never_attributes_a_closure_to_ernie,
+          check_the_audit_log_is_asked_once_and_only_when_needed)

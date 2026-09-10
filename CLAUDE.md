@@ -144,13 +144,30 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   event's `occurred_at` carry. Stamping `now()` would put the feed line at
   the moment Ernie happened to notice, which on a stack that was off all
   weekend is Monday morning.
-- **It names nobody, deliberately.** The thread object does not say who
-  archived it, and the audit log that would (`THREAD_UPDATE`) needs a **View
-  Audit Log** permission the bot does not have -- checked, and refused. So
-  the event carries `actor_name` NULL and `new_value = "discord"`, and Bert's
-  feed says "closed in Discord" rather than running the usual fallback, which
-  would have read "Ernie closed it" -- the one attribution that is certainly
-  wrong.
+- **Who closed it comes from the audit log, and that needs a permission.**
+  The thread object does not carry it. `who_archived()` reads
+  `GET /guilds/{id}/audit-logs?action_type=111` -- **111, not 112**: 112 is
+  THREAD_DELETE, and asking for it returns entries whose changes all read
+  `new_value: None`, which looks enough like an archive to be believed. The
+  entry carrying `{"key": "archived", "new_value": true}` names the person,
+  `global_name` preferred over `username` the way the `started` line does.
+  **View Audit Log** was granted after this first shipped, so both sides are
+  live code: without it the client turns the 403 into `None` and the closure
+  is recorded unattributed. Naming somebody is a nicety; closing the ticket
+  is the feature, and a revoked permission or a guild busy enough to push the
+  archive past `AUDIT_LOOKBACK` must never hold it up.
+- **One audit call per pass, and only when something closed.** It is a
+  guild-wide read, so it rides on there being something to attribute -- the
+  closures are collected first and the log is asked once for all of them.
+  A quiet board still makes no request at all.
+- **Our own bot is skipped.** Ernie archives threads when Complete is pressed
+  in Bert. That path never reaches here -- the card is already closed, so it
+  is not in the query -- but "ernie-test closed it" is the one attribution
+  worth making impossible rather than merely unlikely.
+- **Unattributed, the feed still reads.** `new_value = "discord"` is what
+  Bert phrases the line off, so an unnamed closure says "closed in Discord"
+  rather than running the usual fallback, which would have read "Ernie closed
+  it" -- certainly wrong, Ernie being the one party that definitely did not.
 - **`dispatch_after` is NULL**, the same rule `started` follows: it happened
   in Discord already, and posting "closed" back into the thread is Ernie
   telling the room what it just watched somebody do.
