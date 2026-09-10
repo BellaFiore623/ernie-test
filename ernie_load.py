@@ -151,17 +151,40 @@ def load_messages(con: sqlite3.Connection, tid: str, msgs: list, stats: dict) ->
         mid = m["id"]
         author = m.get("author") or {}
 
-        con.execute(
+        cur = con.execute(
             """INSERT OR IGNORE INTO messages
                (message_id, thread_id, author_id, author_name, author_display,
-                is_bot, created_at, first_seen_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                is_bot, type, created_at, first_seen_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (mid, tid, author.get("id", ""), author.get("username"),
              author.get("global_name"),
-             int(bool(author.get("bot"))), m.get("timestamp", ""), ts),
+             int(bool(author.get("bot"))), m.get("type"),
+             m.get("timestamp", ""), ts),
         )
-        if con.total_changes:
+        # `cur.rowcount`, not `con.total_changes`: the connection's total is
+        # cumulative from the moment it was opened, so it is truthy after the
+        # first write of the process and stays that way -- every message seen
+        # counted as a message that was new.
+        if cur.rowcount:
             stats["messages_new"] += 1
+        elif m.get("type") is not None:
+            # A row that was already here gets its `type` filled in, and only
+            # that. It is what makes a re-read a backfill: every message in
+            # the mirror was written before the column existed, and the type
+            # is not derivable from anything stored -- it can only be fetched
+            # again. Left to OR IGNORE alone those rows would stay NULL for
+            # ever however many times they were read, so the history before
+            # today would have been lost to a keyword.
+            #
+            # Nothing else is touched. The mirror is append-only, and a name
+            # or a timestamp reading differently on a second fetch is Discord
+            # being mutable rather than us being wrong. The update is its own
+            # statement rather than an upsert clause because an upsert that
+            # updates still reports `rowcount` 1, which would have counted
+            # every backfilled row as a new message.
+            con.execute(
+                "UPDATE messages SET type=? WHERE message_id=? AND type IS NULL",
+                (m.get("type"), mid))
 
         # Revision only when the body actually changed.
         prev = con.execute(

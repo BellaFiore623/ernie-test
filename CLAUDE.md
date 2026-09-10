@@ -120,6 +120,39 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   varying count in the field name — match by prefix, not exact name.
 - `#customer-threads` generates cards. `#customer-support` is mirrored for
   history only (`generate_cards = 0`).
+- **`messages.type` is Discord's, and it is stored because it cannot be
+  derived.** 0 is an ordinary message; the rest are things Discord itself
+  posted. **4 is CHANNEL_NAME_CHANGE -- a thread rename, carrying the new
+  name as its content and whoever did it as its author** -- which is the only
+  exact record of a retag there is. Confirmed against the sandbox rather than
+  read off the documentation: three renamed threads, each carrying a type 4
+  whose content was the new title. 6 is CHANNEL_PINNED_MESSAGE, which is what
+  pinning the status message posts.
+  **Without it a rename cannot be told from a paste.** 573 of production's
+  messages have content that parses as a title and **550 of those were
+  written by people**, so the two are the same row. Nothing reads the column
+  yet -- the retag figure comes off `thread_titles` and does not need it --
+  and it is stored anyway because it can only be captured as it goes past.
+  It also makes the record exact where `thread_titles` is merely current: a
+  thread renamed twice while the sync was down leaves one title revision and
+  two type 4 messages.
+  **A re-read fills it in on a row that has none**, which is what makes a
+  backfill possible at all. `load_messages` keeps its `INSERT OR IGNORE` and
+  follows it with an `UPDATE ... WHERE type IS NULL` -- **only** the type,
+  because the mirror is append-only and a name or a timestamp reading
+  differently on a second fetch is Discord being mutable rather than us being
+  wrong. It is a separate statement rather than an upsert clause because an
+  upsert that *updates* still reports `rowcount` 1, and that counter is what
+  says a message is new.
+  So `rescan_edits` backfills on its own: it re-reads the last
+  `RESCAN_TAIL` messages of every thread active within `RESCAN_DAYS`, on
+  rotation. **Threads older than that stay NULL until something fetches them
+  again** -- which is most of production's 889, and is a deliberate re-read
+  pass to decide on rather than something that happens quietly.
+  `messages_new` was counted off `con.total_changes` and is counted off the
+  cursor's `rowcount` now: the connection's total is cumulative from the
+  moment it was opened, so it is truthy after the first write of the process
+  and stays that way, and every message seen was counted as one that was new.
 - Archived means done: a keepalive bot pings live threads every three days,
   so nothing goes quiet by accident.
 - **A thread archived in Discord closes its card, and Ernie has to go looking
@@ -943,8 +976,10 @@ or worse, how long a ticket takes, or which ones have been open since April.
   and **573 of production's messages have content that parses as a title, 550
   of them written by people**, so a rename cannot be told from somebody
   pasting a title into the chat. A figure that invents transitions is worse
-  than no figure. Storing `type` on the way in would settle it and would let
-  the history before today be reconstructed exactly; nothing needs it yet.
+  than no figure. **`messages.type` is stored now** so that stops being true
+  of anything read from here on -- see the data model note. It changes
+  nothing about this figure, which still comes off `thread_titles`; it is
+  what a later reconstruction of the history before today would be built on.
   **The honest limit is the one the state-channel route would have had too:**
   this counts what Ernie was watching for. Production has 889 title rows for
   889 threads -- one each, because it has never run this build -- so it reads

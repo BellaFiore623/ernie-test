@@ -76,10 +76,25 @@ CREATE TABLE IF NOT EXISTS messages (
                   -- say. Absent on older rows and on accounts that never set
                   -- one, so every read of it falls back to author_name.
     is_bot        INTEGER NOT NULL DEFAULT 0,
+    type          INTEGER,                     -- Discord's message type. 0 is
+                  -- an ordinary message; the rest are things Discord itself
+                  -- posted. 4 is CHANNEL_NAME_CHANGE -- a thread rename, with
+                  -- the new name as its content -- and it is the only exact
+                  -- record of a retag there will ever be. Without it a rename
+                  -- cannot be told from somebody pasting a title into the
+                  -- chat: 573 of production's messages have content that
+                  -- parses as a title and 550 of those were written by
+                  -- people. NULL on every row written before this column
+                  -- existed, and on nothing since.
     created_at    TEXT NOT NULL,
     first_seen_at TEXT NOT NULL,
     deleted_at    TEXT                         -- set when a re-scan finds it gone
 );
+
+-- Renames, which are read by thread rather than swept: a partial index keeps
+-- it to the handful of rows that are one.
+CREATE INDEX IF NOT EXISTS ix_messages_type
+    ON messages(type, created_at) WHERE type IS NOT NULL AND type <> 0;
 
 CREATE INDEX IF NOT EXISTS ix_messages_thread ON messages(thread_id, created_at);
 
