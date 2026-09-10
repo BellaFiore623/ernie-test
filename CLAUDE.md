@@ -1550,6 +1550,13 @@ imports it. Bump it there and nowhere else.
   server, with the only fix a build that does not exist yet. It is one line to
   get wrong in a release and there is no recovering from it in the field, so
   `check_version.py` holds the two in order.
+- **Two flags stage a disagreement, because otherwise there is none.** Both
+  halves of a from-source stack read the same `ernie_version`, so the one
+  screen that appears only when two builds differ is unreachable on the
+  machine that built it. `--pretend-version X` claims this Bert is X;
+  `--pretend-ernie X` claims Ernie answered as X. They feed the real
+  `build_standing()` rather than faking the dialog -- what wants exercising is
+  the decision, not the picture.
 - **A frozen build names its commit from a file.** There is no `.git` inside
   an exe, so the packaging step writes the sha into `build_commit.txt` beside
   the module and `_read_commit` reads it **before** walking `.git` -- a bundle

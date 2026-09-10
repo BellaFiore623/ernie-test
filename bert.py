@@ -51,6 +51,11 @@ SETTINGS = pathlib.Path.home() / ".bert.json"
 LOGO = pathlib.Path(__file__).parent / "assets" / "bert_logo.png"
 # The face Bert makes about a version mismatch.
 UPDATE_FACE = pathlib.Path(__file__).parent / "assets" / "bert_update.png"
+# Set only by --pretend-version / --pretend-ernie, which exist so the update
+# dialog can be looked at. Both halves of a from-source stack read the same
+# ernie_version, so a real disagreement cannot be staged without them.
+PRETEND_MINE = ""
+PRETEND_ERNIE = ""
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
@@ -5180,10 +5185,19 @@ class Bert(QMainWindow):
         nothing to compare against yet -- `/health` is the only thing that
         knows what Ernie is, and Bert has not asked it.
         """
-        build = (self.health or {}).get("build") or {}
+        build = dict((self.health or {}).get("build") or {})
+        # Staged from the command line, for looking at the thing that only
+        # appears when two builds disagree -- which is otherwise unreachable
+        # on a machine where both halves come out of the same checkout. It
+        # feeds the real decision rather than faking the dialog: what is
+        # under test is `build_standing`, not the picture.
+        if PRETEND_ERNIE:
+            build["version"] = PRETEND_ERNIE
+        build.setdefault("version", None)
         was = self.update_state
         self.update_state, self.update_said = build_standing(
-            ernie_version.VERSION, build.get("version"), build.get("min_bert"))
+            PRETEND_MINE or ernie_version.VERSION,
+            build.get("version"), build.get("min_bert"))
 
         if self.update_state != was and was == "blocked":
             self.banner.hide()          # updated underneath us, or moved on
@@ -6694,7 +6708,13 @@ class Bert(QMainWindow):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--api", default="http://127.0.0.1:8787")
+    ap.add_argument("--pretend-version", default="", metavar="X",
+                    help="testing only: claim this Bert is build X")
+    ap.add_argument("--pretend-ernie", default="", metavar="X",
+                    help="testing only: pretend Ernie answered as build X")
     a = ap.parse_args()
+    global PRETEND_MINE, PRETEND_ERNIE
+    PRETEND_MINE, PRETEND_ERNIE = a.pretend_version, a.pretend_ernie
     app = QApplication(sys.argv)
     # Fusion draws the same way on every desktop, which is what makes one
     # QPalette enough to carry the dark theme through Qt's own widgets.
