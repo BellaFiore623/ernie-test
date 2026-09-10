@@ -78,50 +78,18 @@ class Discord:
         return self.call("PATCH", f"/channels/{tid}", archived=on)
 
 
-# --------------------------------------------------------------------------
-# Fake Python-Interface-Bot panels
-# --------------------------------------------------------------------------
-
-def build_embed(subject, equipment_master, client_cr, assignee="Brett Buttenfield"):
-    return {
-        "title": f"Build Request: {subject}",
-        "color": 0x2ECC71,
-        "fields": [
-            {"name": "Equipment master", "value": equipment_master},
-            {"name": "Client CR", "value": client_cr},
-            {"name": "Priority", "value": "High", "inline": True},
-            {"name": "Assignee", "value": assignee, "inline": True},
-            {"name": "Due date", "value": "(none)", "inline": True},
-            {"name": "Labels", "value": "Operations"},
-        ],
-    }
+# The Build Request / Return Ticket panels that used to be built here, and the
+# "Created PIP-...." confirmations that followed them, were Python-Interface-
+# Bot's rather than Ernie's -- imitated so the parser had something real to
+# read. They are gone from the seeded threads: Bert shows nothing from them
+# yet, so a thread carrying one puts another bot's embed in front of the one
+# message Ernie does own. `ernie_extract` still parses them, because
+# production still has them and the rules about `-- not found --`, `####` and
+# the varying "Existing Return ticket(s) (N)" count are all still live there.
+# `tests/check_extract.py` is where those are exercised now.
 
 
-def return_embed(subject, equipment_master, client_cr, problem, eq_type,
-                 template, referenced=None):
-    fields = [
-        {"name": "Equipment master", "value": equipment_master},
-        {"name": "Client CR", "value": client_cr},
-        {"name": "Reported problem", "value": problem},
-        {"name": "Reporter", "value": "Hayden Ling", "inline": True},
-        {"name": "Equipment type", "value": eq_type, "inline": True},
-        {"name": "Template", "value": template, "inline": True},
-        {"name": "Suggested labels", "value": "Damaged_Fiber"},
-    ]
-    if referenced:
-        # dynamic field name -- the count varies, so exact-match lookups miss it
-        fields.insert(0, {
-            "name": f"Existing Return ticket(s) referenced in this thread ({len(referenced)})",
-            "value": "\n".join(f"⚠️ {k} (Open) [Damaged_Fiber]" for k in referenced)})
-    return {"title": f"Return Ticket: {subject}", "color": 0xE67E22, "fields": fields}
 
-
-def created(pip, kind, em, cr):
-    return (f"✅ Created **{pip}**: https://example.atlassian.net/browse/{pip}\n"
-            f"Assigned to Brett Buttenfield\n"
-            f"Linked to equipment master {em}\n"
-            f"Linked to client CR {cr}\n"
-            f"Posted {kind} link in thread.")
 
 
 # --------------------------------------------------------------------------
@@ -132,10 +100,6 @@ CASES = [
     # (title, [(content, embed) ...], extra)
     ("PROD: Edge AI Services - 03Aug26 - EReel-1060 fiber snapped", [
         ("@ThreadGroup we'll need to ship this today", None),
-        (None, build_embed("Edge AI Services - EReel-1060 - 03Aug26",
-                           "PIP-5167 (EReel-1060)",
-                           "PIP-4863 (Edge AI Services : Laser (ST Client))")),
-        (created("PIP-9467", "Build Request", "PIP-5167", "PIP-4863"), None),
     ], None),
 
     # lowercase month
@@ -146,9 +110,6 @@ CASES = [
     # '####' placeholder -- pending, not an error
     ("OPS: Clinton MS - 24Aug26 - Order for Wheels and Domes", [
         ("Need ODE-#### spun up before Friday", None),
-        (None, build_embed("Clinton MS - ODE-#### - 24Aug26",
-                           "-- not found --",
-                           "PIP-7468 (Clinton, MS: **PURCHASE**)")),
     ], None),
 
     # full month name
@@ -159,20 +120,13 @@ CASES = [
     # return ticket with the dynamic counted field
     ("OPS: Thrasher - 20Aug26 - EReel-1023 no amber light", [
         ("no amber light on the reel", None),
-        (None, return_embed("Thrasher - 20Aug26 : EReel-1023",
-                            "PIP-5167 (EReel-1023)",
-                            "PIP-4863 (Thrasher : Laser (ST Client))",
-                            "EReel-1023 no amber light", "ereel",
-                            "Return: EReel", referenced=["PIP-9468"])),
-        (created("PIP-9469", "Return", "PIP-5167", "PIP-4863"), None),
     ], None),
 
     # nested parens + markdown in the client name
+    # This one carried nothing but the other bot's panel, so it was left with
+    # no messages at all -- and an empty thread is not a case, it is a gap.
     ("OPS: SCI - 25Aug26 - Bot swap", [
-        (None, build_embed("SCI - 25Aug26",
-                           "PIP-7434 (ODE-2926)",
-                           "PIP-4945 (SCI Infrastructure LLC. **PURCHASE** "
-                           "(Should Have 3 Bots!))")),
+        ("swapping the spare in while this one goes back", None),
     ], None),
 
     # queue prefixes beyond OPS/PROD
@@ -196,8 +150,6 @@ CASES = [
     # gets renamed PROD -> OPS after tickets exist
     ("PROD: Munhall - 26Aug26 - 1k reel", [
         ("Reel is staged", None),
-        (None, build_embed("Munhall - 26Aug26", "-- not found --",
-                           "PIP-7501 (Munhall Borough PA (MSSMA))")),
     ], "rename"),
 
     # message gets edited after ingestion
@@ -224,19 +176,10 @@ CASES = [
 
     ("PROD: Allegheny County - 28Aug26 - ODE-3114 gearbox rebuild", [
         ("Third rebuild on this unit", None),
-        (None, build_embed("Allegheny County - ODE-3114 - 28Aug26",
-                           "PIP-7712 (ODE-3114)",
-                           "PIP-4902 (Allegheny County DPW)")),
-        (created("PIP-9501", "Build Request", "PIP-7712", "PIP-4902"), None),
     ], None),
 
     ("OPS: Beaver Falls - 29Aug26 - EReel-1188 spool jam", [
         ("Reel jams at about 40ft every time", None),
-        (None, return_embed("Beaver Falls - 29Aug26 : EReel-1188",
-                            "PIP-7719 (EReel-1188)",
-                            "PIP-4915 (Beaver Falls Municipal Authority)",
-                            "Spool jams under load", "ereel",
-                            "Return: EReel", referenced=["PIP-9470", "PIP-9481"])),
     ], None),
 
     ("PROD: Steel City Water - 30Aug26 - SSD0311 firmware rollback", [
@@ -249,9 +192,6 @@ CASES = [
 
     ("OPS: Greensburg - 31Aug26 - ODE-#### awaiting purchase order", [
         ("PO still not through", None),
-        (None, build_embed("Greensburg - ODE-#### - 31Aug26",
-                           "-- not found --",
-                           "PIP-7740 (City of Greensburg **PURCHASE**)")),
     ], None),
 
     ("ENG: Reporting - 01Sep26 - Export drops trailing rows", [
@@ -260,18 +200,10 @@ CASES = [
 
     ("PROD: Monroeville - 01Sep26 - Dual laser calibration", [
         ("Calibration jig is booked Thursday", None),
-        (None, build_embed("Monroeville - 01Sep26",
-                           "PIP-7755 (SSD0402)",
-                           "PIP-4931 (Monroeville Borough)")),
     ], None),
 
     ("OPS: Wilkinsburg - 01Sep26 - EReel-1204 no power", [
         ("Dead on arrival out of the crate", None),
-        (None, return_embed("Wilkinsburg - 01Sep26 : EReel-1204",
-                            "PIP-7761 (EReel-1204)",
-                            "PIP-4940 (Wilkinsburg Sanitary Authority)",
-                            "No power at all", "ereel", "Return: EReel")),
-        (created("PIP-9512", "Return", "PIP-7761", "PIP-4940"), None),
     ], None),
 
     ("DATA: Fleet - 02Sep26 - Backfill equipment master ids", [
@@ -288,9 +220,6 @@ CASES = [
 
     ("OPS: McKeesport - 02Sep26 - ODE-2977 wheel motor", [
         ("Left wheel motor stalls under load", None),
-        (None, build_embed("McKeesport - ODE-2977 - 02Sep26",
-                           "PIP-7770 (ODE-2977)",
-                           "PIP-4955 (McKeesport City : Laser (ST Client))")),
     ], None),
 
     ("PROD: Penn Hills - 02Sep26 - EReel-1220 fiber respool", [
@@ -305,16 +234,10 @@ CASES = [
     # tier 1 resolves them through PIP-8605 without comparing any strings.
     ("PROD: Dukes Root Control - 03Sep26 - EReel-1231 fiber respool", [
         ("Fiber went at the reel end again", None),
-        (None, build_embed("Dukes Root Control - EReel-1231 - 03Sep26",
-                           "PIP-7782 (EReel-1231)",
-                           "PIP-8605 (Duke's Root Control)")),
     ], None),
 
     ("OPS: Duke's Root Control - 03Sep26 - ODE-3140 wheel motor", [
         ("Right wheel motor is intermittent", None),
-        (None, build_embed("Duke's Root Control - ODE-3140 - 03Sep26",
-                           "PIP-7790 (ODE-3140)",
-                           "PIP-8605 (Duke's Root Control)")),
     ], None),
 ]
 
