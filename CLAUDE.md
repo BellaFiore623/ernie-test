@@ -265,11 +265,27 @@ activity feed, undo, and the outbox.
   which is what the splitter now holds. The cap allows for the bar's own
   width, or the column loses that much the moment the board is long enough to
   scroll.
-  The area is centred **by stretch factor, never by an alignment flag**: a
+  The area is added **by stretch factor, never by an alignment flag**: a
   scroll area added with one takes its own sizeHint, cap or no cap. And the
-  two spacers are **weightless** -- given a factor each they split the pane
-  three ways with the area and it never reached the cap at all, measured as
-  the column stuck at its 463px minimum on a 1500px window.
+  two spacers carry **no factor** -- given one each they split the pane three
+  ways with the area and it never reached the cap at all, measured as the
+  column stuck at its 463px minimum on a 1500px window.
+  **Centred on the window, not on the pane.** `_centre_board()` works the
+  spacers out against the *splitter*, which spans the whole row. Splitting
+  the pane evenly is only centring while the two side panels happen to
+  match: drag the running order out to 460 and leave the figures at 180 and
+  the pane's own middle is 139px right of the window's, which is what
+  somebody looking at the screen sees and reported.
+  **Staying centred costs width, and that is the trade.** A column filling
+  its pane cannot be centred, because the pane is not -- so it comes in to
+  the widest that can be, whichever of its two edges runs out first.
+  Measured at 1500px with the rail at 460 and the figures at 180: 568 against
+  the 846 it would otherwise take. At 1920 the same arrangement centres at
+  the full 846 and costs nothing, folded or not. The floor is the column's
+  own `minimumSizeHint` -- under that it gives up no more room and sits as
+  near the middle as it can, because a board too narrow to read is the worse
+  of the two. Every path that can move either width re-centres:
+  `_place_sides`, `resizeEvent`, and the handle.
 
 - **A feed row stops growing at `FEED_ROW_MAX_W`.** The status chip and Undo
   are right-aligned in fixed columns, which is what makes them a column you can

@@ -1152,12 +1152,28 @@ def check_the_board_is_centred_and_keeps_its_scrollbar() -> bool:
     c.ok(all(not a.keywords and len(a.args) == 2 for a in adds),
          "by factor rather than by an alignment flag, which would make it "
          "take its own sizeHint instead")
-    c.ok("hold.addStretch()\n" in body,
-         "and the spacers carry no weight, or they split the pane with it "
-         "and the column never reaches its cap")
-    c.ok("hold.addStretch(1)" not in body,
-         "specifically not a weighted spacer -- measured, that left the "
-         "column at its 463px minimum on a 1500px window")
+    # The spacers are widths somebody worked out, not stretches that split
+    # what is left. Even only centres the column while the two side panels
+    # match: drag the running order wide and fold the figures down and the
+    # pane itself is off-centre, so an evenly split pane puts the tickets
+    # right of the middle of the window -- which is what a person looking at
+    # the screen sees.
+    c.ok("self.board_pad_l" in body and "self.board_pad_r" in body,
+         "the column sits between two spacers of its own")
+    c.ok("hold.addStretch" not in body,
+         "and not between two stretches, which can only ever split the pane "
+         "evenly and so centre it in the wrong frame")
+    pads = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "addWidget"
+            and any(isinstance(a, ast.Attribute)
+                    and a.attr in ("board_pad_l", "board_pad_r")
+                    for a in n.args)]
+    c.equal(len(pads), 2, "both spacers are in the layout")
+    c.ok(all(len(a.args) == 1 and not a.keywords for a in pads),
+         "carrying no stretch factor -- with one each they split the pane "
+         "three ways with the area and it never reached its cap, measured as "
+         "the column stuck at its 463px minimum on a 1500px window")
 
     # The cap has to allow for the bar, or the column loses that much width
     # the moment the board is long enough to scroll.
@@ -1284,6 +1300,80 @@ def check_the_light_ramp_has_four_levels() -> bool:
     return c.report()
 
 
+
+def check_the_board_centres_on_the_window_not_its_pane() -> bool:
+    """
+    Centred against the splitter, which is the whole row, not against the
+    pane the board happens to have been given.
+
+    Reported as: drag one side more closed while the other is more open and
+    the tickets stop being in the middle of the screen. They were centred in
+    their pane the whole time -- and the pane is only centred while the two
+    side panels are the same width. A wide running order and a folded figures
+    panel puts the pane's own middle well right of the window's.
+
+    It clamps, because the two are not always reconcilable: a rail wide
+    enough and the column cannot reach the middle without going under it, and
+    hard against the near edge is the best answer available.
+    """
+    c = Check("the board centres on the window, not on its pane")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    cls = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+    fn = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+               and n.name == "_centre_board"), None)
+    c.ok(fn is not None, "there is one place that decides where it sits")
+    if fn is None:
+        return c.report()
+    body = ast.get_source_segment(src, fn) or ""
+
+    c.ok("self.rail_split.width()" in body,
+         "the middle it aims for is the splitter's, which spans the row")
+    c.ok("mapTo(self.rail_split" in body,
+         "measured from where the pane actually begins in that row")
+    c.ok("max(0," in body and "min(" in body,
+         "and clamped, so an unreachable middle lands on the near edge "
+         "rather than a negative width")
+
+    # The part that is not obvious: a column filling its pane cannot be
+    # centred, because the pane is not. It has to give the difference up.
+    c.ok("fits" in body,
+         "the column comes in to the widest that can sit centred here")
+    c.ok("minimumSizeHint" in body,
+         "with its own minimum as the floor, read off the widget rather "
+         "than written down twice")
+    c.ok("col > fits >= floor" in body,
+         "so it narrows only when that is both needed and still a board -- "
+         "under the floor it stops giving room up and sits off centre, "
+         "because a board too narrow to read is the worse of the two")
+
+    # Everything that can move either width has to ask again, or the column
+    # is centred for the arrangement before last. Read each method's own
+    # source rather than slicing the class text -- a name appears wherever it
+    # is called as well as where it is defined, and slicing found a call.
+    def method(name):
+        node = next((n for n in cls.body if isinstance(n, ast.FunctionDef)
+                     and n.name == name), None)
+        return (ast.get_source_segment(src, node) or "") if node else ""
+
+    for caller, why in (("_place_sides", "placing the panes"),
+                        ("resizeEvent", "a window resize")):
+        c.ok("_centre_board" in method(caller), f"{why} re-centres it")
+
+    # The handle is wired where the splitter is built rather than in a method
+    # of its own, so this one is a connection instead of a call.
+    wired = next((ast.get_source_segment(src, f) or "" for f in cls.body
+                  if isinstance(f, ast.FunctionDef)
+                  and "rail_split.splitterMoved"
+                  in (ast.get_source_segment(src, f) or "")), "")
+    c.ok("_centre_board" in wired,
+         "a handle being dragged re-centres it")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_following_the_desktop, check_the_desktop_changing_underneath, check_each_palette_is_the_right_end,
           check_a_scoped_container_states_its_tooltip,
@@ -1304,5 +1394,6 @@ CHECKS = (check_nothing_freezes_a_colour, check_palettes_agree,
           check_a_filter_says_how_many_it_holds,
           check_a_status_gives_up_its_noun_not_its_state,
           check_the_board_is_centred_and_keeps_its_scrollbar,
+          check_the_board_centres_on_the_window_not_its_pane,
           check_a_band_header_is_accented_not_filled,
           check_the_ink_follows_the_ground)

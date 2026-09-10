@@ -3717,14 +3717,24 @@ class Bert(QMainWindow):
         hold = QHBoxLayout(self.board_holder)
         hold.setContentsMargins(0, 0, 0, 0)
         hold.setSpacing(0)
-        # The spacers carry no weight of their own: with a factor each they
-        # split the pane three ways and the area never reached its cap --
-        # measured, the column stayed at its 463px minimum on a 1500px
-        # window. Weightless, they take only what is left once the area has
-        # grown to the cap and stopped.
-        hold.addStretch()
+        # Two spacers whose widths are worked out rather than two stretches
+        # that split what is left evenly. Even is only centred while the two
+        # side panels are the same width: drag the running order wide and the
+        # figures narrow and the pane itself is off-centre, so a column
+        # centred *inside the pane* sits off-centre in the window. Both are
+        # widened by `_centre_board()` against the whole splitter.
+        #
+        # They also cannot carry stretch factors: with one each they split
+        # the pane three ways with the area and it never reached its cap --
+        # measured, the column stayed at its 463px minimum on a 1500px window.
+        self.board_pad_l = QWidget()
+        self.board_pad_r = QWidget()
+        for pad in (self.board_pad_l, self.board_pad_r):
+            pad.setStyleSheet("background:transparent;")
+            pad.setFixedWidth(0)
+        hold.addWidget(self.board_pad_l)
         hold.addWidget(self.scroll, 1)
-        hold.addStretch()
+        hold.addWidget(self.board_pad_r)
         # Its own bar rides inside the cap, so the cap has to allow for it or
         # the column loses that much width whenever the board scrolls.
         self.scroll.setMaximumWidth(
@@ -3747,6 +3757,10 @@ class Bert(QMainWindow):
         self.rail_split.setStretchFactor(1, 1)
         self.rail_split.setStretchFactor(2, 0)  # and so does the far side
         self.rail_split.splitterMoved.connect(self._unfold_by_drag)
+        # After the unfold, which changes the pane widths this measures
+        # against, and before the two that record them.
+        self.rail_split.splitterMoved.connect(
+            lambda *_: self._centre_board())
         # After the unfold, or they see a folded panel and record nothing.
         self.rail_split.splitterMoved.connect(self._remember_rail_width)
         self.rail_split.splitterMoved.connect(self._remember_stats_width)
@@ -4039,6 +4053,9 @@ class Bert(QMainWindow):
         # drag to settle; the toolbar is two labels and a placeholder, and
         # leaving those cut for the length of a drag is the thing being fixed.
         self._fit_toolbar()
+        # Same reasoning: two widths, and the column visibly sliding off
+        # centre for the length of a window drag is what this stops.
+        self._centre_board()
 
     def _unfold_by_drag(self, *_):
         """A spine dragged away from the edge opens that panel.
@@ -4092,6 +4109,58 @@ class Bert(QMainWindow):
             except OSError:
                 pass    # a layout is not worth an error box
 
+    def _centre_board(self):
+        """Keep the column in the middle of the **window**, not of its pane.
+
+        The pane is only centred while the two side panels happen to match.
+        Drag the running order out and fold the figures down and the board's
+        pane starts 400px from the left and ends at the window edge -- so
+        splitting that pane evenly leaves the tickets sitting well right of
+        centre, which is what somebody looking at the screen sees.
+
+        Worked out against the splitter, which spans the whole row: where the
+        column *should* start is `(width - column) / 2`, and the left spacer
+        is however far that is from where the pane begins.
+
+        **Staying centred costs width, and that is the trade.** A column that
+        fills its pane cannot be centred, because the pane is not -- so with
+        the panels lopsided it comes in to the widest that *can* be, which is
+        whichever of its two edges runs out first. Measured at 1500px with
+        the running order at its 460 maximum and the figures at their 180
+        minimum: the widest centred column is 568 against the 846 it would
+        otherwise take. At 1920 the same arrangement centres at the full 846
+        and costs nothing.
+
+        The floor is the column's own minimum -- the width below which a card
+        stops being a card. Under that it gives up no more room and simply
+        sits as near the middle as the pane allows, which on a narrow window
+        with both panels wide is hard against the near edge. Better a board
+        off centre than a board too narrow to read.
+        """
+        hold = getattr(self, "board_holder", None)
+        if hold is None or not hold.width():
+            return
+        room = hold.width()
+        span = self.rail_split.width()
+        x = hold.mapTo(self.rail_split, QPoint(0, 0)).x()
+        col = min(self.scroll.maximumWidth(), room)
+
+        # The widest a column can be and still sit centred *here*: it has to
+        # start at or after where this pane starts, and end at or before
+        # where it ends. Lopsided panels make one of those two the binding
+        # one, and the column has to give up the difference -- filling the
+        # pane is exactly what leaves it off centre, because the pane is not
+        # centred.
+        fits = min(span - 2 * x, 2 * (x + room) - span)
+        floor = self.scroll.widget().minimumSizeHint().width()
+        if col > fits >= floor:
+            col = fits
+
+        want = (span - col) // 2
+        left = max(0, min(room - col, want - x))
+        self.board_pad_l.setFixedWidth(left)
+        self.board_pad_r.setFixedWidth(max(0, room - col - left))
+
     def _place_sides(self):
         """Put both handles where they were left, once per unfold.
 
@@ -4122,6 +4191,7 @@ class Bert(QMainWindow):
         self.rail_split.setSizes([rail, total - rail - figures, figures])
         self._rail_sized = True
         self._stats_sized = True
+        self._centre_board()
 
     def _panel_height(self, view):
         """The panel that holds a feed viewport this tall."""
