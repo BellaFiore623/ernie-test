@@ -311,6 +311,17 @@ activity feed, undo, and the outbox.
   button, because folding is the button's business. Not from `_fit_feed`,
   which runs on every poll and would put the handle back under anybody
   dragging it.
+- **The spine is measured off its own caption, not written down.**
+  `FEED_FOLDED` was 30, chosen when the control on that header was a caret in
+  an 11px label -- about 14px, which fitted inside the panel's 6 and 8 of
+  margin with two to spare. The 24px fold button that replaced it did not, so
+  the panel was pinned eight pixels shorter than its own contents and the
+  button was clipped along its top edge. Reported as the collapse button
+  being cut off, **and cut off at every window size**, which is the signature
+  of a fixed height: wrong by the same amount everywhere. "A hand-counted
+  fixed height clips in silence" is the reasoning at the top of `_fit_feed`
+  about the rows; this was that sentence one layout up. `_folded_height()`
+  asks the caption, keeps `FEED_FOLDED` as a floor, and measures 38.
 - **And folded is a minimum, never a fixed height** -- the rule the two side
   panels already follow, arrived at here the same way. Fixed, the pane cannot
   be moved at all, and the handle is still sitting right there against the

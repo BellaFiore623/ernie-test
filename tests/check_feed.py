@@ -691,8 +691,37 @@ def check_the_feed_can_be_resized() -> bool:
     c.ok(place is not None, "there is one place that puts the handle")
     body = ast.get_source_segment(src, place) or "" if place else ""
     c.ok("setSizes" in body, "and it moves the splitter, not just the widget")
-    c.ok("FEED_FOLDED" in body,
+    c.ok("_folded_height" in body,
          "taking the pane down to the spine when the feed is folded")
+
+    # **And the spine is measured, not counted.** FEED_FOLDED was 30, chosen
+    # when the control on that header was a caret in an 11px label -- about
+    # 14px, which fitted inside the panel's 6 and 8 of margin with two to
+    # spare. The 24px fold button that replaced it did not, so the panel was
+    # pinned eight pixels shorter than its own contents and the button was
+    # clipped along its top edge. Reported as the collapse button being cut
+    # off, and cut off at every window size, which is the signature of a
+    # fixed height: wrong by the same amount everywhere.
+    #
+    # "A hand-counted fixed height clips in silence" is the reasoning at the
+    # top of _fit_feed about the rows. This is that same sentence one layout
+    # up, so the answer is the same one: ask the caption.
+    folded = _method("_folded_height")
+    c.ok(folded is not None, "the folded height is worked out, not written down")
+    fbody = ast.get_source_segment(src, folded) or "" if folded else ""
+    c.ok("feed_head" in fbody and "sizeHint" in fbody,
+         "off the caption's own sizeHint, so a taller control moves it")
+    c.ok("contentsMargins" in fbody,
+         "plus the margins the panel keeps around it")
+    c.ok("FEED_FOLDED" in fbody and "max(" in fbody,
+         "with the old constant kept as a floor rather than the answer")
+
+    # Nothing may go back to using the bare constant as a height.
+    for name in ("_place_feed", "_unfold_feed_by_drag"):
+        m = _method(name)
+        mb = ast.get_source_segment(src, m) or "" if m else ""
+        c.ok("FEED_FOLDED" not in mb,
+             f"{name} asks for the measured height rather than the constant")
 
     toggle = _method("toggle_feed")
     tbody = ast.get_source_segment(src, toggle) or "" if toggle else ""

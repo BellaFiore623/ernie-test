@@ -106,7 +106,8 @@ BOARD_MAX = 800
                            
 #Recent Activity Feed                                           
 FEED_HEIGHT = 160         
-FEED_FOLDED = 30           
+FEED_FOLDED = 30           # the floor for a folded feed; the real
+                           # height is measured off its caption
 FEED_ROWS = 4              
 FEED_MAX_ROWS = 8          
 BOARD_MIN_H = 180          # the board never drags away to nothing
@@ -4636,6 +4637,26 @@ class Bert(QMainWindow):
         return (m.top() + m.bottom() + self.feed_panel.layout().spacing()
                 + self.feed_head.sizeHint().height() + view)
 
+    def _folded_height(self):
+        """What the caption actually needs, measured rather than counted.
+
+        `FEED_FOLDED` was 30, chosen when the control on this header was a
+        caret in an 11px label -- about 14px, which fitted inside the panel's
+        6 and 8 of margin with two to spare. The fold button that replaced it
+        is 24px and does not, so the panel was pinned eight pixels shorter
+        than its own contents and the button was clipped along the top.
+        Reported as the collapse button being cut off, at every window size,
+        which is what a fixed height does: it is wrong by the same amount
+        everywhere.
+
+        "A hand-counted fixed height clips in silence" is the first line of
+        `_fit_feed`'s reasoning about the *rows*. The caption is the same
+        problem one layout up, and the answer is the same one: ask.
+        """
+        m = self.feed_panel.layout().contentsMargins()
+        return max(FEED_FOLDED,
+                   m.top() + m.bottom() + self.feed_head.sizeHint().height())
+
     def _remember_feed_height(self, *_):
         """Kept, so the handle does not have to be found again every
         time Bert opens. Written on the drag rather than on close,
@@ -4703,7 +4724,7 @@ class Bert(QMainWindow):
             # gesture rather than from here: this runs on every poll, and
             # putting the handle back on each one would snap it out from
             # under anybody dragging it open.
-            self.feed_panel.setMinimumHeight(FEED_FOLDED)
+            self.feed_panel.setMinimumHeight(self._folded_height())
             self.feed_panel.setMaximumHeight(UNCAPPED)
             return
         # The rows went in a moment ago and the layout has not recomputed yet,
@@ -4816,7 +4837,8 @@ class Bert(QMainWindow):
         if not total:
             return                      # asked before the window has a size
         if self.feed_folded:
-            self.split.setSizes([total - FEED_FOLDED, FEED_FOLDED])
+            spine = self._folded_height()
+            self.split.setSizes([total - spine, spine])
             return
         want = self.settings.get("feed_height") or self._feed_wants
         if want and total > want + BOARD_MIN_H:
@@ -4835,7 +4857,7 @@ class Bert(QMainWindow):
         if not self.feed_folded:
             return
         sizes = self.split.sizes()
-        if len(sizes) > 1 and sizes[1] > FEED_FOLDED + UNFOLD_GRAB:
+        if len(sizes) > 1 and sizes[1] > self._folded_height() + UNFOLD_GRAB:
             self.feed_folded = False
             self.feed_body.setVisible(True)
             self._say_feed_fold()
