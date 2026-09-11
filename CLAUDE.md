@@ -1825,14 +1825,31 @@ from source -- four processes, four logs, restart one without the others.
 Drive folder. The folder is also what `BERT_UPDATE_URL` points a browser at,
 so *Get the new build* lands somebody on the thing they need to run.
 
-**Cutting one.** Four steps, and the order is the whole of it:
+**Two branches.** Work happens on `development`; `main` is what has been
+built and handed out. The split protects nothing on its own -- production and
+the sandbox run whatever was *installed*, not whatever a branch says -- so it
+is a convention for working comfortably rather than a safety net. The safety
+is the commit stamped into the exe.
+
+**Cutting one.** Five steps, and the order is the whole of it:
 
 ```bash
-git commit ...                                 # so the stamp describes the build
+git checkout main && git merge development     # build from main, never dev
+git tag v0.9.1                                 # what is in the Drive folder
 python build.py --version 0.9.1 --installer    # ~80s -> dist/Ernie-0.9.1-setup.exe
 # upload that file to the Drive folder
 # edit the pinned note in #ernie-state:  **Release** 0.9.1
 ```
+
+**Build from `main`, not `development`.** Otherwise the sha in the exe is a
+commit `main` does not contain, and `git log main` stops explaining what
+people are running -- which is the one question `build_commit.txt` exists to
+answer.
+
+**And tag it.** A tag answers "what is in the Drive folder" better than a
+branch ever will: an exe is deleted, a folder is tidied, and a sha on its own
+means looking through history. `v0.9.0` is `c04d2e9`, the first build handed
+to anybody.
 
 `--version` bumps `ernie_version.VERSION` on the way through, so the number,
 the installer's name and what `/health` reports cannot drift apart.
