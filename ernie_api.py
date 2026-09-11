@@ -226,6 +226,25 @@ def clean_url(raw):
     return raw if scheme in ("http", "https") else ""
 
 
+# **The retagging worth counting, and only it.** The question was how much
+# production work turns out to be operations, which is a pair of numbers:
+# PROD to OPS, and back the other way. Four tags make twelve possible pairs
+# and all twelve were reported -- so the two that answer the question shared
+# a 244px panel with ENG to PROD and CS to ENG, which nobody asked about and
+# which are a handful of rows each. The noise pushed the signal down the
+# block and then off the bottom of `STATS_MOVES_SHOWN`.
+#
+# Filtered in the **query**, not in the drawing. Counting everything and
+# showing two would leave a block whose rows do not make its own total, and
+# a figure that does not add up is the first one somebody stops believing --
+# the same rule `Other` exists for in the tally. Here there is no `Other` to
+# write, because the pairs nobody asked about are not counted at all.
+#
+# A pair taken out of here stops being counted; it is not deleted from
+# anything. `thread_titles` is append-only and still holds every rename, so
+# widening this again is one line and no backfill.
+TAG_MOVES_COUNTED = (("PROD", "OPS"), ("OPS", "PROD"))
+
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
     "clients": ["short_name", "offered"],
@@ -763,9 +782,16 @@ def stats(ageing: int = 5, days: int = 28):
         #    would have had: this counts changes Ernie was watching for. A
         #    database whose threads have one title row each has nothing to
         #    report, which is production until it runs this build.
+        #    Only the pairs in TAG_MOVES_COUNTED -- see the note there for
+        #    why the filter is here rather than in the drawing.
+        pair_sql = " OR ".join(f"(was = :f{i} AND queue = :t{i})"
+                               for i in range(len(TAG_MOVES_COUNTED)))
+        pair_args = {"since": since}
+        for i, (was, became) in enumerate(TAG_MOVES_COUNTED):
+            pair_args[f"f{i}"], pair_args[f"t{i}"] = was, became
         moves = [{"from": r["was"], "to": r["queue"], "count": r["n"]}
                  for r in con.execute(
-            """SELECT was, queue, COUNT(*) AS n
+            f"""SELECT was, queue, COUNT(*) AS n
                  FROM (SELECT ti.thread_id, ti.observed_at, ti.queue,
                               LAG(ti.queue) OVER (PARTITION BY ti.thread_id
                                                   ORDER BY ti.observed_at)
@@ -774,9 +800,10 @@ def stats(ageing: int = 5, days: int = 28):
                          JOIN cards c USING (thread_id)
                         WHERE ti.queue IS NOT NULL AND ti.queue <> '')
                 WHERE was IS NOT NULL AND was <> queue
+                  AND ({pair_sql})
                   AND datetime(observed_at) >= datetime('now', :since)
                 GROUP BY was, queue
-                ORDER BY n DESC, was, queue""", {"since": since})]
+                ORDER BY n DESC, was, queue""", pair_args)]
 
         return {"completed": completed, "ageing": oldest,
                 "time_to_complete": took, "tally": tally,

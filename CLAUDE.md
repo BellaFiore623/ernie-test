@@ -1143,6 +1143,19 @@ or worse, how long a ticket takes, or which ones have been open since April.
   rows it had put there itself. Same outcome, different account of it.
   `--dry-run` writes, measures and rolls back, so the preview is the real
   figure rather than a count of intentions.
+  **Only PROD ↔ OPS is counted.** Four tags make twelve possible pairs and
+  the question was about two, so the two that answered it shared a 244px
+  panel with `ENG → PROD` and `CS → OPS` -- a handful of rows each about
+  something nobody asked. Measured on the sandbox: eight pairs, two carrying
+  the question and six noise, and enough noise to push a real row into the
+  summed tail. `ernie_api.TAG_MOVES_COUNTED` is the list.
+  **Filtered in the query, never in the drawing.** Counting everything and
+  showing two would leave a block whose rows do not make its own total, and a
+  figure that does not add up is the first one somebody stops believing --
+  the rule `Other` exists for in the tally. There is no `Other` here, because
+  what nobody asked about is not counted at all. Nothing is lost either way:
+  `thread_titles` is append-only and still holds every rename, so widening
+  the list again is one line and no backfill.
   On the panel the block draws `PROD → OPS  21` with a bar in the
   *destination's* colour: the arrow already says which way it went, and the
   tag it became is what a reader is counting. Four tags make twelve possible

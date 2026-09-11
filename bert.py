@@ -4064,6 +4064,12 @@ class Stats(QWidget):
         rather than grouping by one of them; PROD appearing in six rows for
         six reasons is what grouping by the origin would give.
 
+        **Which pairs are counted is Ernie's decision, not this one.**
+        `TAG_MOVES_COUNTED` is the list and the query applies it, so the rows
+        drawn here are the whole of what was counted and cannot fail to make
+        their own total. Filtering at this end instead would have produced a
+        block quietly showing a fraction of its own figure.
+
         The bar is the destination's colour, because the arrow already says
         which way it went and the tag it *became* is what a reader is
         counting. It is measured against the biggest pair, like the completed

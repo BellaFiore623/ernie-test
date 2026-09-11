@@ -588,10 +588,12 @@ def check_a_retag_is_already_in_the_mirror() -> bool:
     with Board() as b:
         one = tallied(b, "PROD: A - 01Jan26 - x", "PROD", 30)
         retagged(b, one, "OPS", 20)
-        # Twice: PROD -> OPS -> ENG is two moves, not one and not three.
+        # Twice: PROD -> OPS -> PROD is two moves, not one and not three.
+        # Both legs are counted pairs, which is the point -- a ticket that
+        # went out and came back is two facts about it, not one.
         two = tallied(b, "PROD: B - 01Jan26 - x", "PROD", 30)
         retagged(b, two, "OPS", 25)
-        retagged(b, two, "ENG", 10)
+        retagged(b, two, "PROD", 10)
         # A rename that keeps the tag. People retitle threads constantly --
         # the client is corrected, the summary is sharpened -- and counting
         # those would make the figure meaningless.
@@ -607,13 +609,65 @@ def check_a_retag_is_already_in_the_mirror() -> bool:
 
         c.equal(counts.get(("PROD", "OPS")), 2,
                 "two tickets went PROD -> OPS")
-        c.equal(counts.get(("OPS", "ENG")), 1,
-                "and one carried on to ENG, counted as its own move")
+        c.equal(counts.get(("OPS", "PROD")), 1,
+                "and one came back, counted as its own move")
         c.ok(("PROD", "PROD") not in counts,
              "a rename that keeps the tag is not a move")
         c.equal(moves["total"], 3, "three moves in all")
         c.equal(sum(m["count"] for m in moves["moves"]), moves["total"],
                 "and the total is the rows added up, so the block adds up")
+
+    return c.report()
+
+
+def check_only_the_pairs_worth_counting_are_counted() -> bool:
+    """
+    Four tags make twelve possible pairs and the question was about two.
+
+    All twelve were reported, so `PROD -> OPS` and `OPS -> PROD` -- the
+    answer to what was actually asked -- shared a 244px panel with
+    `ENG -> PROD` and `CS -> OPS`, a handful of rows each about something
+    nobody wanted to know. Measured on the sandbox: eight pairs, of which two
+    carried the question and six were noise, and the noise was enough to push
+    a real row past `STATS_MOVES_SHOWN` and into the summed tail.
+
+    **Filtered in the query, not in the drawing**, which is the half worth a
+    check. Counting everything and showing two would leave a block whose rows
+    do not make its own total, and a figure that does not add up is the first
+    one somebody stops believing -- the rule `Other` exists for in the tally.
+    There is no `Other` to write here, because what nobody asked about is not
+    counted at all.
+
+    Nothing is deleted by this. `thread_titles` is append-only and still
+    holds every rename, so widening `TAG_MOVES_COUNTED` again is one line and
+    no backfill.
+    """
+    c = Check("only the pairs worth counting are counted")
+
+    c.equal(tuple(api.TAG_MOVES_COUNTED), (("PROD", "OPS"), ("OPS", "PROD")),
+            "the counted pairs are the two that were asked about")
+
+    with Board() as b:
+        # One of each, so every row that comes back is a decision rather than
+        # an absence of data.
+        for i, (was, became) in enumerate(
+                (("PROD", "OPS"), ("OPS", "PROD"),
+                 ("ENG", "PROD"), ("PROD", "ENG"), ("CS", "OPS"))):
+            t = tallied(b, f"{was}: C{i} - 01Jan26 - x", was, 30)
+            retagged(b, t, became, 20)
+
+        api.DB = b.path
+        moves = api.stats(days=365)["tag_moves"]
+        pairs = {(m["from"], m["to"]) for m in moves["moves"]}
+
+        c.equal(pairs, {("PROD", "OPS"), ("OPS", "PROD")},
+                "only those two come back, though all five happened")
+        for gone in (("ENG", "PROD"), ("PROD", "ENG"), ("CS", "OPS")):
+            c.ok(gone not in pairs, f"{gone[0]} -> {gone[1]} is not counted")
+        c.equal(moves["total"], 2,
+                "and the total counts what is shown, not what was dropped")
+        c.equal(sum(m["count"] for m in moves["moves"]), moves["total"],
+                "so the rows still make their own total")
 
     return c.report()
 
@@ -788,6 +842,7 @@ CHECKS = (check_the_figures_are_what_they_claim,
           check_open_is_a_level_and_the_other_two_are_flows,
           check_the_window_moves_every_block_it_should,
           check_a_retag_is_already_in_the_mirror,
+          check_only_the_pairs_worth_counting_are_counted,
           check_the_window_moves_the_retags_too,
           check_only_the_board_s_own_threads_count,
           check_the_block_shows_a_tail_rather_than_dropping_it,
