@@ -1745,6 +1745,30 @@ from source -- four processes, four logs, restart one without the others.
 Drive folder. The folder is also what `BERT_UPDATE_URL` points a browser at,
 so *Get the new build* lands somebody on the thing they need to run.
 
+**Cutting one.** Four steps, and the order is the whole of it:
+
+```bash
+git commit ...                                 # so the stamp describes the build
+python build.py --version 0.9.1 --installer    # ~80s -> dist/Ernie-0.9.1-setup.exe
+# upload that file to the Drive folder
+# edit the pinned note in #ernie-state:  **Release** 0.9.1
+```
+
+`--version` bumps `ernie_version.VERSION` on the way through, so the number,
+the installer's name and what `/health` reports cannot drift apart.
+`--clean` throws `build/` and `dist/` away first, which is only ever needed
+when something looks stale.
+
+**Commit before building.** `build_commit.txt` is written from HEAD, and a
+dirty tree means the sha in the exe does not describe what is in it. It says
+so and carries on, which is easy to read past -- and the field exists exactly
+so two machines on one version number can be told apart.
+
+**The upload and the note go together.** A note naming a build that is not in
+the folder sends everybody to an empty page; a build in the folder with no
+note is one nobody hears about. Neither is broken, and both are the kind of
+thing nobody notices for a week.
+
 - **Per-user, and no admin.** `%LOCALAPPDATA%\Programs\Ernie`, HKCU for the
   Add/Remove Programs entry. Asking for admin would cost a UAC prompt on an
   unsigned binary -- the prompt people are right to refuse -- and put the
