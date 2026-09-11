@@ -509,6 +509,81 @@ def check_the_installer_and_the_app_agree() -> bool:
     return c.report()
 
 
+def check_the_database_exists_before_anything_races_for_it() -> bool:
+    """
+    The first run on a new machine, which is the run nobody tests.
+
+    `ernie_api.db()` opens the database **read-only** -- `mode=ro`, which
+    cannot create a file that is not there -- and it is right to: the API is a
+    reader. But the API thread, the sync and the outbox all start in the same
+    instant, and on a machine that has never run this there is no file for any
+    of them. Whoever gets there first loses. The API dies on a database that
+    does not exist; or the sync cannot take the write lock `schema.sql` needs,
+    because a reader already has the file open, and dies on "database is
+    locked" instead.
+
+    Both die *in a thread*, so nothing reaches the screen: Bert opens on an
+    empty board, the board stays empty, and the traceback is in a log. That is
+    exactly what happened on the first real install -- five launches, the same
+    failure every time, on a build that had been verified end to end against a
+    database that already existed.
+
+    So `main()` opens it once itself, on the main thread, before a single
+    thread starts. `load.connect` applies schema.sql and is idempotent, so
+    this costs an existing database nothing.
+    """
+    c = Check("the database exists before anything races for it")
+
+    src = (ROOT / "ernie_app.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    # Line numbers, not string positions: what matters is the order the
+    # statements actually run in.
+    opens = [n.lineno for n in ast.walk(fn)
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", "") == "connect"
+             and getattr(getattr(n.func, "value", None), "id", "") == "load"]
+    starts = [n.lineno for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "start"]
+    spawns = [n.lineno for n in ast.walk(fn)
+              if isinstance(n, ast.Call)
+              and getattr(n.func, "attr", "") == "Thread"]
+
+    c.ok(bool(opens), "main() opens the database itself")
+    if not opens:
+        return c.report()
+    c.ok(not starts or min(opens) < min(starts),
+         "before any thread is started")
+    c.ok(not spawns or min(opens) < min(spawns),
+         "and before any thread is even constructed")
+
+    # The reader is read-only on purpose, and that is the half that makes the
+    # ordering load-bearing rather than tidy. If this ever becomes a
+    # read-write open, the bug goes away and so does the reason for the line
+    # above -- so the check says out loud what it is relying on.
+    api = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+    c.ok("mode=ro" in api,
+         "the API still opens read-only, which is why the order matters")
+
+    # **The same first-run bug, one layer up.** `register_channels` reads
+    # CARD_CHANNEL_IDS into `watched_channels`, and it lives in
+    # `ernie_sync.main()` -- the CLI. `ernie_app` calls `run()` directly, one
+    # layer below it, so for a while it never happened at all. Every machine
+    # this was developed on already had the rows, put there by `run.sh`
+    # months earlier; a database that has never seen the CLI watches nothing,
+    # finds nothing, and shows an empty board with nothing wrong anywhere.
+    regs = [n.lineno for n in ast.walk(fn)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", "") == "register_channels"]
+    c.ok(bool(regs), "main() registers the watched channels itself")
+    c.ok(not regs or not starts or min(regs) < min(starts),
+         "before the sync loop is started")
+
+    return c.report()
+
+
 CHECKS = (check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
@@ -518,4 +593,5 @@ CHECKS = (check_a_blocked_outbox_says_so,
           check_qt_gets_the_main_thread,
           check_the_close_warning_is_true_in_one_process,
           check_a_windowed_build_has_somewhere_to_print,
-          check_the_installer_and_the_app_agree)
+          check_the_installer_and_the_app_agree,
+          check_the_database_exists_before_anything_races_for_it)
