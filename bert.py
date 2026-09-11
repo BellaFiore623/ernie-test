@@ -719,6 +719,25 @@ class UpdateDialog(QDialog):
         head.setStyleSheet(f"color:{T.INK}; background:transparent;")
         said.addWidget(head)
 
+        # **Where it goes belongs in the sentence, not in the layout.** It
+        # was a line of its own under the buttons and there is no good place
+        # for it there: the two states put the buttons in opposite orders --
+        # blocked leads with *Get the new build* because that is the person
+        # who has to act -- so a caption under them sat beneath whichever
+        # button it was not describing, and moving it onto the row left it
+        # reading as a label for both.
+        #
+        # As a parenthesis it is simply the last thing the paragraph says,
+        # which is what it is: a note about what the button will do. The host
+        # comes off the address rather than being written down, because
+        # `BERT_UPDATE_URL` is published by Ernie exactly so the download can
+        # move without anybody rebuilding Bert -- "Google Drive" typed in
+        # here would become a lie the day it moves, and the kind nobody
+        # notices because the button still works.
+        if url:
+            detail = (f"{detail} (Opens "
+                      f"{urllib.parse.urlparse(url).netloc} in your browser.)")
+
         body = QLabel(detail)
         body.setWordWrap(True)
         body.setMinimumWidth(300)
@@ -758,30 +777,6 @@ class UpdateDialog(QDialog):
         ok.setCursor(Qt.PointingHandCursor)
         ok.clicked.connect(self.accept)
         under = QHBoxLayout()
-
-        # **Where it goes, taken from the address rather than written down.**
-        # "Get the new build" says what the button does and not where it
-        # lands, and a control that opens a browser should say so before it
-        # does. Naming the host is the honest version: `BERT_UPDATE_URL` is
-        # published by Ernie exactly so the download can move without anybody
-        # rebuilding Bert, so a label reading "Google Drive" would become a
-        # lie the day it moves -- the kind nobody notices, because the button
-        # still works.
-        #
-        # **On the buttons' own line, at the far end of it.** Under them it
-        # has to pick a side, and the two states put the buttons in opposite
-        # orders -- blocked leads with *Get the new build*, the other leads
-        # with *Alright* -- so a right-aligned caption sat under whichever
-        # button it was not describing. Here it reads as a caption for the
-        # row, which is what it is, at either order and with or without the
-        # checkbox above it.
-        if url:
-            where = QLabel(f"Opens {urllib.parse.urlparse(url).netloc} "
-                           f"in your browser")
-            where.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
-                                f" background:transparent;")
-            where.setToolTip(url)
-            under.addWidget(where, 0, Qt.AlignVCenter)
         under.addStretch(1)
 
         # **Only when there is somewhere to go.** Ernie publishes where a new
@@ -795,6 +790,7 @@ class UpdateDialog(QDialog):
             go = QPushButton("Get the new build")
             go.setStyleSheet(btn_css())
             go.setCursor(Qt.PointingHandCursor)
+            go.setToolTip(url)
             go.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
             # First on the blocked one, because that is the person who has to
             # do something; second on the other, where carrying on is a fair
