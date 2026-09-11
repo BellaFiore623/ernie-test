@@ -31,6 +31,7 @@ import check_outbox_retry
 import check_stats
 import check_title_history                            # noqa: E402
 import check_status                           # noqa: E402
+import check_release
 import check_version                          # noqa: E402
 import check_state
 import check_closures
@@ -43,6 +44,7 @@ MODULES = {"app": check_app,
            "palette": check_palette, "feed": check_feed,
            "clients": check_clients,
            "newticket": check_new_ticket,
+           "release": check_release,
            "version": check_version,
            "status": check_status,
            "stats": check_stats,

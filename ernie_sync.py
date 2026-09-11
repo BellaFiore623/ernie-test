@@ -748,6 +748,30 @@ def run(con, d: Discord, guild: str, db: str, *, fast: int = FAST_SECONDS,
                     for hit in r["applied"]:
                         print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
                               + "; ".join(hit["changed"]))
+                # The published build, off a pinned note in the same
+                # channel. Its own request rather than something read out of
+                # the pull, because the pull is about cards and this is one
+                # pin -- keeping them apart means neither can break the
+                # other. One GET a minute, against a budget measured at
+                # 0.60/s.
+                def published():
+                    row = con.execute(
+                        "SELECT version FROM release_seen WHERE id=1"
+                    ).fetchone()
+                    return row["version"] if row else None
+
+                before = published()
+                ernie_state.note_release(
+                    con, ernie_state.read_release(d, state_channel))
+                con.commit()
+                after = published()
+                # Only a change speaks, the rule note_collisions follows: a
+                # line every minute saying the build is still the build is
+                # the one nobody reads when it finally says something else.
+                if before != after:
+                    print(f"[{now()[:19]}] release: "
+                          + (f"the channel says {after} is current"
+                             if after else "the release note is gone"))
             except Exception as e:
                 print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
 

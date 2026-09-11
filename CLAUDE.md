@@ -1597,6 +1597,50 @@ imports it. Bump it there and nowhere else.
   `--pretend-ernie X` claims Ernie answered as X. They feed the real
   `build_standing()` rather than faking the dialog -- what wants exercising is
   the decision, not the picture.
+- **The check was dead in the exe, and `newest` is what revives it.** It
+  compares Bert against the Ernie answering it, which is a real comparison
+  while those are two checkouts -- `run.sh`, or one backend and two Berts.
+  `ernie_app` made them one process importing one module, so the two numbers
+  became equal by construction: `build_standing` returned `ok` for every build
+  that could ever ship, the dialog could not appear, and the only symptom was
+  silence. Shipping the supervisor quietly deleted the feature.
+  So the newest build has to come from **outside** the process.
+  `**Release** 0.9.1` pinned in `#ernie-state` is where it comes from, read
+  once a minute on the slow beat and kept in `release_seen`. Discord because
+  it is already load-bearing: the token is on every machine, the channel is
+  already being read, and a board that cannot reach Discord has bigger
+  problems than being a version behind. **Google Drive was the other
+  candidate and is where the installer actually lives** -- but a Drive file
+  must be link-shared by somebody else, and its fetch-by-link URLs return an
+  HTML interstitial often enough that a check which must fail open would
+  simply stop reporting, with nothing to say so. The installer is a person
+  clicking; this is not.
+  **A pin, not a message in the channel.** The state channel is hundreds of
+  messages on a real board and the note would be somewhere in the middle of
+  them, so finding it would mean paging the lot; a pin is one request whatever
+  the board has grown to. It is also the plainest way for a person to say
+  which of two notes is live -- and where two are pinned, the **highest
+  version wins**, because answering with the most recently pinned depends on
+  an order Discord does not promise and answering with the older tells the
+  team to downgrade.
+  **`""` and `None` are different answers and the distinction is the point.**
+  `""` is a channel read cleanly with no note -- taking the note down is how
+  you say there is no newer build, so the stored answer retires. `None` is not
+  being able to tell, and leaves what is already known: a 403 on a
+  re-permissioned channel must not quietly tell every board it is up to date
+  at the moment it stopped being able to find out.
+  The parser is **strict** and everything downstream is forgiving, which is
+  the safe way round: `as_tuple` reads an unparseable version as 0, so junk
+  that got past it could only ever make a board look *ahead* of the release --
+  a silent no-op, and a silent no-op is the failure nobody notices.
+  Whichever of `theirs` and `newest` is further ahead wins, and **the sentence
+  names its source**, because the two send you to different places: an Ernie
+  further ahead is a colleague's machine on a build you could get, and a
+  release note is the build sitting in the shared folder. Nothing here is
+  published automatically by a running Ernie -- tempting, since any machine on
+  a newer build could bump the note, but a half-finished local build would
+  then announce itself as the release and send everybody to fetch something
+  that is not there.
 - **A frozen build names its commit from a file.** There is no `.git` inside
   an exe, so the packaging step writes the sha into `build_commit.txt` beside
   the module and `_read_commit` reads it **before** walking `.git` -- a bundle

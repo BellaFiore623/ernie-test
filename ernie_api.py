@@ -514,6 +514,13 @@ def health():
         roster = {"count": rr["n"], "offered": rr["offered"] or 0,
                   "synced_at": rr["at"], "seconds_since_sync": since}
 
+    # The build the state channel says is current. Ernie's own VERSION cannot
+    # answer this in the exe: Bert and Ernie are one process importing one
+    # module there, so the two numbers are always equal and the update check
+    # can never fire. This is the number that makes it fire.
+    newest = con.execute(
+        "SELECT version FROM release_seen WHERE id=1").fetchone()
+
     stuck = con.execute(
         """SELECT COUNT(*) AS n FROM events
            WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
@@ -534,7 +541,13 @@ def health():
         # than built in**, so moving from GitHub to Bitbucket or anywhere
         # else is one line in an env file and a restart of Ernie -- no new
         # Bert, and nothing to re-distribute to somebody holding an exe.
-        "build": {**ernie_version.payload(), "update_url": UPDATE_URL},
+        # `newest` is what anybody should be on; `version` is what this Ernie
+        # happens to be. They are the same thing only from source, where a
+        # git pull is the update and the other end of the API is a second
+        # checkout. Absent when nothing has published one, and Bert fails
+        # open on that the way it does on every other field here.
+        "build": {**ernie_version.payload(), "update_url": UPDATE_URL,
+                  "newest": newest["version"] if newest else None},
         "last_sync": dict(last) if last else None,
         "seconds_since_sync": stale,
         # Which read of Discord that age belongs to, so Bert can tell a new

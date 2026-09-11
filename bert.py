@@ -72,6 +72,11 @@ UPDATE_FACE = _asset("bert_update.png")
 # ernie_version, so a real disagreement cannot be staged without them.
 PRETEND_MINE = ""
 PRETEND_ERNIE = ""
+# And the third, because the release note is now a second source of "there is
+# a newer build" with a sentence of its own -- and in the exe it is the *only*
+# one that can ever fire, so without this the wording nobody can reach is the
+# wording everybody will actually see.
+PRETEND_NEWEST = ""
 # **Whether this window is the whole application.** `ernie_app` sets it before
 # building the window; a Bert started by `run.sh` or `bert.cmd` leaves it
 # False. The one thing it changes is the close warning, and it inverts it:
@@ -596,7 +601,7 @@ def card_skin(data, editing=False):
     return tint, edge, 1
 
 
-def build_standing(mine, theirs, floor):
+def build_standing(mine, theirs, floor, newest=""):
     """Whether this Bert is behind, and how far. Answers (state, sentence).
 
     Pure, and separate from the dialog that shows it, because the decision is
@@ -608,26 +613,47 @@ def build_standing(mine, theirs, floor):
     is merely not the newest, which is most of them and is not a reason to
     stop anybody working. **ok** is everything else.
 
+    **`theirs` cannot answer this in the exe, which is what `newest` is for.**
+    Comparing Bert against the Ernie serving it works while those are two
+    checkouts -- `run.sh`, or one backend and two Berts. In one process they
+    are the same module imported once, so the two numbers are always equal,
+    the answer is always "ok", and the check quietly stopped existing the day
+    we shipped the supervisor. `newest` is the build a pinned note in the
+    state channel says everybody should be on, which is a fact from outside
+    this process and so the only kind that can be news to it.
+
+    Whichever of the two is further ahead wins. Not `newest` alone: from
+    source there is often no note at all and `theirs` is still a real signal,
+    and a board that took the note as the whole truth would go quiet about a
+    colleague running something newer than the last release.
+
     It fails *open* at every step it cannot answer. An Ernie that publishes
-    no floor is an older Ernie, not a demand; an Ernie that publishes no
-    version at all says nothing about ours. A build check has no business
+    no floor is an older Ernie, not a demand; one that publishes neither a
+    version nor a note says nothing about ours. A build check has no business
     taking a working board away over a missing field.
     """
-    if not theirs:
+    if not theirs and not newest:
         return "ok", ""
     if floor and ernie_version.is_older(mine, floor):
         return "blocked", (
             f"This copy of Bert is {mine}. This Ernie needs {floor} or newer, "
             f"so changes are paused until it is updated. The board is still "
             f"here to read.")
-    if ernie_version.is_older(mine, theirs):
+    # The sentence names its source, because the two send you to different
+    # places: an Ernie further ahead is somebody else's machine on a build you
+    # could get, and a release note is the build that is actually sitting in
+    # the shared folder waiting to be downloaded.
+    target, whose = theirs, "Ernie is on"
+    if newest and (not target or ernie_version.is_older(target, newest)):
+        target, whose = newest, "the current build is"
+    if target and ernie_version.is_older(mine, target):
         # Said as the good news it is. "Bert found a new update" over a
         # board that is working perfectly reads as an alarm, and an alarm
         # that turns out to be nothing is how somebody learns to click
         # through the next one without reading it.
         return "behind", (
             f"This one is fine and nothing is paused \u2014 you are on {mine} "
-            f"and Ernie is on {theirs}. Worth updating when you get a chance.")
+            f"and {whose} {target}. Worth updating when you get a chance.")
     return "ok", ""
 
 
@@ -5276,11 +5302,14 @@ class Bert(QMainWindow):
         # under test is `build_standing`, not the picture.
         if PRETEND_ERNIE:
             build["version"] = PRETEND_ERNIE
+        if PRETEND_NEWEST:
+            build["newest"] = PRETEND_NEWEST
         build.setdefault("version", None)
         was = self.update_state
         self.update_state, self.update_said = build_standing(
             PRETEND_MINE or ernie_version.VERSION,
-            build.get("version"), build.get("min_bert"))
+            build.get("version"), build.get("min_bert"),
+            build.get("newest") or "")
 
         if self.update_state != was and was == "blocked":
             self.banner.hide()          # updated underneath us, or moved on
@@ -6842,9 +6871,12 @@ def main():
                     help="testing only: claim this Bert is build X")
     ap.add_argument("--pretend-ernie", default="", metavar="X",
                     help="testing only: pretend Ernie answered as build X")
+    ap.add_argument("--pretend-newest", default="", metavar="X",
+                    help="testing only: pretend the release note says X")
     a = ap.parse_args()
-    global PRETEND_MINE, PRETEND_ERNIE
+    global PRETEND_MINE, PRETEND_ERNIE, PRETEND_NEWEST
     PRETEND_MINE, PRETEND_ERNIE = a.pretend_version, a.pretend_ernie
+    PRETEND_NEWEST = a.pretend_newest
     app = QApplication(sys.argv)
     # Fusion draws the same way on every desktop, which is what makes one
     # QPalette enough to carry the dark theme through Qt's own widgets.

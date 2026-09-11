@@ -48,6 +48,18 @@ SUMMARY_MARK = "**Board**"  # first characters of the human summary message
 # that finds or clears the summary finds these too without being taught to.
 SUMMARY_CONT = "**Board** _(continued)_"
 SUMMARY_HEARTBEAT_S = 600   # how stale "last checked" may get before a rewrite
+# A pinned note saying which build everybody should be on. Deliberately not
+# `**Board**`-prefixed, so nothing that finds or clears the summary finds this
+# -- and `parse()` answers None for it, so `fetch_channel` files it under
+# neither cards nor summary and `publish()` never has it in the list it prunes.
+# Which is to say it is already safe where it sits; this only has to read it.
+RELEASE_MARK = "**Release**"
+# A version is digits and dots and nothing else. Strict on the way in, because
+# everything downstream is deliberately forgiving: `as_tuple` reads an
+# unparseable version as 0, so junk that got this far could only ever make a
+# board look *ahead*, never behind -- a silent no-op rather than a wrong
+# answer, and a silent no-op is what nobody would ever notice.
+RELEASE_VERSION = re.compile(r"\b(\d+(?:\.\d+)+)\b")
 # The order Bert shows the bands in. The summary reads the same way round
 # as the board it describes, or comparing the two is needless work.
 BAND_ORDER = ("unassigned", "critical", "high", "medium", "low")
@@ -825,6 +837,77 @@ def note_format_skew(con, seen: list) -> None:
                our_v   = excluded.our_v,
                cards   = excluded.cards""",
         (now_iso(), str(seen[-1]["v"]), FORMAT_VERSION, len(seen)))
+
+
+def parse_release(content: str) -> str:
+    """The version a release note carries, or "" for anything else.
+
+    Strict: the marker, then something shaped like a version. Prose after it
+    is fine and ignored -- `**Release** 0.9.1 -- installer is in Drive` is the
+    message somebody would actually write, and the half that matters is the
+    number.
+    """
+    if not content.startswith(RELEASE_MARK):
+        return ""
+    m = RELEASE_VERSION.search(content[len(RELEASE_MARK):])
+    return m.group(1) if m else ""
+
+
+def read_release(d: Discord, cid: str) -> str | None:
+    """The build the channel says everybody should be on.
+
+    Answers the version, "" for a channel that has no release note, and
+    **None for could not tell** -- which is the distinction the whole thing
+    turns on. "" retires the stored answer, because taking the note down is
+    how you say there is no newer build. None leaves it alone: a 403 on a
+    channel somebody re-permissioned, or Discord being unreachable, must not
+    quietly tell every board it is up to date.
+
+    Pinned rather than found by reading the channel, because the channel is
+    the *state* channel and on production's board that is hundreds of
+    messages -- the note would be somewhere in the middle of them, and finding
+    it would mean paging the lot. A pin is one request whatever the board has
+    grown to, and pinning is also the plainest way for a person to say which
+    of two notes is the live one.
+    """
+    raw = d.get(f"/channels/{cid}/pins")
+    if raw is None:                 # 403, 404, or the request never landed
+        return None
+    # Discord has moved this route once already and the two shapes differ:
+    # a bare list of messages, or an object whose `items` wrap them. Reading
+    # both costs three lines and means a build in the field does not stop
+    # answering the day the old one goes.
+    items = raw.get("items", []) if isinstance(raw, dict) else raw
+    best = ""
+    for it in items or []:
+        m = it.get("message", it) if isinstance(it, dict) else {}
+        v = parse_release((m or {}).get("content") or "")
+        # The highest version pinned, not the most recently pinned: two notes
+        # left up is somebody forgetting to unpin the old one, and answering
+        # with the older of the two would tell everybody to downgrade.
+        if v and (not best or ernie_version.is_older(best, v)):
+            best = v
+    return best
+
+
+def note_release(con, version: str | None) -> None:
+    """Remember the published build, or forget it. None means leave it be.
+
+    One row, the same shape as `note_format_skew`, and for the same reason:
+    it is one fact about what the channel says rather than a history of what
+    it has said.
+    """
+    if version is None:
+        return
+    if not version:
+        con.execute("DELETE FROM release_seen")
+        return
+    con.execute(
+        """INSERT INTO release_seen (id, version, seen_at) VALUES (1,?,?)
+           ON CONFLICT (id) DO UPDATE SET
+               version = excluded.version,
+               seen_at = excluded.seen_at""",
+        (version, now_iso()))
 
 
 def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:

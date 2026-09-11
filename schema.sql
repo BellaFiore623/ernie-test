@@ -416,6 +416,27 @@ CREATE TABLE IF NOT EXISTS state_format_skew (
 );
 
 
+-- The build everybody should be on, read off a pinned note in the state
+-- channel.
+--
+-- The update check compares Bert against the Ernie answering it, which works
+-- while those are two checkouts and is meaningless in the exe: there they are
+-- one process importing one module, so the two numbers are always equal and
+-- the check can never fire. Something outside the process has to say what the
+-- newest build is, and Discord is where that costs nothing -- the token is
+-- already here, and a machine that cannot reach Discord has bigger problems
+-- than being a version behind.
+--
+-- One row, like state_format_skew: it is one fact rather than a history, and
+-- an absent row means nobody has published one, which is the right answer for
+-- a database that has never pulled.
+CREATE TABLE IF NOT EXISTS release_seen (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    version  TEXT NOT NULL,               -- what the note said, e.g. 0.9.1
+    seen_at  TEXT NOT NULL                -- when the pull last read it
+);
+
+
 -- The collisions the last pull reported, so a known one stops shouting.
 --
 -- Two live customers can shorten to one dropdown label -- IPI is both
