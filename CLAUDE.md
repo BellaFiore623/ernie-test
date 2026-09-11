@@ -1898,6 +1898,20 @@ thing nobody notices for a week.
 - **The uninstall offers to keep the board and defaults to keeping it.** An
   uninstall is usually somebody reinstalling. A silent one never asks, because
   a question nobody can see is a hang.
+- **The sandbox env sits in the Drive folder, and that was decided rather
+  than overlooked.** It carries the sandbox Discord token and the Jira API
+  token, the folder is readable by everyone at the company, and that was
+  raised and accepted 2026-09-11: an internal domain, a bot whose blast
+  radius is a test server of invented tickets, and a service account nobody
+  is doing anything with. Worth writing down so nobody reading the folder
+  later mistakes it for a slip and "fixes" it.
+  **Two things it does not extend to.** Our code is read-only against Jira --
+  `ernie_jira.py` only ever calls the search endpoint -- but an Atlassian
+  token carries the account's permissions, so that one can write to real Jira
+  from anywhere; rotating it is `id.atlassian.com` and re-issuing the file.
+  And **production's env is a different question entirely**: its Discord
+  token posts into customer threads people are working in, so when it comes
+  time to hand that one out, this is not the precedent to follow.
 - **No secret is in the installer.** The env file is not installed, generated
   or prompted for: a token baked into a setup.exe in a shared folder is a
   token shared with everyone who can reach that folder, and it would be the
