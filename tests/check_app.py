@@ -447,6 +447,68 @@ def check_a_windowed_build_has_somewhere_to_print() -> bool:
     return c.report()
 
 
+def check_the_installer_and_the_app_agree() -> bool:
+    """
+    The installer has to know things about the application, and it holds its
+    own copy of each of them.
+
+    **The mutex is the load-bearing one.** Windows will not let a running exe
+    be replaced, so the installer opens `ernie_app.MUTEX_NAME` to find out
+    whether to ask somebody to close the app first. Rename the constant on
+    this side and the installer stops finding it -- it then walks straight
+    into `RMDir /r` on a directory whose files are locked, and the failure is
+    a *half-replaced program directory*: some files from the new build, some
+    from the old, and an application that starts and then does something
+    inexplicable. That is the worst shape a failure can take here, and it
+    would arrive with no error at the moment it was caused.
+
+    The rest are the promises the packaging note makes: the program and the
+    board live in different directories, the uninstall never takes the board
+    with it on its own, and no secret is written by the installer.
+    """
+    c = Check("the installer and the app agree")
+
+    nsi = (ROOT / "installer" / "ernie.nsi").read_text(encoding="utf-8")
+    defines = {}
+    for line in nsi.splitlines():
+        bits = line.strip().split(None, 2)
+        if len(bits) == 3 and bits[0] == "!define":
+            defines[bits[1]] = bits[2].strip().strip('"')
+
+    c.equal(defines.get("AppMutex"), ernie_app.MUTEX_NAME,
+            "the installer opens the mutex the app actually holds")
+
+    # Both halves check it: the uninstaller deletes the same locked files.
+    c.equal(nsi.count("Call EnsureClosed") + nsi.count("Call un.EnsureClosed"),
+            2, "install and uninstall both check it")
+
+    # Program and board in different directories, which is what lets the
+    # upgrade wipe one and the uninstall spare the other.
+    c.ok("$LOCALAPPDATA\Programs\\" in nsi.replace("${AppName}", "Ernie"),
+         "the program installs under LOCALAPPDATA/Programs")
+    prog, data = "Programs\Ernie", "$LOCALAPPDATA\Ernie"
+    c.ok(prog not in data, "and the board is not inside it")
+
+    # The uninstall may offer to remove the board; it may not simply do it.
+    body = nsi.split("Section \"Uninstall\"")[-1]
+    removes_data = "RMDir /r \"$LOCALAPPDATA" in body
+    c.ok(not removes_data or "MessageBox" in body,
+         "deleting the board is asked about, never assumed")
+    c.ok("IfSilent" in body,
+         "and a silent uninstall does not hang on a question nobody can see")
+
+    # No admin: it would cost a UAC prompt on an unsigned binary and put the
+    # files somewhere the application cannot write.
+    c.ok("RequestExecutionLevel user" in nsi, "it never asks for admin")
+
+    # And it writes no secret. A token in an installer sitting in a shared
+    # folder is a token shared with everybody who can reach that folder.
+    for word in ("DISCORD_TOKEN", "ernie.env", "ernie-test.env"):
+        c.ok(word not in nsi, f"the installer does not write {word}")
+
+    return c.report()
+
+
 CHECKS = (check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
@@ -455,4 +517,5 @@ CHECKS = (check_a_blocked_outbox_says_so,
           check_it_finds_a_port_beside_a_running_stack,
           check_qt_gets_the_main_thread,
           check_the_close_warning_is_true_in_one_process,
-          check_a_windowed_build_has_somewhere_to_print)
+          check_a_windowed_build_has_somewhere_to_print,
+          check_the_installer_and_the_app_agree)

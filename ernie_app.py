@@ -127,6 +127,40 @@ def already_running_dialog():
         pass
 
 
+def no_config_dialog(env_name: str) -> None:
+    """Say why the board is empty, on the one run where nobody can tell.
+
+    A fresh install has no env file, so `build_clients()` answers with no
+    clients, the two loops never start, and Bert opens on whatever the
+    database holds -- which on a new machine is nothing. The board is blank,
+    everything looks like it is working, and the reason is a line in a log
+    nobody knows exists yet. That is the worst first five minutes this can
+    have, and it is the *ordinary* first five minutes: it happens to everybody
+    exactly once.
+
+    It names the file and the directory rather than saying "configuration
+    error", because the person reading it has been handed an installer and
+    told to run it, and the whole of their problem is that one file is not
+    somewhere yet.
+
+    Not fatal. The board still opens, read-only over an empty database, and
+    nothing is lost by letting somebody look at it -- refusing to start would
+    leave them with a program that closes immediately and says nothing.
+    """
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            f"Ernie has no settings file yet, so it is not connected to "
+            f"Discord.\n\nIt is looking for:\n\n"
+            f"    {CONFIG_DIR / env_name}\n\n"
+            f"Ask whoever set this up for that file, put it there, and start "
+            f"Ernie again. The board will be empty until then.",
+            "Ernie", 0x30)           # MB_ICONWARNING
+    except Exception:
+        pass
+
+
 def take_lock():
     """Hold the single-instance lock, or raise. Answers the handle.
 
@@ -366,6 +400,11 @@ def main() -> None:
     else:
         print("  no DISCORD_TOKEN: the board will read what is already in "
               "the database and nothing will reach Discord", file=sys.stderr)
+        # On screen too, when there is no screen to have printed it to. The
+        # windowed build is the one somebody has just installed, and this is
+        # the run where the message matters most and is least visible.
+        if log is not None and not a.headless:
+            no_config_dialog(os.path.basename(a.env))
 
     for t in threads:
         t.start()

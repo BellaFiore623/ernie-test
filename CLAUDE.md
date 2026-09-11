@@ -24,6 +24,9 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie_version.py` | The version number, and which build is answering. Imported by everything that says one. |
 | `ernie_status.py` | The ticket's status, as a pinned message in its own thread. Rides with the outbox. |
 | `ernie_app.py` | **One process**: sync, outbox, the API and Bert together. What the exe runs. `--headless` starts everything but Bert. |
+| `build.py` | Builds the exe. `python build.py [--version X] [--clean] [--installer]`. |
+| `ernie.spec` | PyInstaller's recipe. onedir, Qt trimmed, the hidden imports a walker cannot find. |
+| `installer/ernie.nsi` | NSIS. Wraps `dist/Ernie` in one per-user setup.exe. Carries no secret. |
 | `run.sh` | Starts the whole stack as four processes, for working from source. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
@@ -1697,6 +1700,40 @@ from source -- four processes, four logs, restart one without the others.
 - **Config and the database live in `%LOCALAPPDATA%\Ernie`**, because
   beside the executable is either PyInstaller's temp extraction directory --
   wiped on exit -- or a Program Files path nobody can write.
+
+### Handing it to somebody
+
+`python build.py --installer` produces `dist/Ernie-<version>-setup.exe` --
+96 MB of program compressed to about 31, which is what goes in the shared
+Drive folder. The folder is also what `BERT_UPDATE_URL` points a browser at,
+so *Get the new build* lands somebody on the thing they need to run.
+
+- **Per-user, and no admin.** `%LOCALAPPDATA%\Programs\Ernie`, HKCU for the
+  Add/Remove Programs entry. Asking for admin would cost a UAC prompt on an
+  unsigned binary -- the prompt people are right to refuse -- and put the
+  files somewhere the application cannot write.
+- **The program directory and the board are not the same place.** The program
+  is disposable: wiped and rewritten whole on every upgrade, because
+  PyInstaller's `_internal` changes shape between builds and copying over the
+  top leaves orphaned DLLs beside the new ones -- and an orphan that still
+  loads is the worst kind, since it works until it doesn't. The board lives in
+  `%LOCALAPPDATA%\Ernie` where `CONFIG_DIR` already points, so the upgrade can
+  be brutal and the uninstall can be safe.
+- **The mutex is what makes "delete the old one" work.** Windows will not let
+  a running exe be replaced, and the person replacing it is usually the person
+  who has it open. The installer opens `ernie_app.MUTEX_NAME` and offers Retry
+  rather than failing halfway and leaving a program directory that is half one
+  build and half another. `tests/check_app.py` holds the two names together,
+  because renaming the constant would break this in silence.
+- **The uninstall offers to keep the board and defaults to keeping it.** An
+  uninstall is usually somebody reinstalling. A silent one never asks, because
+  a question nobody can see is a hang.
+- **No secret is in the installer.** The env file is not installed, generated
+  or prompted for: a token baked into a setup.exe in a shared folder is a
+  token shared with everyone who can reach that folder, and it would be the
+  second copy of it. It is handed over separately, and a first run that cannot
+  find one says so on screen -- naming the exact path -- rather than opening a
+  blank board with the reason in a log nobody knows exists yet.
 
 ## Running
 
