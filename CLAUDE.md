@@ -1761,6 +1761,23 @@ The API has no authentication, so on `lan` anyone who can reach the port can
 move cards and post to the thread. Trusted network, for as long as the test
 lasts, never port-forwarded. `lan` is refused outright for `prod`.
 
+**The sandbox's threads are Ernie's own, and production's are not.** Every
+thread `seed_test_server.py` makes is created by the bot, and **a thread's
+creator may archive it whatever its permissions say** -- so every Complete
+the sandbox had ever done took the easy path, and the production case had
+never once been exercised. Production's are opened by 36 people: 40 of 40
+sampled come back owned by somebody else, and archiving one of those needs
+**Manage Threads**, which the production bot did not have until it was
+granted. Unarchiving does not -- reopening needs only Send Messages -- so
+Reopen would have worked while Complete failed, which is the confusing half
+of it.
+A bot cannot create a thread on somebody else's behalf, so the only way to
+rehearse this is by hand: open a few threads in the sandbox as yourself.
+Done 2026-09-11 with three, and all of it works on them -- Complete posts and
+archives, Reopen posts and unarchives, and a rename really renames the thread
+and leaves Discord's own type 4 behind. Worth redoing whenever the outbox's
+write path changes, because the seeder cannot cover it.
+
 Environment: Windows, Git Bash (MINGW64), Python 3.13, SQLite in WAL mode.
 
 ## Style
