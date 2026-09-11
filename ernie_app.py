@@ -303,6 +303,11 @@ def main() -> None:
     import bert
     from PySide6.QtWidgets import QApplication
 
+    # Before the window is built, because the close warning reads it. Closing
+    # Bert here closes the sync and the outbox too, which is the opposite of
+    # what that warning assumes from source.
+    bert.SUPERVISED = True
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     bert.apply_theme(bert.load_settings().get("theme", bert.THEME_DEFAULT))

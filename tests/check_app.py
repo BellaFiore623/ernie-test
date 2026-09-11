@@ -311,10 +311,93 @@ def check_a_blocked_outbox_says_so() -> bool:
     return c.report()
 
 
+def check_the_close_warning_is_true_in_one_process() -> bool:
+    """
+    The warning inverts under a supervisor, and left alone it would have been
+    wrong in both halves.
+
+    From source it says: closing Bert loses nothing, because the outbox is
+    another process that goes on posting -- but if you are shutting the whole
+    stack down, leave the rest running another minute. Under `ernie_app` there
+    **is** no rest: closing this window stops the sync and the outbox with it,
+    and `shut_down` brings everything owed forward and sends it. So the advice
+    names something the person cannot do, about a loss that cannot happen.
+
+    And it hid the consequence that is real. Bringing an event forward
+    **spends its undo window**: a change made ten seconds before closing goes
+    to the customer thread as it stands, and the chance to take it back goes
+    with it. That is what the supervised wording has to say.
+
+    Read off the string literals rather than the source text, because the
+    reasoning above each branch quotes the words the other branch uses -- a
+    substring search over the function trips on its own comments, which has
+    happened three times in this project already.
+    """
+    c = Check("the close warning is true in one process")
+
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "closeEvent")
+
+    branch = next((n for n in ast.walk(fn)
+                   if isinstance(n, ast.If) and isinstance(n.test, ast.Name)
+                   and n.test.id == "SUPERVISED"), None)
+    c.ok(branch is not None, "closeEvent asks whether it is supervised")
+    if branch is None:
+        return c.report()
+
+    def words(node):
+        return " ".join(x.value for x in ast.walk(node)
+                        if isinstance(x, ast.Constant)
+                        and isinstance(x.value, str)).lower()
+
+    supervised = words(branch)
+    inside = {id(x) for x in ast.walk(branch)}
+    from_source = " ".join(
+        x.value for x in ast.walk(fn)
+        if isinstance(x, ast.Constant) and isinstance(x.value, str)
+        and id(x) not in inside).lower()
+
+    # The supervised half.
+    c.ok("undo window" in supervised,
+         "supervised: says the undo window is what closing spends")
+    c.ok("leave" not in supervised,
+         "supervised: does not ask anybody to leave anything running")
+    c.ok("whether bert is open or not" not in supervised,
+         "supervised: does not claim the outbox outlives the window")
+
+    # And the from-source half is untouched, because that stack is still real
+    # -- `run.sh` and `bert.cmd` are how the other machine runs today.
+    c.ok("leave" in from_source,
+         "from source: still says to leave the rest running")
+
+    # The flag has to default to off, or a Bert started by bert.cmd gets the
+    # supervised wording and is told its close posts things it cannot post.
+    assign = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.Assign)
+                   and any(getattr(t, "id", "") == "SUPERVISED" for t in n.targets)),
+                  None)
+    c.ok(assign is not None and assign.value.value is False,
+         "SUPERVISED is False unless something says otherwise")
+
+    # And ernie_app is the something, before the window exists to read it.
+    app_src = (ROOT / "ernie_app.py").read_text(encoding="utf-8")
+    body = ast.get_source_segment(app_src, next(
+        n for n in ast.walk(ast.parse(app_src))
+        if isinstance(n, ast.FunctionDef) and n.name == "main")) or ""
+    c.ok("bert.SUPERVISED = True" in body, "ernie_app sets it")
+    c.ok(body.index("bert.SUPERVISED = True") < body.index("bert.Bert("),
+         "and sets it before building the window")
+
+    return c.report()
+
+
 CHECKS = (check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
           check_the_two_loops_never_share_a_client,
           check_it_will_not_start_twice,
           check_it_finds_a_port_beside_a_running_stack,
-          check_qt_gets_the_main_thread)
+          check_qt_gets_the_main_thread,
+          check_the_close_warning_is_true_in_one_process)

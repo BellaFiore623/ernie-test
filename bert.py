@@ -72,6 +72,17 @@ UPDATE_FACE = _asset("bert_update.png")
 # ernie_version, so a real disagreement cannot be staged without them.
 PRETEND_MINE = ""
 PRETEND_ERNIE = ""
+# **Whether this window is the whole application.** `ernie_app` sets it before
+# building the window; a Bert started by `run.sh` or `bert.cmd` leaves it
+# False. The one thing it changes is the close warning, and it inverts it:
+# from source, closing Bert loses nothing because the outbox is another
+# process that goes on posting -- and the mistake worth catching is stopping
+# the *rest* of the stack on top of something unsent. In one process there is
+# no rest, and `ernie_app.shut_down` spends the undo window rather than
+# waiting it out, so nothing is lost by closing at all. The old warning would
+# be telling somebody to leave running something that has already stopped,
+# while saying nothing about the thing that does happen.
+SUPERVISED = False
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
@@ -5535,7 +5546,11 @@ class Bert(QMainWindow):
             try:
                 secs = (datetime.fromisoformat(q["due_at"])
                         - datetime.now(timezone.utc)).total_seconds()
-                if secs > 0:
+                # Not under a supervisor: there the next sentence says the
+                # close is what sends them, and a countdown beside it reads as
+                # a deadline to beat rather than as something about to be
+                # skipped.
+                if secs > 0 and not SUPERVISED:
                     due = f" The first goes out in about {int(secs)}s."
             except (ValueError, TypeError):
                 pass
@@ -5549,6 +5564,25 @@ class Bert(QMainWindow):
             card = "card has" if unshared == 1 else "cards have"
             lines.append(f"{unshared} {card} moved since the shared board was"
                          f" last published.")
+        if SUPERVISED:
+            # One process, so closing this window closes the sync and the
+            # outbox with it -- and `shut_down` brings everything owed forward
+            # rather than leaving it behind. Nothing is lost, so the warning is
+            # not about loss: it is that the undo window is **spent**. A change
+            # made ten seconds ago goes to the customer thread as it stands,
+            # and the chance to take it back goes with it.
+            ask = QMessageBox.question(
+                self, "Closing posts these now",
+                "\n".join(lines) + f"\n\n"
+                f"Closing sends them straight away instead of waiting out the "
+                f"undo window — so anything you might still want to take "
+                f"back goes out as it is. It takes a moment.\n\n"
+                f"Close Ernie?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ask == QMessageBox.Yes:
+                return super().closeEvent(ev)
+            return ev.ignore()
+
         ask = QMessageBox.question(
             self, "Not everything has reached Discord",
             "\n".join(lines) + f"\n\n"
