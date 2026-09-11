@@ -1590,6 +1590,14 @@ imports it. Bump it there and nowhere else.
   Ernie precisely so the download can move without anybody rebuilding Bert,
   so a label naming the host would become a lie the day it moves -- and the
   kind nobody notices, because the button still works.
+  **On the buttons' own line, at the far end of it**, rather than under them.
+  Under them it has to pick a side, and the two states put the buttons in
+  opposite orders -- blocked leads with *Get the new build* because that is
+  the person who has to act, the other leads with *Alright* -- so a
+  right-aligned caption sat under whichever button it was not describing.
+  Measured on the blocked dialog: the line hung beneath *Fine*. On the row it
+  reads as a caption for the row, which is what it is, at either order and
+  with or without the checkbox above it.
   On the blocked dialog it comes **first**, because that is the person who has
   to act; on the other it sits after *Alright*, where carrying on is a fair
   answer. And the blocked wording says the board is still there to read, so
