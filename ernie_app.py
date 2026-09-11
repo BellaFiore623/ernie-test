@@ -50,8 +50,81 @@ MUTEX_NAME = "Local\\ErnieBert"
 DEFAULT_PORT = 8787
 
 
+# One rotation, checked at startup only. The sync writes a line a minute on
+# the full beat, so a machine left running writes on the order of 100 KB a
+# day and nothing would ever delete it. Checked at startup rather than as it
+# grows because a supervisor that rotates its own log mid-write is a race for
+# no benefit: the file turns over when somebody restarts, which on a desktop
+# application is often enough.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+
+
 class AlreadyRunning(RuntimeError):
     pass
+
+
+def open_log():
+    """Give a windowed build somewhere to print, and answer where.
+
+    `console=False` is what stops a black window opening behind Bert, and it
+    takes stdout and stderr with it -- PyInstaller sets both to None, so every
+    `print` in this process becomes a no-op. That silently throws away the
+    three things the startup banner exists to answer: which config file was
+    found, which database is open, and whether this board can post at all.
+    Those are asked *after the fact*, about somebody else's machine, when a
+    change did not arrive -- which is exactly when there was no console to
+    have been watching.
+
+    So the banner goes to a file instead, in the config directory beside the
+    database, because that is the one place a frozen build can write.
+
+    It also fixes a quieter problem. uvicorn configures logging with
+    `ext://sys.stderr`, and a StreamHandler over None fails on every record
+    and is swallowed by `logging`'s own error handling -- so the API's
+    failures would go nowhere rather than somewhere unread. Redirecting
+    before the server thread starts gives it a real stream.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return None                     # there is a console; use it
+
+    path = CONFIG_DIR / "logs" / "ernie.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.stat().st_size > LOG_MAX_BYTES:
+            path.replace(path.with_name("ernie.log.1"))
+    except OSError:
+        # A log that cannot be rotated is not a reason not to run. Worst case
+        # it grows, which is the state it was already in.
+        pass
+
+    # Line buffered, so a crash keeps whatever was written up to it -- the
+    # same reason `say` flushes.
+    f = open(path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = f
+    return path
+
+
+def already_running_dialog():
+    """Say it on screen, because a windowed build has nowhere else to say it.
+
+    With a console, a second double-click printed "Ernie is already running."
+    and closed. Without one it exits silently, so the mutex -- the thing that
+    stops two syncs writing to one database -- looks exactly like nothing
+    happening, and the natural response to nothing happening is to
+    double-click again.
+
+    ctypes rather than Qt: there is no QApplication at this point, and making
+    one costs a second and a taskbar entry to show a line of text.
+    """
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "Ernie is already running.\n\nLook for Bert's window.",
+            "Ernie", 0x40)           # MB_ICONINFORMATION
+    except Exception:
+        # Never the reason the process fails: it is already leaving.
+        pass
 
 
 def take_lock():
@@ -210,6 +283,10 @@ def main() -> None:
                          "For checking the stack comes up.")
     a = ap.parse_args()
 
+    # Before anything prints, and before the API thread configures logging
+    # over sys.stderr.
+    log = open_log()
+
     # Flushed, because on Windows a piped stdout holds these until the
     # process ends -- which for a supervisor is the one moment they stop
     # being useful.
@@ -219,9 +296,11 @@ def main() -> None:
     try:
         lock = take_lock()
     except AlreadyRunning:
-        # Nothing on screen yet, so there is nothing to raise; saying so and
-        # leaving is the honest version until the window can be found.
         print("Ernie is already running.", file=sys.stderr)
+        # With no console that print reaches a file nobody has open, and a
+        # second double-click would do nothing visible at all.
+        if log is not None:
+            already_running_dialog()
         raise SystemExit(1)
 
     read = load_env(a.env)
@@ -229,9 +308,15 @@ def main() -> None:
     if a.db is None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
+    # A separator, because the log is appended to across runs and the
+    # question asked of it is always "what did *this* start do".
+    if log is not None:
+        say("\n=== " + time.strftime("%Y-%m-%d %H:%M:%S") + " ===")
     say(f"ernie_app {ernie_version.describe()}")
     say(f"  config  {read or '(none found)'}")
     say(f"  db      {db}")
+    if log is not None:
+        say(f"  log     {log}")
 
     sync_client, outbox_client, guild = build_clients()
     # Said at startup the way ernie_sync says it, because "is this board

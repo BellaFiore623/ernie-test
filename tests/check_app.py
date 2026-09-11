@@ -393,6 +393,60 @@ def check_the_close_warning_is_true_in_one_process() -> bool:
     return c.report()
 
 
+def check_a_windowed_build_has_somewhere_to_print() -> bool:
+    """
+    `console=False` takes stdout and stderr with it.
+
+    PyInstaller sets both to None in a windowed build, so every `print` in the
+    process becomes a no-op -- and what is lost is the startup banner, which
+    answers the three questions asked about somebody else's machine after the
+    fact: which config file was found, which database is open, and whether
+    this board can post at all. There is no console to have been watching at
+    the moment they are asked.
+
+    So `open_log()` redirects both to a file, and **when** it runs is the
+    whole of it. Before `take_lock`, whose refusal prints to stderr. Before
+    the API thread, because uvicorn configures logging with
+    `ext://sys.stderr` and a StreamHandler over None fails on every record
+    and is swallowed by logging's own error handling. And before the banner,
+    which is the thing being kept.
+
+    It leaves a real console alone -- `run.sh`, a terminal, and the
+    `--headless` check all want their output where they can see it.
+    """
+    c = Check("a windowed build has somewhere to print")
+
+    src = (ROOT / "ernie_app.py").read_text(encoding="utf-8")
+    body = ast.get_source_segment(src, next(
+        n for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.FunctionDef) and n.name == "main")) or ""
+
+    c.ok("open_log()" in body, "main opens a log")
+    for later, why in (("take_lock()", "the lock, whose refusal prints"),
+                       ("threading.Thread", "any thread, including the API's"),
+                       # The banner line itself, not `describe()`: argparse's
+                       # --version calls that too, at parser-construction
+                       # time, which is before any of this.
+                       ('say(f"ernie_app', "the banner it exists for")):
+        c.ok(later in body and body.index("open_log()") < body.index(later),
+             f"before {why}")
+
+    # A real console is left alone, or run.sh and --headless lose their output
+    # to a file nobody is tailing.
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "open_log")
+    guard = ast.get_source_segment(src, fn.body[1]) or ""
+    c.ok(guard.startswith("if sys.stdout is not None"),
+         "and returns early when there is a console")
+
+    # The redirect has to be both streams: uvicorn writes to stderr and the
+    # banner to stdout, and keeping only one would lose half the file.
+    whole = ast.get_source_segment(src, fn) or ""
+    c.ok("sys.stdout = sys.stderr = f" in whole, "both streams, not one")
+
+    return c.report()
+
+
 CHECKS = (check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
@@ -400,4 +454,5 @@ CHECKS = (check_a_blocked_outbox_says_so,
           check_it_will_not_start_twice,
           check_it_finds_a_port_beside_a_running_stack,
           check_qt_gets_the_main_thread,
-          check_the_close_warning_is_true_in_one_process)
+          check_the_close_warning_is_true_in_one_process,
+          check_a_windowed_build_has_somewhere_to_print)

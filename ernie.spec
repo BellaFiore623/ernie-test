@@ -97,11 +97,18 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,          # UPX on a Qt build is a reliable way to be quarantined
-    # A console while this is being tested, because the startup banner says
-    # which config and which database it found and whether it can post --
-    # and the first question about a build somebody else is running is always
-    # one of those three. Turned off for the version that goes out.
-    console=True,
+    # **No console.** A black window opening behind Bert and sitting in the
+    # taskbar for the life of the session is what a shipped application does
+    # not do -- and closing it by mistake would take the sync, the outbox and
+    # the board with it.
+    #
+    # It takes stdout and stderr with it: PyInstaller sets both to None, so
+    # every print in the process becomes a no-op. `ernie_app.open_log()`
+    # redirects them to %LOCALAPPDATA%\Ernie\logs\ernie.log before anything
+    # writes, because the banner answers the three questions asked about
+    # somebody else's machine after the fact -- which config, which database,
+    # and whether it can post.
+    console=False,
     # Windows takes only .ico here, and it wants several sizes in one
     # file: the taskbar, the Start menu, Explorer and Alt-Tab each
     # pick a different one, and what is missing gets scaled.
