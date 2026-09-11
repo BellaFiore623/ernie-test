@@ -12,8 +12,14 @@ Two things it is careful about.
 **It refuses production.** The figures there are real, and a fake month in
 them would be believed.
 
-**Everything it adds is removable.** The invented threads are all prefixed
-`fake-`, so `--clear` takes exactly them and nothing else. They are also
+**Everything it does is undoable, including the part it does not add.**
+The invented threads are all prefixed `fake-`, so `--clear` takes exactly
+them and nothing else -- and the *backdating* of real cards is written down
+before it happens, in `fake_backdated`, so `--clear` puts those back too.
+That table is the whole of the lesson from the day this ran against
+production by mistake: the invented rows came out in one command, and the ten
+real threads it had backdated needed a three-week-old backup, because
+"removable" had quietly meant "the rows it inserted". They are also
 written `archived`, which keeps ernie_status away from them: their threads do
 not exist in Discord, and a status message posted at one would fail on every
 outbox pass for ever.
@@ -116,17 +122,60 @@ def clear(con) -> int:
     return n
 
 
+def remember_before_backdating(con, tids) -> None:
+    """Write down what the real threads said, so `--clear` can put it back.
+
+    Nothing else here needs a record: the invented rows carry a prefix and
+    can simply be deleted. These are *real* threads, and what this is about
+    to overwrite -- when Discord says the thread was made, and when Ernie
+    first saw it -- cannot be worked out again afterwards. `first_seen_at`
+    especially: it is this machine's own history and exists nowhere else.
+    """
+    con.execute("""CREATE TABLE IF NOT EXISTS fake_backdated (
+                       thread_id     TEXT PRIMARY KEY,
+                       created_at    TEXT,
+                       first_seen_at TEXT)""")
+    for tid in tids:
+        row = con.execute("SELECT created_at, first_seen_at FROM threads "
+                          "WHERE thread_id=?", (tid,)).fetchone()
+        if row is None:
+            continue
+        # INSERT OR IGNORE, not REPLACE: running this twice must not record
+        # the *backdated* values over the real ones it wrote down first time.
+        con.execute("INSERT OR IGNORE INTO fake_backdated "
+                    "(thread_id, created_at, first_seen_at) VALUES (?,?,?)",
+                    (tid, row[0], row[1]))
+    con.commit()
+
+
+def restore_backdated(con) -> int:
+    """Put the real threads' dates back, and forget we ever moved them."""
+    try:
+        rows = con.execute("SELECT thread_id, created_at, first_seen_at "
+                           "FROM fake_backdated").fetchall()
+    except sqlite3.OperationalError:
+        return 0            # nothing was ever backdated here
+    for r in rows:
+        con.execute("UPDATE threads SET created_at=?, first_seen_at=? "
+                    "WHERE thread_id=?", (r[1], r[2], r[0]))
+    con.execute("DROP TABLE fake_backdated")
+    con.commit()
+    return len(rows)
+
+
 def backdate_real_cards(con) -> int:
     """Spread the ages of the cards that are really there.
 
     Their threads are real, so the panel's "open longest" rows click through
-    to something. Nothing is invented here -- only moved.
+    to something. Nothing is invented here -- only moved, and what it is
+    moved from is written down first so it can be moved back.
     """
     rows = con.execute(
         """SELECT c.thread_id FROM cards c
            WHERE c.completed_at IS NULL AND c.thread_id NOT LIKE ?
            ORDER BY c.rank""", (PREFIX + "%",)).fetchall()
     now = datetime.now(timezone.utc)
+    remember_before_backdating(con, [r[0] for r in rows[:len(AGES)]])
     for row, days in zip(rows, AGES):
         when = now - timedelta(days=days, hours=3)
         # first_seen_at moves with it, and stays close behind. witnessed_start
@@ -249,7 +298,10 @@ def main() -> None:
     con.execute("PRAGMA foreign_keys = ON")
     gone = clear(con)
     if a.clear:
+        put_back = restore_backdated(con)
         print(f"removed {gone} invented card(s)")
+        if put_back:
+            print(f"put {put_back} real thread(s) back to their own dates")
         con.close()
         return
 

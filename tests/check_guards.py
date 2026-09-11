@@ -31,7 +31,7 @@ repo. That stays a person's job, and is written down in CLAUDE.md.
 import ast
 import pathlib
 
-from support import Check
+from support import Board, Check
 
 import ernie_sync
 
@@ -155,6 +155,69 @@ def check_the_tool_guards_on_the_guild_not_the_filename() -> bool:
     return c.report()
 
 
+def check_the_fake_data_tool_undoes_everything_it_did() -> bool:
+    """
+    "Removable" quietly meant "the rows it inserted".
+
+    The invented threads carry a prefix and come out in one command. The
+    *backdating* of real threads did not: it overwrites `created_at` and
+    `first_seen_at` on up to ten real rows, and `--clear` left them moved.
+    Nothing said so -- the docstring said everything it adds is removable,
+    which was true and was not the whole sentence.
+
+    It cost a three-week-old backup to find out, on production, after the
+    guild guard failed to stop it. `created_at` could have been recomputed
+    from each thread's snowflake, but `first_seen_at` is this machine's own
+    history and exists nowhere else -- no backup, no recovery.
+
+    So the values are written down before they are overwritten, and `--clear`
+    puts them back and drops the record. Exercised here directly rather than
+    by running the script, because the invariant is the pair of functions.
+    """
+    c = Check("the fake-data tool undoes everything it did")
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "fsd", ROOT / "tools" / "fake_stats_data.py")
+    fsd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fsd)
+
+    with Board() as b:
+        tid = b.card("PROD: A - 01Jan26 - x", "medium")
+        b.con.commit()
+        was = b.con.execute("SELECT created_at, first_seen_at FROM threads "
+                            "WHERE thread_id=?", (tid,)).fetchone()
+
+        fsd.remember_before_backdating(b.con, [tid])
+        b.con.execute("UPDATE threads SET created_at=?, first_seen_at=? "
+                      "WHERE thread_id=?", ("2020-01-01T00:00:00+00:00",
+                                            "2020-01-01T00:00:20+00:00", tid))
+        b.con.commit()
+        now = b.con.execute("SELECT created_at FROM threads WHERE thread_id=?",
+                            (tid,)).fetchone()
+        c.ok(now[0] != was[0], "a backdated thread really was moved")
+
+        # Twice, because running the tool again must not record the moved
+        # values over the real ones it wrote down the first time.
+        fsd.remember_before_backdating(b.con, [tid])
+
+        put_back = fsd.restore_backdated(b.con)
+        c.equal(put_back, 1, "--clear puts it back")
+        after = b.con.execute("SELECT created_at, first_seen_at FROM threads "
+                              "WHERE thread_id=?", (tid,)).fetchone()
+        c.equal(after[0], was[0], "created_at is exactly what it was")
+        c.equal(after[1], was[1],
+                "and first_seen_at, which exists nowhere else")
+        c.ok(not b.con.execute("SELECT 1 FROM sqlite_master WHERE "
+                               "name='fake_backdated'").fetchone(),
+             "and the record is dropped, so nothing is left behind")
+        c.equal(fsd.restore_backdated(b.con), 0,
+                "a second --clear on a clean database does nothing")
+
+    return c.report()
+
+
 CHECKS = (check_every_copy_of_the_guild_agrees,
           check_every_guard_still_asks,
-          check_the_tool_guards_on_the_guild_not_the_filename)
+          check_the_tool_guards_on_the_guild_not_the_filename,
+          check_the_fake_data_tool_undoes_everything_it_did)
