@@ -38,6 +38,15 @@ from datetime import datetime, timedelta, timezone
 
 PREFIX = "fake-"
 
+# The one guild this must never touch. Copied from `ernie_sync` rather than
+# imported: everything under tools/ runs standalone -- `python tools/x.py`
+# puts tools/ on the path and not the repo root -- and this one does no
+# networking, so pulling in the whole Discord client for one string is a poor
+# trade. `tests/check_guards.py` holds the copy to the original, which is the
+# part that matters: the value being wrong everywhere at once is how this
+# guard came to be decorative in the first place.
+PRODUCTION_GUILD = "924120427469623297"
+
 # A rising trend, because that is the shape production has (27, 61, 63, 67,
 # 95 across five months) and a flat one tells you nothing about whether the
 # panel reads well. Twelve months, because the figures panel offers a window
@@ -209,11 +218,34 @@ def main() -> None:
                     help="so two runs give the same board")
     a = ap.parse_args()
 
-    if a.db.endswith("ernie.db"):
+    con = sqlite3.connect(a.db)
+    con.row_factory = sqlite3.Row
+
+    # **Which guild the data belongs to, not what the file is called.**
+    # This used to refuse anything named `ernie.db`, which was exactly right
+    # while the only two databases in the world were `ernie.db` and
+    # `ernie-test.db`. The exe made the name meaningless: an installed copy
+    # keeps its database at %LOCALAPPDATA%\Ernie\ernie.db whatever server it
+    # is pointed at, so the check refused a sandbox install -- and would have
+    # allowed production under any other filename. The guild is the fact the
+    # question is actually about, and the database already carries it.
+    row = con.execute("SELECT guild_id, COUNT(*) AS n FROM threads "
+                      "WHERE guild_id IS NOT NULL "
+                      "GROUP BY guild_id ORDER BY n DESC LIMIT 1").fetchone()
+    guild = row["guild_id"] if row else None
+
+    if guild is None:
+        # Nothing synced yet, so there is nothing to read the answer off.
+        # Refusing is the safe way to be unsure: a database about to have
+        # production pulled into it would end up with invented rows mixed
+        # through real ones, and no way to tell which was which afterwards.
+        sys.exit(f"Can't tell whose board {a.db} is -- it has no threads yet. "
+                 f"Let it sync once, then run this again.")
+
+    if guild == PRODUCTION_GUILD:
         sys.exit("REFUSING: that's production. Its figures are real, and a "
                  "fake month in them would be believed.")
 
-    con = sqlite3.connect(a.db)
     con.execute("PRAGMA foreign_keys = ON")
     gone = clear(con)
     if a.clear:

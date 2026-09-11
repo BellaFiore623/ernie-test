@@ -78,6 +78,30 @@ CYCLE_SECONDS = 60    # and everything else, on the beat it already had
 # file the installer leaves, the databases, the logs. Beside the executable is
 # either PyInstaller's temp extraction directory -- wiped on exit -- or a
 # Program Files path the user cannot write to.
+# **The one guild nothing here may touch.** Every destructive or
+# fabricating script guards on it: `wipe_test.py` deletes threads,
+# `seed_test_server.py` creates them, `tools/fake_stats_data.py` invents
+# history, and `ernie_state.py --check` refuses to run a preflight there.
+#
+# **It was wrong for the life of the project**, and wrong in the direction
+# that does not announce itself: it held a guild id that is not this
+# company's, so every one of those guards compared production against a
+# server nobody has ever used and let it through. `wipe_test.py` still
+# carried the comment "set this to your real guild", and it never was.
+# Found when the fake-data tool wrote 257 invented tickets into production's
+# mirror -- recovered in full from the 28 Aug backup, and nothing reached
+# Discord because production has no ALLOW_DISCORD_WRITES.
+#
+# **Declared once, here.** It used to be copied into three files, which is
+# three chances to fix one of them and believe the job was done.
+# `tests/check_guards.py` holds the copy in `tools/` to this one, and holds
+# every guard to still asking the question.
+#
+# Verifying it is a person's job and takes one line: it must equal
+# DISCORD_GUILD_ID in production's env file. Nothing in the repo can check
+# that, because that file is deliberately not in the repo.
+PRODUCTION_GUILD = "924120427469623297"
+
 CONFIG_DIR = pathlib.Path(
     os.environ.get("LOCALAPPDATA")
     or (pathlib.Path.home() / ".config")) / "Ernie"

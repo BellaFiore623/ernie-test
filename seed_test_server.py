@@ -22,13 +22,13 @@ import time
 
 import httpx
 
-from ernie_sync import load_env
+from ernie_sync import PRODUCTION_GUILD, load_env
 
 API = "https://discord.com/api/v10"
 PACING = 0.4
 
 # Guard: the real guild. Never seed into this.
-PRODUCTION_GUILD = "1481003073894744226"
+# Imported, not copied -- see the note in ernie_sync.
 
 
 class Discord:

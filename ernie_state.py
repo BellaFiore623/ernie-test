@@ -36,9 +36,9 @@ from email.utils import parsedate_to_datetime
 
 import ernie_load as load
 import ernie_version
-from ernie_sync import Discord, load_env
+from ernie_sync import PRODUCTION_GUILD, Discord, load_env
 
-PRODUCTION_GUILD = "1481003073894744226"    # the constant wipe_test.py guards on
+# Declared in ernie_sync, which is the one place it lives now.
 STATE_CHANNEL = "ernie-state"
 FORMAT_VERSION = 1
 CONTENT_MAX = 2000          # Discord's cap on message content

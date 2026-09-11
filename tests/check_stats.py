@@ -672,6 +672,70 @@ def check_only_the_pairs_worth_counting_are_counted() -> bool:
     return c.report()
 
 
+def check_invented_history_says_so() -> bool:
+    """
+    A demo board has to be unmistakable, or it stops being a demo board.
+
+    `tools/fake_stats_data.py` gives a fresh database a year of plausible
+    past, because the panel otherwise reads `[0, 0, 0, 0, 0, 0, 0]` and shows
+    nobody what it is for. The tool is careful -- it refuses production,
+    everything it adds carries a prefix so `--clear` takes exactly it, and
+    everything invented is closed so nothing sits on the board pretending to
+    be a live ticket. The one thing it could not do is *say so*.
+
+    That is the whole risk. Run it for a demo, forget to clear it, and the
+    figures are believed a month later; or somebody screenshots the window
+    and an invented month turns up in a meeting as real. So the board carries
+    it across the top, where a full-window screenshot has to include it.
+
+    **The prefix lives in `ernie_api` and the tool has its own copy**, the
+    way `check_status.py` holds a colour to bert's. Two strings that must
+    agree and cannot import each other get a check, not a comment.
+    """
+    c = Check("invented history says so")
+
+    tool = (pathlib.Path(__file__).resolve().parent.parent
+            / "tools" / "fake_stats_data.py").read_text(encoding="utf-8")
+    quotes = chr(34) + chr(39)          # both kinds, whichever it was written in
+    declared = next((ln.split("=", 1)[1].strip().strip(quotes)
+                     for ln in tool.splitlines()
+                     if ln.startswith("PREFIX")), None)
+    c.equal(declared, api.INVENTED_PREFIX,
+            "the tool and the API agree on what invented rows look like")
+
+    with Board() as b:
+        api.DB = b.path
+        c.ok(api.health().get("invented") is None,
+             "a board with no invented rows says nothing about them")
+
+        # A closed card under the prefix, which is what the tool leaves
+        # behind and what the figures are counted from. The thread row goes
+        # in first: cards.thread_id is a real foreign key.
+        b.con.execute(
+            "INSERT INTO threads (thread_id, parent_id, guild_id, "
+            "created_at, first_seen_at, last_synced_at) "
+            "VALUES (?,?,?,datetime('now'),datetime('now'),datetime('now'))",
+            (api.INVENTED_PREFIX + "1", "parent", "guild"))
+        b.con.execute(
+            "INSERT INTO cards (thread_id, priority, rank, updated_at, "
+            "completed_at, completed_by) "
+            "VALUES (?,?,?,datetime('now'),datetime('now'),'imported')",
+            (api.INVENTED_PREFIX + "1", "medium", 1000.0))
+        b.con.commit()
+
+        said = api.health().get("invented")
+        c.ok(said is not None, "and one with them does")
+        c.equal((said or {}).get("cards"), 1, "counting the cards it added")
+
+        # A real card is never mistaken for an invented one -- the whole
+        # board would be marked as a demo on the strength of one prefix.
+        b.card("PROD: B - 01Jan26 - x", "medium")
+        c.equal(api.health()["invented"]["cards"], 1,
+                "and a real card beside it is not counted")
+
+    return c.report()
+
+
 def check_the_window_moves_the_retags_too() -> bool:
     """
     The selector moves this block like every other one.
@@ -843,6 +907,7 @@ CHECKS = (check_the_figures_are_what_they_claim,
           check_the_window_moves_every_block_it_should,
           check_a_retag_is_already_in_the_mirror,
           check_only_the_pairs_worth_counting_are_counted,
+          check_invented_history_says_so,
           check_the_window_moves_the_retags_too,
           check_only_the_board_s_own_threads_count,
           check_the_block_shows_a_tail_rather_than_dropping_it,

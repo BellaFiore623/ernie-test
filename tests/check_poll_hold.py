@@ -52,6 +52,14 @@ class FakeBert:
     def _tick_freshness(self):
         pass
 
+    def _tick_invented(self):
+        # Whether the figures include an invented past is a different
+        # question from what on_loaded does with a payload, and it is checked
+        # where it lives. It is stubbed rather than left out because
+        # on_loaded calls it *before* the editor and drag guards -- a parked
+        # payload is still a board showing demo data.
+        pass
+
     def _check_build(self):
         # Which build is answering is a different question from what
         # on_loaded does with a payload, and it is checked where it lives.

@@ -245,6 +245,25 @@ def clean_url(raw):
 # widening this again is one line and no backfill.
 TAG_MOVES_COUNTED = (("PROD", "OPS"), ("OPS", "PROD"))
 
+# **What invented history is prefixed with.** `tools/fake_stats_data.py`
+# gives the sandbox a year of plausible past so the figures panel can be
+# looked at and judged -- on a fresh database the whole panel reads
+# `[0, 0, 0, 0, 0, 0, 0]`, which shows nobody what it is for.
+#
+# That tool is careful: it refuses production, everything it adds carries
+# this prefix so `--clear` takes exactly it, and everything invented is
+# *closed*, so nothing sits on the board pretending to be a live ticket with
+# no Discord thread behind it. The one thing it could not do is say so --
+# **nothing on the board could tell you which you were looking at**. Run it
+# for a demo, forget to clear it, and the figures are believed a month later;
+# or somebody screenshots the window and it turns up in a meeting as real.
+# So `/health` reports it and Bert says so across the top of the window.
+#
+# The prefix is here rather than in the tool because this is what reads it;
+# `tests/check_stats.py` holds the two together, the way `check_status.py`
+# holds a colour to bert's.
+INVENTED_PREFIX = "fake-"
+
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
     "clients": ["short_name", "offered"],
@@ -544,6 +563,14 @@ def health():
     newest = con.execute(
         "SELECT version, minimum FROM release_seen WHERE id=1").fetchone()
 
+    # Invented history, if anybody has run the tool against this database.
+    # Counted off `cards` rather than `threads` because cards are what the
+    # board and the figures are built from, and a card is the thing somebody
+    # would be looking at when they believed it.
+    invented = con.execute(
+        "SELECT COUNT(*) AS n FROM cards WHERE thread_id LIKE ?",
+        (INVENTED_PREFIX + "%",)).fetchone()["n"]
+
     stuck = con.execute(
         """SELECT COUNT(*) AS n FROM events
            WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
@@ -589,6 +616,10 @@ def health():
         # be "sharing" by -- which is exactly the machine that needs telling.
         "format_skew": format_skew,
         "clients": roster,
+        # None rather than a zero, like every other block here: absent is the
+        # ordinary state and a board with nothing invented in it should have
+        # nothing to say about invented data.
+        "invented": {"cards": invented} if invented else None,
         "queued": {"count": owed["n"], "due_at": owed["soonest"]},
         "stuck": {"count": stuck["n"]},
     }

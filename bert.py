@@ -4360,6 +4360,22 @@ class Bert(QMainWindow):
         self.banner.hide()
         outer.addWidget(self.banner)
 
+        # **Invented history says so, across the whole window.** Its own strip
+        # for the reason the toast has one: the update banner must not be
+        # painted over and then hidden on the way out, and both can be true at
+        # once -- a board on an old build can also be showing a demo.
+        #
+        # Amber rather than red. Red here means something is asking for a
+        # person, and nothing is: the data is exactly what somebody asked for
+        # when they ran the tool. What it must not do is go unnoticed, which
+        # is why it is a strip across the window rather than a mark on the
+        # figures panel -- a full-window screenshot carries it, and a
+        # screenshot is how an invented figure would escape into a meeting.
+        self.demo = QLabel()
+        self.demo.setAlignment(Qt.AlignCenter)
+        self.demo.hide()
+        outer.addWidget(self.demo)
+
         # Its own strip rather than a second use of the banner: a save must not
         # paint over "can't reach Ernie" and then hide it on the way out.
         self.toast = QLabel()
@@ -5471,6 +5487,10 @@ class Bert(QMainWindow):
             self.roster = p["roster"]
             self.roster_at = time.time()
         self._tick_freshness()          # both labels come off this payload
+        # Before the editor and drag guards below, not after: those return
+        # early, and a board holding a parked payload is still a board showing
+        # invented figures.
+        self._tick_invented()
 
         # The card outlives the click by a poll or two; drop the toast the
         # moment it is genuinely off the board rather than on a timer.
@@ -5504,6 +5524,25 @@ class Bert(QMainWindow):
         self._pending = None
         self.cards = incoming
         self.render()
+
+    def _tick_invented(self):
+        """Say so when the figures include a past nobody lived through."""
+        made = ((self.health or {}).get("invented") or {}).get("cards") or 0
+        if not made:
+            self.demo.hide()
+            return
+        self.demo.setText(
+            f"Demo data — {made} invented tickets are counted in the "
+            f"figures. Nothing here is real history.")
+        self.demo.setToolTip(
+            "Added by tools/fake_stats_data.py, so the figures panel could "
+            "be looked at on a board with no past."
+            "\n\nRemove them with:\n"
+            "    python tools/fake_stats_data.py --db <your.db> --clear")
+        self.demo.setStyleSheet(
+            f"background:{T.AMBER_BG}; color:{T.AMBER_FG}; padding:7px;"
+            f" font-size:12px;")
+        self.demo.show()
 
     def _card_widget(self, tid):
         for band in self.bands.values():

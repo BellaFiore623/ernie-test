@@ -10,9 +10,11 @@ away the one fixture that cannot be rebuilt.
 `--all` is the old behaviour, for when the channel genuinely wants clearing.
 """
 import argparse, os, sys, time, httpx
-from ernie_sync import load_env
+from ernie_sync import PRODUCTION_GUILD, load_env
 
-PRODUCTION_GUILD = "1481003073894744226"   # set this to your real guild
+# Imported, not copied. This file used to carry its own value with the
+# comment "set this to your real guild", and it never was -- so the
+# guard on the one script here that deletes threads was decorative.
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--all", action="store_true",

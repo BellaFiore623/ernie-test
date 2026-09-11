@@ -71,6 +71,38 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   string comparison is always false. This silently broke the outbox once.
 - Secrets live in `ernie.env` / `ernie-test.env`, both gitignored. Never put
   a token in a `.py` file.
+- **`ernie_sync.PRODUCTION_GUILD` is declared once and everything guarding
+  imports it.** `wipe_test.py` deletes threads, `seed_test_server.py` creates
+  them, `ernie_state.py --check` writes a preflight, and
+  `tools/fake_stats_data.py` invents history -- each refuses production, and
+  each refusal is one comparison against that constant.
+  **It was wrong for the life of the project**, holding a guild id that is not
+  this company's, so all four compared production against a server nobody has
+  ever used and let it through; `wipe_test.py` still carried the comment "set
+  this to your real guild". Found the only way a wrong guard ever is -- by one
+  firing on the wrong side, when the fake-data tool wrote 257 invented tickets
+  into production's mirror. Recovered in full from the 28 Aug backup, and
+  nothing reached Discord because production has no `ALLOW_DISCORD_WRITES` to
+  reach it with.
+  `tests/check_guards.py` holds the copies together **and holds each guard to
+  still asking the question** -- a comparison that was deleted looks exactly
+  like one that returns False, and these files have no other test surface.
+  What no check can hold is that the value is *right*: the only thing to
+  compare it against is production's own env file, which is deliberately not
+  in the repo. **Verifying it is a person's job**, it takes one line, and it
+  has to be redone if the company's server ever changes:
+  `PRODUCTION_GUILD` must equal `DISCORD_GUILD_ID` in `ernie.env`.
+- **A guard is tested against a copy, never by pulling the trigger.** Copy
+  the database, point the tool at the copy, watch it refuse. Running a
+  writing tool at production to find out whether it would stop is how the
+  above was discovered, and it is not the way to do it twice.
+- **`tools/fake_stats_data.py` asks the database whose board it is**, not
+  what the file is called. It refused anything named `ernie.db`, which was
+  right while the only two databases were `ernie.db` and `ernie-test.db` --
+  and the exe made the name worthless, because an installed copy keeps its
+  database at `%LOCALAPPDATA%\Ernie\ernie.db` whatever server it points at.
+  A database with no threads yet cannot answer, and is refused rather than
+  guessed at.
 
 ## Data model notes
 

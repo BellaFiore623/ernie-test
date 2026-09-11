@@ -28,6 +28,7 @@ import check_poll_hold                                       # noqa: E402
 import check_started                                         # noqa: E402
 import check_message_type
 import check_outbox_retry
+import check_guards
 import check_stats
 import check_title_history                            # noqa: E402
 import check_status                           # noqa: E402
@@ -47,6 +48,7 @@ MODULES = {"app": check_app,
            "release": check_release,
            "version": check_version,
            "status": check_status,
+           "guards": check_guards,
            "stats": check_stats,
            "beats": check_sync_beats,
            "closures": check_closures,
