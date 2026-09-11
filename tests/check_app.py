@@ -249,7 +249,70 @@ def check_qt_gets_the_main_thread() -> bool:
     return c.report()
 
 
-CHECKS = (check_closing_spends_the_undo_window,
+def check_a_blocked_outbox_says_so() -> bool:
+    """
+    The one failure that must not be quiet.
+
+    Production's env has no `ALLOW_DISCORD_WRITES` -- deliberately, it is the
+    line that decides whether anything posts -- so it is the first
+    configuration this application will ever meet. The outbox loop used to
+    answer a blocked write with `sys.exit`, which is fine in a CLI and is not
+    fine on a thread: `SystemExit` there is swallowed by `threading` without
+    a word, so the outbox would stop, the sync and the board would carry on
+    working, and nothing anybody did would reach Discord.
+
+    Everything else about a read-only board is legitimate -- it is how
+    production runs today -- so this is reported, never refused.
+    """
+    c = Check("a blocked outbox says so rather than vanishing")
+
+    from ernie_sync import GuildMismatch
+    import ernie_outbox
+
+    class Blocked:
+        guild_id = "g"
+        writes_allowed = False
+
+        def write(self, *a, **k):
+            raise GuildMismatch("Write blocked.")
+
+    with Board() as b:
+        tid = b.card("PROD: A - 01Jan26 - x", "medium")
+        b.event(tid, verb="completed", new="done", dispatch_after=iso(-60))
+        b.con.commit()
+        raised = False
+        try:
+            ernie_outbox.run(b.con, Blocked(), b.path, once=True)
+        except GuildMismatch:
+            raised = True
+        c.ok(raised, "run() raises it out rather than exiting the thread")
+
+    # Off the AST, not the text: asked as "sys.exit is not in run()", this
+    # failed on the comment explaining why it must not be -- which is the
+    # third time a check has read the prose about a rule instead of the code
+    # obeying it.
+    src = (ROOT / "ernie_outbox.py").read_text(encoding="utf-8")
+    loop = next(n for n in ast.walk(ast.parse(src))
+                if isinstance(n, ast.FunctionDef) and n.name == "run")
+    exits = [n for n in ast.walk(loop) if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", "") == "exit"
+             and getattr(getattr(n.func, "value", None), "id", "") == "sys"]
+    c.equal(len(exits), 0,
+            "and the loop does not exit a process it may not be the only "
+            "thing in")
+
+    app = (ROOT / "ernie_app.py").read_text(encoding="utf-8")
+    c.ok("GuildMismatch" in app, "the supervisor catches it")
+    c.ok("ALLOW_DISCORD_WRITES" in app,
+         "and names the line that would fix it")
+    c.ok("writes_allowed" in app,
+         "and says at startup whether this board can post at all")
+
+    return c.report()
+
+
+CHECKS = (check_a_blocked_outbox_says_so,
+          check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
           check_the_two_loops_never_share_a_client,
           check_it_will_not_start_twice,

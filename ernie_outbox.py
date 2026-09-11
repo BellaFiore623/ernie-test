@@ -506,8 +506,14 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
                 print(f"  STUCK {s['event_id'][:8]} {s['verb']} "
                       f"after {s['attempts']} tries: {s['last_error']}",
                       file=sys.stderr)
-        except GuildMismatch as e:
-            sys.exit(str(e))
+        except GuildMismatch:
+            # Raised, not exited. `sys.exit` in a thread raises SystemExit,
+            # which threading swallows without a word -- so on a config with
+            # no ALLOW_DISCORD_WRITES the outbox thread would simply stop and
+            # the application would go on looking fine while nothing posted.
+            # That is production's env exactly, so it is the first
+            # configuration this would ever have met.
+            raise
         except Exception as e:
             print(f"[{now()[:19]}] drain failed: {e}", file=sys.stderr)
 
@@ -595,7 +601,12 @@ def main() -> None:
     print(f"ernie_outbox {ernie_version.describe()}")
     print(f"{who['bot']} -> {who['guild']} ({guild})  [POSTING]  db={a.db}")
 
-    run(con, d, a.db, interval=a.interval, once=a.once)
+    try:
+        run(con, d, a.db, interval=a.interval, once=a.once)
+    except GuildMismatch as e:
+        # A CLI can still leave on it: it is a configuration problem, not a
+        # bad row, and there is a console to say so in.
+        sys.exit(str(e))
 
 
 if __name__ == "__main__":

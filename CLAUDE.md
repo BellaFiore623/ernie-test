@@ -1639,6 +1639,17 @@ from source -- four processes, four logs, restart one without the others.
   once more. **`undone_at` is still honoured** -- a change taken back and
   then closed on stays taken back, and it is the one row that looks exactly
   like the one being flushed.
+- **A blocked outbox says so; it does not vanish.** `run()` used to answer a
+  refused write with `sys.exit`, which is right in a CLI and wrong on a
+  thread: `SystemExit` there is swallowed by `threading` without a word, so
+  the outbox would stop while the sync and the board carried on working and
+  nothing anybody did reached Discord. It raises now, the supervisor catches
+  it and names the line that would fix it, and the startup banner says
+  whether this board can post at all. Read-only is a legitimate way to run --
+  it is what production does today -- so this is reported, never refused.
+  **Production's env is the first configuration this will meet**: it holds
+  `DISCORD_TOKEN` and `DISCORD_GUILD_ID` and nothing else, and the absent
+  `ALLOW_DISCORD_WRITES` is exactly the case above.
 - **Config and the database live in `%LOCALAPPDATA%\Ernie`**, because
   beside the executable is either PyInstaller's temp extraction directory --
   wiped on exit -- or a Program Files path nobody can write.

@@ -210,6 +210,12 @@ def main() -> None:
                          "For checking the stack comes up.")
     a = ap.parse_args()
 
+    # Flushed, because on Windows a piped stdout holds these until the
+    # process ends -- which for a supervisor is the one moment they stop
+    # being useful.
+    def say(*x):
+        print(*x, flush=True)
+
     try:
         lock = take_lock()
     except AlreadyRunning:
@@ -223,12 +229,21 @@ def main() -> None:
     if a.db is None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    say = lambda *x: print(*x, flush=True)
     say(f"ernie_app {ernie_version.describe()}")
     say(f"  config  {read or '(none found)'}")
     say(f"  db      {db}")
 
     sync_client, outbox_client, guild = build_clients()
+    # Said at startup the way ernie_sync says it, because "is this board
+    # read-only" is the question somebody asks after the fact, off a log,
+    # when a change did not arrive. Read-only is a legitimate way to run --
+    # it is what production does today -- so it is reported, not refused.
+    if outbox_client is not None:
+        say(f"  writes   {'ENABLED' if outbox_client.writes_allowed else 'blocked'}"
+            f"  (guild {guild})")
+        if not outbox_client.writes_allowed:
+            say("           nothing will post: set ALLOW_DISCORD_WRITES to "
+                "this guild id to go live")
     stop = threading.Event()
     threads = []
 
@@ -249,6 +264,13 @@ def main() -> None:
             con = load.connect(db)
             try:
                 ernie_outbox.run(con, outbox_client, db, stop=stop)
+            except ernie_sync.GuildMismatch as e:
+                # The one failure that must not be quiet: everything else
+                # still works, so without this the board looks healthy while
+                # nothing it does reaches Discord.
+                say(f"  !! the outbox has stopped: {e}")
+                say("     nothing will reach Discord until "
+                    "ALLOW_DISCORD_WRITES names this guild.")
             finally:
                 con.close()
 
