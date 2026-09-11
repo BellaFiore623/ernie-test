@@ -1,8 +1,23 @@
-"""Delete every thread in the test channel. Test guild only."""
-import os, sys, time, httpx
+"""Delete the threads the seeder made, in the test channel. Test guild only.
+
+**A thread somebody opened by hand is kept.** The seeder's threads are all
+created by the bot, and a thread's creator may archive it whatever its
+permissions say -- so a sandbox made only of them can never rehearse the
+production case, where every thread belongs to one of 36 people. The only way
+to have one is for a person to open it, and a reseed that deleted those threw
+away the one fixture that cannot be rebuilt.
+
+`--all` is the old behaviour, for when the channel genuinely wants clearing.
+"""
+import argparse, os, sys, time, httpx
 from ernie_sync import load_env
 
 PRODUCTION_GUILD = "1481003073894744226"   # set this to your real guild
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--all", action="store_true",
+                help="delete threads a person opened too")
+a = ap.parse_args()
 
 load_env("ernie-test.env")
 token = os.environ["DISCORD_TOKEN"]
@@ -17,7 +32,8 @@ if guild == PRODUCTION_GUILD:
     sys.exit("REFUSING: that's production.")
 print(f"wiping #{ch['name']} in {guild}")
 
-killed = 0
+me = h.get("/users/@me").json()["id"]
+killed = kept = 0
 for scope in ("active", "archived"):
     while True:
         if scope == "active":
@@ -29,10 +45,19 @@ for scope in ("active", "archived"):
             threads = r.get("threads", [])
         if not threads:
             break
-        for t in threads:
+        # Whatever is left after the skips, or the loop never empties.
+        doomed = [t for t in threads
+                  if a.all or t.get("owner_id") == me]
+        if not doomed:
+            kept += len(threads)
+            break
+        for t in doomed:
             h.delete(f"/channels/{t['id']}")
             killed += 1
             print(f"  deleted {t['name'][:60]}")
             time.sleep(0.4)
 
 print(f"\n{killed} threads deleted")
+if kept:
+    print(f"{kept} left alone -- opened by a person, and the seeder cannot "
+          f"make another. --all deletes them too.")
