@@ -23,7 +23,8 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `jira_client.py` | A standalone Jira CLI -- `test`, `search "JQL"`, fetch an issue. Nothing imports it; it is for looking at Jira by hand while working out a query. |
 | `ernie_version.py` | The version number, and which build is answering. Imported by everything that says one. |
 | `ernie_status.py` | The ticket's status, as a pinned message in its own thread. Rides with the outbox. |
-| `run.sh` | Starts the whole stack. `./run.sh test bert` |
+| `ernie_app.py` | **One process**: sync, outbox, the API and Bert together. What the exe runs. `--headless` starts everything but Bert. |
+| `run.sh` | Starts the whole stack as four processes, for working from source. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
 | `tools/q.py` | Ad-hoc SQL helper. `python tools/q.py "SELECT ..." ernie-test.db` |
@@ -1601,6 +1602,46 @@ imports it. Bump it there and nowhere else.
   the module and `_read_commit` reads it **before** walking `.git` -- a bundle
   carrying a stamp is not a clone, and there is nothing underneath it worth
   preferring.
+
+## One process, which is what the exe runs
+
+`ernie_app.py`. Everybody runs everything and shares only `#ernie-state`, so
+no machine has to stay powered on. `run.sh` is still how this is worked on
+from source -- four processes, four logs, restart one without the others.
+
+- **The API stays an API.** uvicorn on a thread bound to 127.0.0.1, and Bert
+  talks to it exactly as it does now. No refactor of the client, and
+  `run.sh test bert lan` still works the day somebody wants one backend
+  shared across a network.
+- **Qt owns the main thread**, which is not a preference: a QApplication has
+  to be created there and its loop has to run there. So the two loops and
+  uvicorn are the threads and Bert is what `main()` blocks on -- which is
+  also what makes the shutdown reachable, since it is simply the code after
+  `app.exec()` returns.
+- **A port it cannot have is not a reason to fail.** The machine this gets
+  tested on first is the one already running `run.sh`, so 8787 falls through
+  to whatever the OS hands out and Bert is told the port that was bound.
+- **The two loops never share a Discord client.** The sync's is built with no
+  `allow_writes_for` and the outbox's with it; one client between them would
+  hand the read-only half a handle that can post.
+- **A named mutex, not a pid file.** A shipped exe gets double-clicked twice,
+  and without a lock that is two syncs on one database and two outboxes on
+  one state channel -- the failure `run.sh` already recorded six times over
+  in a day. A pid file outlives a crash and then lies, which is why `run.sh`
+  had to grow the honest version of it; the kernel keeps this one true.
+- **Closing the window is what stops the outbox, and it spends the undo
+  window rather than waiting it out.** `UNDO_WINDOW_S` is 60 and the outbox
+  polls every 30, so a change made just before closing can be ninety seconds
+  from its customer thread. Under `run.sh` that is handled by *not* stopping
+  the outbox and asking somebody to leave three windows open for a minute;
+  one process cannot ask that. So closing brings every undispatched event
+  forward, drains, makes any threads still waiting, and publishes the board
+  once more. **`undone_at` is still honoured** -- a change taken back and
+  then closed on stays taken back, and it is the one row that looks exactly
+  like the one being flushed.
+- **Config and the database live in `%LOCALAPPDATA%\Ernie`**, because
+  beside the executable is either PyInstaller's temp extraction directory --
+  wiped on exit -- or a Program Files path nobody can write.
 
 ## Running
 

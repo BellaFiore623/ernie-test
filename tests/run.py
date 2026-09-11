@@ -16,6 +16,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import check_app
 import check_board_order                                     # noqa: E402
 import check_changelog                                       # noqa: E402
 import check_clients                                         # noqa: E402
@@ -35,7 +36,8 @@ import check_state
 import check_closures
 import check_sync_beats                                           # noqa: E402
 
-MODULES = {"changelog": check_changelog, "state": check_state,
+MODULES = {"app": check_app,
+           "changelog": check_changelog, "state": check_state,
            "order": check_board_order, "poll": check_poll_hold,
            "fresh": check_freshness, "started": check_started,
            "palette": check_palette, "feed": check_feed,
