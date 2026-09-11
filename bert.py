@@ -785,6 +785,23 @@ class UpdateDialog(QDialog):
             under.addWidget(ok)
         said.addLayout(under)
 
+        # **Where it goes, taken from the address rather than written down.**
+        # "Get the new build" says what the button does and not where it
+        # lands, and a button that opens a browser should say so before it
+        # does. Naming the host is the honest version: `BERT_UPDATE_URL` is
+        # published by Ernie exactly so the download can move without anybody
+        # rebuilding Bert, so a label reading "Google Drive" would become a
+        # lie the day it moves -- and it would be the kind that nobody
+        # notices, because the button still works.
+        if url:
+            where = QLabel(f"Opens {urllib.parse.urlparse(url).netloc} "
+                           f"in your browser")
+            where.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
+                                f" background:transparent;")
+            where.setAlignment(Qt.AlignRight)
+            where.setToolTip(url)
+            said.addWidget(where)
+
         row.addLayout(said, 1)
 
     def muted(self) -> bool:

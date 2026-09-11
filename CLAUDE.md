@@ -1581,6 +1581,15 @@ imports it. Bump it there and nowhere else.
   **The scheme is checked at both ends**, `http` and `https` only. Bert is
   what hands the thing to the desktop, and a value nobody validated on the
   way in is a value somebody trusts on the way out.
+  **The dialog names where it goes, taken from the address rather than
+  written down.** "Get the new build" says what the button does and not where
+  it lands, and a control that opens a browser should say so before it does --
+  so a muted line under it reads `Opens drive.google.com in your browser`,
+  off `urlparse(url).netloc`. Hard-coding "Google Drive" was the thing asked
+  for and is the one version that cannot be kept: the address is published by
+  Ernie precisely so the download can move without anybody rebuilding Bert,
+  so a label naming the host would become a lie the day it moves -- and the
+  kind nobody notices, because the button still works.
   On the blocked dialog it comes **first**, because that is the person who has
   to act; on the other it sits after *Alright*, where carrying on is a fair
   answer. And the blocked wording says the board is still there to read, so

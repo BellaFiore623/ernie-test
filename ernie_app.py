@@ -228,6 +228,16 @@ def serve_api(db: str, port: int, ready: threading.Event):
     import ernie_api
 
     ernie_api.DB = db
+    # **And the update address, which is the other half of that sentence.**
+    # `ernie_api` is written as a script: its `__main__` block reads one key
+    # out of the env file -- where a newer build comes from -- and sets this
+    # module global. `ernie_app` calls `serve_api` instead and inherits none
+    # of that, so `/health` published an empty address, Bert drew no button,
+    # and the dialog telling somebody there is an update had nowhere to send
+    # them. Third time this shape of bug has turned up: the supervisor calls
+    # the internals directly and silently skips what the CLI does around them.
+    ernie_api.UPDATE_URL = ernie_api.clean_url(
+        os.environ.get("BERT_UPDATE_URL"))
     ernie_api.check_schema()
     cfg = uvicorn.Config(ernie_api.app, host="127.0.0.1", port=port,
                          log_level="warning")

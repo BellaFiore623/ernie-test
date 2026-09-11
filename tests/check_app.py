@@ -647,6 +647,58 @@ def check_an_installed_copy_can_migrate_itself() -> bool:
     return c.report()
 
 
+def check_the_supervisor_sets_up_what_the_cli_does() -> bool:
+    """
+    The same bug three times, so this is the check for the shape of it.
+
+    `ernie_api` is written as a script: its `__main__` block reads the env
+    file and sets the module globals the routes serve from. `ernie_app`
+    imports it and calls `serve_api` instead, inheriting **none** of that --
+    and every global it forgets is a feature that silently does not exist in
+    the exe, with nothing broken anywhere to point at.
+
+    It has happened three times now. `newest`, where Bert and Ernie being one
+    process made the comparison meaningless. `register_channels`, which lives
+    in `ernie_sync.main()` and left a fresh install watching nothing.
+    `UPDATE_URL`, which left `/health` publishing no address, so Bert drew no
+    button on the dialog that had just told somebody to go and update.
+
+    So: every module-level global the CLI assigns has to be assigned in
+    `serve_api` too. Read off both files, so a fourth one added to the script
+    block fails here rather than in six months on somebody else's machine.
+    """
+    c = Check("the supervisor sets up what the CLI does")
+
+    api_src = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+    tree = ast.parse(api_src)
+
+    # What the module declares at the top level, and what the __main__ block
+    # reassigns. The intersection is the configuration the script sets up.
+    declared = {t.id for st in tree.body if isinstance(st, ast.Assign)
+                for t in st.targets
+                if isinstance(t, ast.Name) and t.id.isupper()}
+    entry = next((n for n in tree.body if isinstance(n, ast.If)), None)
+    in_main = set()
+    if entry is not None:
+        for st in ast.walk(entry):
+            if isinstance(st, ast.Assign):
+                in_main |= {t.id for t in st.targets
+                            if isinstance(t, ast.Name) and t.id.isupper()}
+    config = sorted(declared & in_main)
+
+    c.ok(bool(config), f"the script configures something: {config}")
+
+    app_src = (ROOT / "ernie_app.py").read_text(encoding="utf-8")
+    serve = ast.get_source_segment(app_src, next(
+        n for n in ast.walk(ast.parse(app_src))
+        if isinstance(n, ast.FunctionDef) and n.name == "serve_api")) or ""
+    for name in config:
+        c.ok(f"ernie_api.{name} =" in serve,
+             f"serve_api sets ernie_api.{name} the way the script does")
+
+    return c.report()
+
+
 CHECKS = (check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
@@ -658,4 +710,5 @@ CHECKS = (check_a_blocked_outbox_says_so,
           check_a_windowed_build_has_somewhere_to_print,
           check_the_installer_and_the_app_agree,
           check_the_database_exists_before_anything_races_for_it,
-          check_an_installed_copy_can_migrate_itself)
+          check_an_installed_copy_can_migrate_itself,
+          check_the_supervisor_sets_up_what_the_cli_does)
