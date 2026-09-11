@@ -735,7 +735,10 @@ class UpdateDialog(QDialog):
         # here would become a lie the day it moves, and the kind nobody
         # notices because the button still works.
         if url:
-            detail = (f"{detail} (Opens "
+            # Named, because a bare "Opens ..." leaves the reader to work
+            # out which of the two buttons it is about -- and the other one
+            # dismisses the dialog, which is the wrong guess to invite.
+            detail = (f"{detail} (Get the new build opens "
                       f"{urllib.parse.urlparse(url).netloc} in your browser.)")
 
         body = QLabel(detail)
@@ -6084,7 +6087,59 @@ class Bert(QMainWindow):
             QMessageBox.warning(self, "Couldn't complete that card", str(e))
         else:
             self.completing.add(tid)
+            # **Take it off the board now, even with an editor open.**
+            # An open editor parks every poll -- rebuilding a band destroys
+            # the widget somebody is typing into -- so a card closed while
+            # one was open just sat there looking untouched. The ticket was
+            # shut on the server and nothing on screen said so, pressing
+            # Complete again did nothing because it was already closed, and
+            # the card only left when the editor did. Reported as not being
+            # able to complete a ticket while editing another, which is
+            # exactly what it looks like.
+            #
+            # Hidden rather than rebuilt. The card being closed is never the
+            # one being edited -- that one is in edit mode and has no
+            # Complete button -- so nothing anybody is typing into is
+            # touched, and the next real render replaces the lot anyway: the
+            # band's signature already differs, because the payload that
+            # follows no longer carries this card.
+            if self.editing_card:
+                self._hide_closed_card(tid)
         self.refresh()
+
+    def _hide_closed_card(self, tid):
+        """Drop a card off both lists without rebuilding either.
+
+        Only ever reached with an editor open, which is the one time
+        `render()` cannot run. Walks the layouts rather than `findChildren`,
+        the way `_hold_scroll` does -- not for the order here, but because a
+        layout is what the panel actually draws and a stray parented widget
+        would answer to the other.
+        """
+        for band in self.bands.values():
+            hit = False
+            for i in range(band.lay.count()):
+                w = band.lay.itemAt(i).widget()
+                if isinstance(w, Card) and w.thread_id == tid:
+                    w.hide()
+                    hit = True
+            if hit:
+                # The heading counts what is on the band, and a card that has
+                # gone is not on it. `isHidden` rather than `isVisible`: a
+                # folded band's cards are all invisible and none of them are
+                # closed.
+                band.count.setText(str(sum(
+                    1 for i in range(band.lay.count())
+                    if isinstance(band.lay.itemAt(i).widget(), Card)
+                    and not band.lay.itemAt(i).widget().isHidden())))
+
+        # And the running order, which is the same board said twice -- 33
+        # cards on one and 34 on the other is the kind of disagreement that
+        # makes somebody stop trusting both.
+        for i in range(self.rail.lay.count()):
+            w = self.rail.lay.itemAt(i).widget()
+            if isinstance(w, RailRow) and w.thread_id == tid:
+                w.hide()
 
     def _undo(self, eid, force=False):
         r = self.api.undo(eid, self.name(), force=force)

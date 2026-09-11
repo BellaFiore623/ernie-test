@@ -602,6 +602,24 @@ activity feed, undo, and the outbox.
   redraws by its own route, but a resize parks nothing, and without the flag
   the board kept a layout for a window that was gone until whichever poll came
   next.
+- **A card closed while an editor is open still leaves the board.** The poll
+  parks its payload whenever `editing_card` is set, because rebuilding a band
+  destroys the widget somebody is typing into -- so a ticket completed
+  meanwhile was shut on the server with nothing on screen to say so. It sat
+  there looking untouched, pressing Complete again did nothing because it was
+  already closed, and it only went when the editor did. Reported as not being
+  able to complete a ticket while another is being edited, which is exactly
+  what it looks like from the board.
+  `_hide_closed_card` hides it rather than rebuilding: **the card being closed
+  is never the one being edited** -- that one is in edit mode and has no
+  Complete button -- so nothing anybody is typing into is touched, and the
+  next real render replaces the lot anyway, because the band's signature
+  already differs once the payload stops carrying that card. The band's count
+  and the matching **rail row** go with it: the running order is the same
+  board said twice, and 33 on one against 34 on the other is the kind of
+  disagreement that makes somebody stop trusting both. `isHidden` rather than
+  `isVisible` for the recount -- a folded band's cards are all invisible and
+  none of them are closed.
 - **Bert's close warning owes three debts, and the third is a different
   kind.** The two below are about Discord, and neither is lost by closing --
   the outbox posts them whether Bert is open or not, which is why that warning
