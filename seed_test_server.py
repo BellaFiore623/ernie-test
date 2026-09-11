@@ -96,7 +96,47 @@ class Discord:
 # The cases
 # --------------------------------------------------------------------------
 
+LONG_THREAD = [
+    "reel came back from site this morning",
+    "fiber looks fine on the first 200ft",
+    "got a kink at about 240, going to respool from there",
+    "@ThreadGroup anyone got a spare drum?",
+    "there's one on the shelf behind the bench",
+    "grabbed it, thanks",
+    "respooled, tension reads normal",
+    "amber light came back on during the test run",
+    "that's the third time this week on this unit",
+    "pulling the head off to look at the connector",
+    "connector pins look clean",
+    "reseated it anyway",
+    "ran it again, 400ft clean",
+    "customer wants it back Thursday",
+    "that's tight but doable",
+    "packing it tonight",
+    "hold on -- amber again at 380",
+    "ok so it's not the connector",
+    "swapping the controller board",
+    "board swapped, running the full length now",
+    "600ft, no amber",
+    "letting it sit overnight before I call it",
+    "still clean this morning",
+    "boxing it up",
+    "shipped, tracking sent to the customer",
+] * 5        # 125 messages, past the rescan tail
+
+
 CASES = [
+
+    # **A long thread**, because three things behave differently past a
+    # hundred messages and the sandbox's longest was five. `rescan_edits`
+    # re-reads the last `RESCAN_TAIL` (100), so an edit further back than
+    # that is out of its reach; the status message sits wherever it was
+    # posted rather than near the top; and a card with this much history is
+    # what the state channel's 2000-character cap is measured against.
+    # Production's longest is 212.
+    ("PROD: Westmoreland County - 02Sep26 - EReel-1204 respool and test", [
+        (line, None) for line in LONG_THREAD
+    ], None),
     # (title, [(content, embed) ...], extra)
     ("PROD: Edge AI Services - 03Aug26 - EReel-1060 fiber snapped", [
         ("@ThreadGroup we'll need to ship this today", None),
