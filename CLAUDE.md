@@ -1644,6 +1644,43 @@ imports it. Bump it there and nowhere else.
   a newer build could bump the note, but a half-finished local build would
   then announce itself as the release and send everybody to fetch something
   that is not there.
+- **Two tiers, and the version number decides neither.** `**Release** 0.9.1`
+  is a note; `**Release** 0.9.1 minimum 0.9.1` sends anything older
+  read-only. A patch release can be mandatory because it stops a build
+  writing something wrong, and a minor one can be entirely optional because
+  it adds a panel -- how big a change is and how dangerous it is to skip are
+  different questions, so the note answers the second out loud. The word is
+  spelled out rather than punctuated, because this is the line that takes
+  somebody's board away and it should be impossible to type by accident.
+  `blocked` was as unreachable in the exe as `behind` had been, and for the
+  same reason: `floor` is this build's own `MIN_BERT` against this build's
+  own `VERSION`, and `check_version.py` keeps the first at or below the
+  second precisely so a release cannot lock everyone out.
+  **A floor nobody can reach is the one failure here with no recovery** -- it
+  takes every board read-only at once and the fix is to install something
+  that does not exist. Unlike `MIN_BERT`, which has a check standing over it,
+  this number is a sentence somebody typed into Discord on a Friday. So it is
+  refused **twice**: the parser drops a minimum ahead of its own note's
+  version, and `build_standing` refuses one again at the point of use,
+  because that is the half that matters and it must not depend on the other
+  having run. A floor with no known build to reach it is the same case and
+  resolves the same way. The floor travels with the version it was written
+  beside, so an old note's floor cannot outlive the note it belonged to.
+- **A shipped exe migrates itself, because it has no shell to do it in.**
+  `schema.sql` is all CREATE TABLE IF NOT EXISTS -- it creates tables and can
+  never alter one -- so a database made before a column existed never grows
+  it. From a checkout that is what `migrations/` is for: a script, run by
+  hand, at a prompt. The person running an installer has neither, and the
+  failure is total: the sync dies with `no such column`, `check_schema`
+  refuses to start the API, and the only repair tool on that machine is the
+  thing that will not start. Found on the first release that added a column
+  after the build went out, and every future one would have done the same.
+  `ernie_load.ADDED_COLUMNS` is the list and `connect()` applies it on every
+  open, idempotently, after the schema script -- a table has to exist before
+  it can be altered. **Only columns added after the first shipped build
+  belong there**: everything before it is already in `schema.sql`, and any
+  database new enough to be an installed one was created from that.
+  `migrations/` stays as the record and for databases that predate the exe.
 - **A frozen build names its commit from a file.** There is no `.git` inside
   an exe, so the packaging step writes the sha into `build_commit.txt` beside
   the module and `_read_commit` reads it **before** walking `.git` -- a bundle

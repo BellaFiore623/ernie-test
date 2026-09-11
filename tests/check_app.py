@@ -588,6 +588,65 @@ def check_the_database_exists_before_anything_races_for_it() -> bool:
     return c.report()
 
 
+def check_an_installed_copy_can_migrate_itself() -> bool:
+    """
+    A shipped exe has no shell, and `migrations/` is a directory of scripts.
+
+    `schema.sql` is all CREATE TABLE IF NOT EXISTS: it creates tables and can
+    never alter one, so a database made before a column existed never grows
+    it. From a checkout that is what `migrations/` is for -- run by hand, by
+    somebody with a prompt. The person running an installer has neither, and
+    the failure is total: the sync dies with `no such column`, `check_schema`
+    refuses to start the API, and the only repair tool on that machine is the
+    thing that will not start.
+
+    Found on the first release that added a column after the build shipped.
+    Every future one would have done the same, which is what makes this worth
+    a mechanism rather than a note.
+    """
+    c = Check("an installed copy can migrate itself")
+
+    import sqlite3
+    import tempfile
+    import ernie_load as load
+
+    c.ok(bool(load.ADDED_COLUMNS), "there is a list of columns to add")
+
+    with tempfile.TemporaryDirectory() as d:
+        p = str(pathlib.Path(d) / "old.db")
+        # A database the shape it was before the column existed.
+        con = sqlite3.connect(p)
+        con.execute("""CREATE TABLE release_seen (
+                           id INTEGER PRIMARY KEY CHECK (id=1),
+                           version TEXT NOT NULL, seen_at TEXT NOT NULL)""")
+        con.execute("INSERT INTO release_seen VALUES (1,'0.9.1','then')")
+        con.commit()
+        con.close()
+
+        con = load.connect(p)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(release_seen)")}
+        c.ok("minimum" in cols, "opening it adds the missing column")
+        row = con.execute("SELECT * FROM release_seen").fetchone()
+        c.equal(row["version"], "0.9.1", "and the row that was there survives")
+        c.equal(row["minimum"], "", "with the default filled in")
+        con.close()
+
+        # Every open runs it, so it has to be free the second time.
+        con = load.connect(p)
+        c.ok(load.add_missing_columns(con) == [],
+             "and a database already in shape is left alone")
+        con.close()
+
+    # The guard that turns a missed column into a startup failure rather than
+    # a puzzle. Both halves have to name it or one of them is decoration.
+    api = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+    for table, col, _ in load.ADDED_COLUMNS:
+        c.ok(f'"{table}": [' in api and f'"{col}"' in api,
+             f"check_schema also requires {table}.{col}")
+
+    return c.report()
+
+
 CHECKS = (check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
@@ -598,4 +657,5 @@ CHECKS = (check_a_blocked_outbox_says_so,
           check_the_close_warning_is_true_in_one_process,
           check_a_windowed_build_has_somewhere_to_print,
           check_the_installer_and_the_app_agree,
-          check_the_database_exists_before_anything_races_for_it)
+          check_the_database_exists_before_anything_races_for_it,
+          check_an_installed_copy_can_migrate_itself)

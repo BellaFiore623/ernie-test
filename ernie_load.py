@@ -38,6 +38,41 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# **Columns added to a table that already exists somewhere.**
+#
+# `schema.sql` is all CREATE TABLE IF NOT EXISTS, which creates tables and can
+# never alter one -- so a database made before a column was added simply never
+# grows it. From a checkout that is what `migrations/` is for: a script, run
+# by hand, by somebody with a shell.
+#
+# **A shipped exe has no shell**, and the person running it has an installer
+# and a Start-menu shortcut. Found the hard way, on the first release that
+# added a column after the build went out: the sync died with `no such column`
+# and the API refused to start, on a machine whose only repair tool was the
+# thing that would not start. Every future column would have done the same.
+#
+# So the application adds them itself, on every open, idempotently. Only
+# columns added *after* the first shipped build belong here -- everything
+# before it is already in `schema.sql`, and a database new enough to be an
+# installed one was created from that.
+ADDED_COLUMNS = (
+    ("release_seen", "minimum", "TEXT NOT NULL DEFAULT ''"),
+)
+
+
+def add_missing_columns(con) -> list[str]:
+    """Bring an older database up to the current shape. Answers what it did."""
+    done = []
+    for table, col, decl in ADDED_COLUMNS:
+        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        # No table at all is not this function's problem: schema.sql has just
+        # run, so an absent one is a table this build genuinely does not have.
+        if have and col not in have:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+            done.append(f"{table}.{col}")
+    return done
+
+
 def connect(path: str, timeout: float = 15.0) -> sqlite3.Connection:
     """
     Open the database.
@@ -49,6 +84,8 @@ def connect(path: str, timeout: float = 15.0) -> sqlite3.Connection:
     con = sqlite3.connect(path, timeout=timeout)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA.read_text())
+    # After the schema, because a table has to exist before it can be altered.
+    add_missing_columns(con)
     con.execute("PRAGMA busy_timeout = 15000")
     con.execute("PRAGMA synchronous = NORMAL")
     return con
