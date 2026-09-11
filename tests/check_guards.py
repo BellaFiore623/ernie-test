@@ -217,7 +217,47 @@ def check_the_fake_data_tool_undoes_everything_it_did() -> bool:
     return c.report()
 
 
+def check_run_sh_checks_the_env_against_the_mode() -> bool:
+    """
+    Both filenames in `run.sh` are relative, and there are two checkouts.
+
+    `./run.sh prod` reads `ernie.env` and opens `ernie.db`, both relative to
+    wherever it runs. Production has its own folder; the sandbox is this one.
+    A stray `ernie.env` in the sandbox checkout is all it takes for `prod` to
+    load the *sandbox* guild and open whatever `ernie.db` is lying beside it
+    -- and one was, so `./run.sh prod` here would have pointed a sandbox sync
+    at a 14.8 MB copy of production's mirror and written its 34 threads into
+    a file holding production's 889.
+
+    Neither file was wrong on its own: the env was a byte-identical copy of
+    `ernie-test.env`, and the database was a snapshot somebody took to look
+    at. It was the **names** that made `prod` find them, and nothing anywhere
+    said the pairing made no sense.
+
+    So the mode and the env have to agree, checked against the guild the file
+    actually names -- and in both directions, because "never test against
+    production" is a hard rule with nothing enforcing it until now.
+    """
+    c = Check("run.sh checks the env against the mode")
+
+    src = (ROOT / "run.sh").read_text(encoding="utf-8")
+    c.ok("PRODUCTION_GUILD" in src,
+         "it asks ernie_sync for the guild rather than keeping its own copy")
+    c.ok("DISCORD_GUILD_ID" in src,
+         "and reads the guild the env file actually names")
+    c.ok('"$ENVNAME" = prod' in src and '!= "$WANT_PROD"' in src,
+         "prod refuses an env that is not production")
+    c.ok('"$ENVNAME" = test' in src and '= "$WANT_PROD"' in src,
+         "and test refuses one that is")
+    # Before anything starts, or the guard is a report rather than a guard.
+    c.ok(src.index("WANT_PROD=") < src.index("mkdir -p logs"),
+         "and it runs before the stack does")
+
+    return c.report()
+
+
 CHECKS = (check_every_copy_of_the_guild_agrees,
           check_every_guard_still_asks,
           check_the_tool_guards_on_the_guild_not_the_filename,
-          check_the_fake_data_tool_undoes_everything_it_did)
+          check_the_fake_data_tool_undoes_everything_it_did,
+          check_run_sh_checks_the_env_against_the_mode)

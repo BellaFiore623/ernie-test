@@ -92,6 +92,18 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   in the repo. **Verifying it is a person's job**, it takes one line, and it
   has to be redone if the company's server ever changes:
   `PRODUCTION_GUILD` must equal `DISCORD_GUILD_ID` in `ernie.env`.
+- **`run.sh` checks the env names the guild the mode claims.** Both its
+  filenames are relative -- `prod` reads `ernie.env` and opens `ernie.db` --
+  and there are two checkouts on this machine: the sandbox, and production in
+  its own folder. A stray `ernie.env` in the sandbox checkout is all it takes
+  for `prod` to load the *sandbox* guild and open whatever `ernie.db` is
+  lying beside it. One was, and so was a 14.8 MB copy of production's mirror:
+  `./run.sh prod` from the sandbox would have written its 34 threads into a
+  file holding production's 889. Neither file was wrong alone -- the env was
+  a byte-identical copy of `ernie-test.env`, the database a snapshot somebody
+  took to look at -- it was the **names** that made `prod` find them.
+  Both directions are refused, because "never test against production" had
+  nothing enforcing it either. `tests/check_guards.py` holds it.
 - **A guard is tested against a copy, never by pulling the trigger.** Copy
   the database, point the tool at the copy, watch it refuse. Running a
   writing tool at production to find out whether it would stop is how the

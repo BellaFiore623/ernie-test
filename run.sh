@@ -50,6 +50,39 @@ fi
 
 [ -f "$ENVFILE" ] || { echo "missing $ENVFILE"; exit 1; }
 
+# **Check the env is the one the mode claims.** Both filenames are relative
+# to whichever directory this runs in, and there are two checkouts on this
+# machine: the sandbox here, and production in its own folder. A stray
+# `ernie.env` in the sandbox checkout is all it takes for `./run.sh prod` to
+# load the *sandbox* guild and open whatever `ernie.db` is lying next to it
+# -- which is how a sandbox sync comes to write its 34 threads into a mirror
+# holding production's 889. Found exactly that way: a copy of each, left
+# behind, and nothing anywhere to say the pairing was wrong.
+#
+# The names cannot be trusted, so ask the file. `ernie_sync.PRODUCTION_GUILD`
+# is the one declaration everything else guards on too.
+WANT_PROD=$(python -c "import ernie_sync; print(ernie_sync.PRODUCTION_GUILD)" 2>/dev/null)
+GOT_GUILD=$(python - "$ENVFILE" <<'PYEOF' 2>/dev/null
+import os, sys
+from ernie_sync import load_env
+load_env(sys.argv[1])
+print(os.environ.get("DISCORD_GUILD_ID", ""))
+PYEOF
+)
+if [ -n "$WANT_PROD" ] && [ -n "$GOT_GUILD" ]; then
+  if [ "$ENVNAME" = prod ] && [ "$GOT_GUILD" != "$WANT_PROD" ]; then
+    echo "refusing: $ENVFILE names guild $GOT_GUILD, which is not production."
+    echo "You are probably in the sandbox checkout. Production runs from its"
+    echo "own folder, with its own env and its own database."
+    exit 1
+  fi
+  if [ "$ENVNAME" = test ] && [ "$GOT_GUILD" = "$WANT_PROD" ]; then
+    echo "refusing: $ENVFILE names the production guild."
+    echo "Never test against production."
+    exit 1
+  fi
+fi
+
 mkdir -p logs
 PIDS=()
 PIDFILE=logs/stack.pids
