@@ -463,6 +463,101 @@ def stuck(con) -> list:
         (MAX_ATTEMPTS,)).fetchall()
 
 
+def _pause(stop, seconds) -> bool:
+    """Sleep between passes, unless asked to stop. True means stop now.
+
+    The same shape `ernie_sync._pause` has, and here for the same reason:
+    one exe runs both loops on threads, and a window that takes a full beat
+    to close is a window somebody clicks twice.
+    """
+    seconds = max(0.0, seconds)
+    if stop is None:
+        time.sleep(seconds)
+        return False
+    return stop.wait(seconds)
+
+
+def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
+        once: bool = False, stop=None) -> None:
+    """The outbox loop, so something other than a CLI can run it.
+
+    Lifted out whole rather than reimplemented: the pass is not just
+    `drain()`. It makes the threads tickets are waiting on, publishes the
+    board to `#ernie-state`, writes each ticket's status into its own
+    thread, and appends to the change log -- four things with four different
+    reasons for being on *this* loop rather than the sync's, all of them
+    about this being the only process allowed to write to Discord.
+
+    `stop` is a `threading.Event`; nothing else about the loop moved.
+    """
+    while True:
+        if stop is not None and stop.is_set():
+            return
+        try:
+            c = drain(con, d)
+            m = make_threads(con, d)
+            if m["made"] or m["failed"]:
+                print(f"[{now()[:19]}] new threads: {m['made']} made, "
+                      f"{m['failed']} failed")
+            if any(c.values()):
+                print(f"[{now()[:19]}] sent={c['sent']} skipped={c['skipped']} "
+                      f"failed={c['failed']} waiting={pending(con)}")
+            for s in stuck(con):
+                print(f"  STUCK {s['event_id'][:8]} {s['verb']} "
+                      f"after {s['attempts']} tries: {s['last_error']}",
+                      file=sys.stderr)
+        except GuildMismatch as e:
+            sys.exit(str(e))
+        except Exception as e:
+            print(f"[{now()[:19]}] drain failed: {e}", file=sys.stderr)
+
+        # SQLite -> Discord, so it goes through the one process allowed to
+        # write there. The pull in the other direction rides with the sync.
+        state_channel = os.environ.get("STATE_CHANNEL_ID")
+        if state_channel and d.writes_allowed:
+            try:
+                s = ernie_state.publish(d, state_channel, db)
+                if s["posted"] or s["edited"]:
+                    print(f"[{now()[:19]}] state: posted {s['posted']}, "
+                          f"edited {s['edited']}")
+            except Exception as e:
+                print(f"[{now()[:19]}] state publish failed: {e}",
+                      file=sys.stderr)
+
+        # The ticket's own status, in its own thread. No channel to
+        # configure: it goes to the threads the board already knows about,
+        # and only the ones Ernie watched open -- so a machine that has just
+        # inherited a server posts nothing.
+        if d.writes_allowed:
+            try:
+                st = ernie_status.publish(d, con, db)
+                if st["posted"] or st["edited"]:
+                    print(f"[{now()[:19]}] status: posted {st['posted']}, "
+                          f"edited {st['edited']}")
+            except Exception as e:
+                print(f"[{now()[:19]}] status failed: {e}", file=sys.stderr)
+
+        # The durable record, if there is somewhere to keep it. Both boards
+        # hold the whole history, so only one machine should set this -- two
+        # would write every line twice.
+        log_channel = os.environ.get("CHANGELOG_CHANNEL_ID")
+        if log_channel and d.writes_allowed:
+            try:
+                c = ernie_changelog.tick(d, log_channel, con)
+                if c["sent"] or c.get("struck"):
+                    note = f"{c['sent']} logged"
+                    if c.get("struck"):
+                        note += f", {c['struck']} struck through"
+                    print(f"[{now()[:19]}] changelog: {note}")
+            except Exception as e:
+                print(f"[{now()[:19]}] changelog failed: {e}", file=sys.stderr)
+
+        if once:
+            return
+        if _pause(stop, interval):
+            return
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", action="version",
@@ -500,69 +595,7 @@ def main() -> None:
     print(f"ernie_outbox {ernie_version.describe()}")
     print(f"{who['bot']} -> {who['guild']} ({guild})  [POSTING]  db={a.db}")
 
-    while True:
-        try:
-            c = drain(con, d)
-            m = make_threads(con, d)
-            if m["made"] or m["failed"]:
-                print(f"[{now()[:19]}] new threads: {m['made']} made, "
-                      f"{m['failed']} failed")
-            if any(c.values()):
-                print(f"[{now()[:19]}] sent={c['sent']} skipped={c['skipped']} "
-                      f"failed={c['failed']} waiting={pending(con)}")
-            for s in stuck(con):
-                print(f"  STUCK {s['event_id'][:8]} {s['verb']} "
-                      f"after {s['attempts']} tries: {s['last_error']}",
-                      file=sys.stderr)
-        except GuildMismatch as e:
-            sys.exit(str(e))
-        except Exception as e:
-            print(f"[{now()[:19]}] drain failed: {e}", file=sys.stderr)
-
-        # SQLite -> Discord, so it goes through the one process allowed to
-        # write there. The pull in the other direction rides with the sync.
-        state_channel = os.environ.get("STATE_CHANNEL_ID")
-        if state_channel and d.writes_allowed:
-            try:
-                s = ernie_state.publish(d, state_channel, a.db)
-                if s["posted"] or s["edited"]:
-                    print(f"[{now()[:19]}] state: posted {s['posted']}, "
-                          f"edited {s['edited']}")
-            except Exception as e:
-                print(f"[{now()[:19]}] state publish failed: {e}",
-                      file=sys.stderr)
-
-        # The ticket's own status, in its own thread. No channel to
-        # configure: it goes to the threads the board already knows about,
-        # and only the ones Ernie watched open -- so a machine that has just
-        # inherited a server posts nothing.
-        if d.writes_allowed:
-            try:
-                st = ernie_status.publish(d, con, a.db)
-                if st["posted"] or st["edited"]:
-                    print(f"[{now()[:19]}] status: posted {st['posted']}, "
-                          f"edited {st['edited']}")
-            except Exception as e:
-                print(f"[{now()[:19]}] status failed: {e}", file=sys.stderr)
-
-        # The durable record, if there is somewhere to keep it. Both boards
-        # hold the whole history, so only one machine should set this -- two
-        # would write every line twice.
-        log_channel = os.environ.get("CHANGELOG_CHANNEL_ID")
-        if log_channel and d.writes_allowed:
-            try:
-                c = ernie_changelog.tick(d, log_channel, con)
-                if c["sent"] or c.get("struck"):
-                    note = f"{c['sent']} logged"
-                    if c.get("struck"):
-                        note += f", {c['struck']} struck through"
-                    print(f"[{now()[:19]}] changelog: {note}")
-            except Exception as e:
-                print(f"[{now()[:19]}] changelog failed: {e}", file=sys.stderr)
-
-        if a.once:
-            return
-        time.sleep(a.interval)
+    run(con, d, a.db, interval=a.interval, once=a.once)
 
 
 if __name__ == "__main__":

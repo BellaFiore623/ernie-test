@@ -27,12 +27,19 @@ other two up later as fresh unassigned cards.
 write lands.
 """
 
+import ast
+import pathlib
+import threading
+import time
 import sqlite3
 import uuid
 
 from support import PARENT, Board, Check, iso
 
 import ernie_outbox as O
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 class Flaky:
@@ -274,7 +281,58 @@ def check_the_steps_are_recorded_as_they_land() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_message_is_posted_once_however_often_the_rest_fails,
+def check_the_loop_stops_when_asked() -> bool:
+    """
+    The outbox has to be stoppable, because closing the window is what
+    drains it.
+
+    One exe runs sync, the outbox, the API and Bert in a single process. The
+    shutdown sequence is: stop taking changes, drain -- *including* events
+    still inside their undo window, because closing is the person saying they
+    are done -- publish the board once more, exit. None of that is reachable
+    from a loop that only ends when the process dies.
+
+    The pass came out of `main()` whole rather than being reimplemented: it
+    is not just `drain()`. It makes the threads tickets are waiting on,
+    publishes to `#ernie-state`, writes each ticket's status into its own
+    thread and appends to the change log -- four things that belong on this
+    loop because this is the only process allowed to write to Discord.
+    """
+    c = Check("the outbox loop stops when asked")
+
+    stop = threading.Event()
+    stop.set()
+    t0 = time.time()
+    O.run(None, None, "nowhere.db", stop=stop)
+    c.ok(time.time() - t0 < 0.5,
+         "a loop told to stop before it starts returns at once, without a "
+         "connection or a client")
+
+    stop = threading.Event()
+    threading.Timer(0.05, stop.set).start()
+    t0 = time.time()
+    stopped = O._pause(stop, 5)
+    c.ok(stopped, "a stop during the wait is reported as one")
+    c.ok(time.time() - t0 < 1.0, "and cuts the beat short")
+
+    c.ok(O.run.__kwdefaults__.get("stop") is None,
+         "and the CLI keeps the loop it had")
+
+    # All four jobs are still on it, which is what "lifted whole" means.
+    body = ast.get_source_segment(
+        (ROOT / "ernie_outbox.py").read_text(encoding="utf-8"),
+        next(n for n in ast.walk(ast.parse(
+            (ROOT / "ernie_outbox.py").read_text(encoding="utf-8")))
+            if isinstance(n, ast.FunctionDef) and n.name == "run")) or ""
+    for job in ("drain", "make_threads", "ernie_state.publish",
+                "ernie_status.publish", "ernie_changelog.tick"):
+        c.ok(job in body, f"{job} is still on the loop")
+
+    return c.report()
+
+
+CHECKS = (check_the_loop_stops_when_asked,
+          check_a_message_is_posted_once_however_often_the_rest_fails,
           check_a_thread_is_renamed_once,
           check_one_ticket_makes_one_thread,
           check_a_ticket_reaches_the_board_before_its_messages_do,

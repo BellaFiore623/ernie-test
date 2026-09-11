@@ -49,9 +49,24 @@ from PySide6.QtWidgets import (
 SETTINGS = pathlib.Path.home() / ".bert.json"
 # Beside the script rather than in the settings directory: it ships with the
 # code, and a checkout without it should still start.
-LOGO = pathlib.Path(__file__).parent / "assets" / "bert_logo.png"
+def _asset(name):
+    """Where a bundled file is, frozen or not.
+
+    PyInstaller unpacks data to `sys._MEIPASS` and leaves `__file__` pointing
+    at the module inside it -- which usually resolves the same way, and
+    "usually" is the problem: it depends on where `--add-data` put things,
+    and a missing logo is a null QPixmap that draws nothing and says nothing.
+    Asking for `_MEIPASS` directly is the documented answer and does not
+    depend on the layout the spec file happens to choose.
+    """
+    root = pathlib.Path(getattr(sys, "_MEIPASS", "")
+                        or pathlib.Path(__file__).resolve().parent)
+    return root / "assets" / name
+
+
+LOGO = _asset("bert_logo.png")
 # The face Bert makes about a version mismatch.
-UPDATE_FACE = pathlib.Path(__file__).parent / "assets" / "bert_update.png"
+UPDATE_FACE = _asset("bert_update.png")
 # Set only by --pretend-version / --pretend-ernie, which exist so the update
 # dialog can be looked at. Both halves of a from-source stack read the same
 # ernie_version, so a real disagreement cannot be staged without them.

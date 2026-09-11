@@ -74,17 +74,62 @@ FAST_SECONDS = 5      # list threads, fetch what is new, recompute. 1 GET.
 CYCLE_SECONDS = 60    # and everything else, on the beat it already had
 
 
-def load_env(path: str = "ernie.env") -> None:
-    """Load KEY=VALUE lines from an env file sitting next to this script."""
-    p = pathlib.Path(__file__).with_name(path)
-    if not p.exists():
-        return
+# Where a frozen build keeps the things it has to be able to write: the env
+# file the installer leaves, the databases, the logs. Beside the executable is
+# either PyInstaller's temp extraction directory -- wiped on exit -- or a
+# Program Files path the user cannot write to.
+CONFIG_DIR = pathlib.Path(
+    os.environ.get("LOCALAPPDATA")
+    or (pathlib.Path.home() / ".config")) / "Ernie"
+
+FROZEN = getattr(sys, "frozen", False)
+
+
+def env_path(name: str) -> pathlib.Path | None:
+    """Which file a `--env` argument actually means, or None.
+
+    **The order depends on whether this is a frozen build, and that is the
+    whole point.** The packaging note says to read `%LOCALAPPDATA%` first and
+    keep the script directory as a fallback; taken literally that is a trap
+    on a developer machine, because the installer's env names production and
+    would then shadow the repository's `ernie-test.env` for anybody running
+    `./run.sh test` afterwards. Testing against production is the one rule
+    here with no exceptions in it, so it must not be reachable by installing
+    the app.
+
+    Frozen, there *is* no script directory worth reading, so the config
+    directory is the only place looked at. From source the repository wins,
+    and the config directory is the fallback for somebody who has put their
+    keys there deliberately. Neither can surprise the other.
+    """
+    p = pathlib.Path(name).expanduser()
+    if p.is_absolute():
+        return p if p.is_file() else None
+    here = pathlib.Path(__file__).resolve().parent
+    order = ((CONFIG_DIR / p.name,) if FROZEN
+             else (here / p, CONFIG_DIR / p.name))
+    return next((c for c in order if c.is_file()), None)
+
+
+def load_env(path: str = "ernie.env") -> pathlib.Path | None:
+    """Load KEY=VALUE lines from an env file. Answers the file it read.
+
+    Answering matters for a frozen build: "no DISCORD_TOKEN" is a sentence
+    about a file, and the reader needs to know *which* file was looked for
+    before they can put one there. Returning None rather than raising is
+    still right -- most callers want the env if there is one and have their
+    own words for its absence.
+    """
+    p = env_path(path)
+    if p is None:
+        return None
     for line in p.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
         os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+    return p
 
 
 def now() -> str:
@@ -607,6 +652,149 @@ def cycle(con, d: Discord, guild_id: str, do_backfill: bool = False,
     return stats
 
 
+def _pause(stop, seconds) -> bool:
+    """Sleep between passes, unless asked to stop. True means stop now.
+
+    `Event.wait` is what makes a thread's shutdown prompt: a plain sleep
+    would hold the whole application closed for up to a full beat while it
+    finished counting down.
+    """
+    seconds = max(0.0, seconds)
+    if stop is None:
+        time.sleep(seconds)
+        return False
+    return stop.wait(seconds)
+
+
+def run(con, d: Discord, guild: str, db: str, *, fast: int = FAST_SECONDS,
+        interval: int = CYCLE_SECONDS, backfill: bool = False,
+        once: bool = False, stop=None) -> None:
+    """The sync loop itself, so something other than a CLI can run it.
+
+    Lifted out of `main()` whole rather than reimplemented. The packaging
+    note calls this the one real refactor in its plan, and the reason is the
+    slow beat: it carries more than `cycle()` -- the run pruning, the
+    state-channel pull and the Jira roster all hang off it, each with its own
+    argument for being on this loop rather than the outbox's. A supervisor
+    that re-derived any of that would drift from the CLI the first time one
+    of them changed.
+
+    `stop` is a `threading.Event`; nothing else about the loop moved.
+    """
+    first = True
+    next_full = 0.0        # the first pass is a full one
+    while True:
+        if stop is not None and stop.is_set():
+            return
+        t0 = time.time()
+        full = t0 >= next_full
+        if full:
+            next_full = t0 + interval
+        try:
+            s = cycle(con, d, guild, do_backfill=backfill and first,
+                      full=full)
+            # A quiet fast pass says nothing. Twelve times the passes is
+            # twelve times the log, and eleven of every twelve lines would
+            # read "nothing happened" -- which buries the ones that matter in
+            # the file somebody opens when something has gone wrong.
+            noisy = (s["messages_new"] or s["edits_found"]
+                     or s["titles_changed"] or s["deletions_found"]
+                     or s["closed_in_discord"])
+            if full or noisy:
+                print(f"[{now()[:19]}] threads={s['threads_seen']} "
+                      f"new={s['messages_new']} edits={s['edits_found']} "
+                      f"titles={s['titles_changed']} "
+                      f"deleted={s['deletions_found']} "
+                      f"closed={s['closed_in_discord']} "
+                      f"({time.time()-t0:.1f}s){'' if full else ' fast'}")
+        except Exception as e:
+            print(f"[{now()[:19]}] cycle failed: {e}", file=sys.stderr)
+
+        if not full:
+            # Everything below is on the slow beat by measurement: the state
+            # pull and the roster are both `/channels/{id}/messages`-shaped
+            # work against buckets far tighter than the thread listing's.
+            if _pause(stop, fast - (time.time() - t0)):
+                return
+            first = False
+            continue
+
+        prune_runs(con)
+
+        # Pulling the state channel is Discord -> SQLite like everything else
+        # here, so it belongs in this loop. Pushing the other way does not:
+        # the outbox is the only thing that writes to Discord, and it
+        # publishes from its own loop.
+        state_channel = os.environ.get("STATE_CHANNEL_ID")
+        if state_channel:
+            try:
+                # Imported here because ernie_state imports this module, and a
+                # top-level import either way round would be circular.
+                import ernie_state
+                r = ernie_state.reconcile(d, state_channel, db)
+                if r["format_skew"]:
+                    # Loud, every cycle it is true, and not folded in with the
+                    # cards merely waiting on a thread: this one means the two
+                    # boards have stopped agreeing and no amount of waiting
+                    # will settle it.
+                    them = r["format_skew"][-1]["v"]
+                    print(f"[{now()[:19]}] state: !! {len(r['format_skew'])} "
+                          f"card(s) in the channel are format v{them} and this "
+                          f"machine speaks v{ernie_state.FORMAT_VERSION} -- one "
+                          f"of the two boards needs updating", file=sys.stderr)
+                if r["applied"] or r["unknown"]:
+                    print(f"[{now()[:19]}] state: applied {len(r['applied'])}, "
+                          f"{len(r['unknown'])} waiting on a thread")
+                    for hit in r["applied"]:
+                        print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
+                              + "; ".join(hit["changed"]))
+            except Exception as e:
+                print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
+
+        # The customer roster, Jira -> SQLite. Read-only against Jira, so it
+        # belongs in this loop for the same reason the state pull does, and
+        # for the same reason it does not belong in the outbox. Its own slow
+        # heartbeat, though: the list changes about never, and asking on every
+        # cycle would be 1440 searches a day to learn nothing.
+        try:
+            # Imported here because ernie_jira imports load_env from this
+            # module, and a top-level import either way round would be
+            # circular -- the same reason ernie_state is imported above.
+            import ernie_jira
+            cfg = ernie_jira.configured()
+            if cfg and ernie_jira.due(con):
+                cs = ernie_jira.run_once(con, cfg)
+                print(f"[{now()[:19]}] clients: {cs['seen']} seen, "
+                      f"{cs['offered']} offered, "
+                      f"{len(cs['written'])} aliases written")
+                # Only when the set has changed. A known collision -- IPI
+                # has been two live customers since the roster arrived --
+                # would otherwise print every hour for ever, and an alarm
+                # that never stops is the one nobody reads when a new one
+                # turns up. Clearing speaks too, so the log says when it
+                # went away as well as when it came.
+                if ernie_jira.note_collisions(con, cs["collisions"]):
+                    if cs["collisions"]:
+                        for c in cs["collisions"]:
+                            print(f"    collision: {c['short_name']!r} <- "
+                                  + ", ".join(x["client_id"]
+                                              for x in c["clients"]),
+                                  file=sys.stderr)
+                    else:
+                        print(f"[{now()[:19]}] clients: no short-name "
+                              f"collisions any more")
+        except Exception as e:
+            print(f"[{now()[:19]}] client pull failed: {e}", file=sys.stderr)
+
+        first = False
+        if once:
+            return
+        # Against the top of this pass, not the end of it, so a slow pass
+        # does not push the next one out by however long it took.
+        if _pause(stop, fast - (time.time() - t0)):
+            return
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--version", action="version",
@@ -667,114 +855,8 @@ def main() -> None:
         kind = "cards" if c["generate_cards"] else "history only"
         print(f"  watching #{c['name']} ({c['channel_id']}) -- {kind}")
 
-    first = True
-    next_full = 0.0        # the first pass is a full one
-    while True:
-        t0 = time.time()
-        full = t0 >= next_full
-        if full:
-            next_full = t0 + a.interval
-        try:
-            s = cycle(con, d, guild, do_backfill=a.backfill and first,
-                      full=full)
-            # A quiet fast pass says nothing. Twelve times the passes is
-            # twelve times the log, and eleven of every twelve lines would
-            # read "nothing happened" -- which buries the ones that matter in
-            # the file somebody opens when something has gone wrong.
-            noisy = (s["messages_new"] or s["edits_found"]
-                     or s["titles_changed"] or s["deletions_found"]
-                     or s["closed_in_discord"])
-            if full or noisy:
-                print(f"[{now()[:19]}] threads={s['threads_seen']} "
-                      f"new={s['messages_new']} edits={s['edits_found']} "
-                      f"titles={s['titles_changed']} "
-                      f"deleted={s['deletions_found']} "
-                      f"closed={s['closed_in_discord']} "
-                      f"({time.time()-t0:.1f}s){'' if full else ' fast'}")
-        except Exception as e:
-            print(f"[{now()[:19]}] cycle failed: {e}", file=sys.stderr)
-
-        if not full:
-            # Everything below is on the slow beat by measurement: the state
-            # pull and the roster are both `/channels/{id}/messages`-shaped
-            # work against buckets far tighter than the thread listing's.
-            time.sleep(max(0.0, a.fast - (time.time() - t0)))
-            first = False
-            continue
-
-        prune_runs(con)
-
-        # Pulling the state channel is Discord -> SQLite like everything else
-        # here, so it belongs in this loop. Pushing the other way does not:
-        # the outbox is the only thing that writes to Discord, and it
-        # publishes from its own loop.
-        state_channel = os.environ.get("STATE_CHANNEL_ID")
-        if state_channel:
-            try:
-                # Imported here because ernie_state imports this module, and a
-                # top-level import either way round would be circular.
-                import ernie_state
-                r = ernie_state.reconcile(d, state_channel, a.db)
-                if r["format_skew"]:
-                    # Loud, every cycle it is true, and not folded in with the
-                    # cards merely waiting on a thread: this one means the two
-                    # boards have stopped agreeing and no amount of waiting
-                    # will settle it.
-                    them = r["format_skew"][-1]["v"]
-                    print(f"[{now()[:19]}] state: !! {len(r['format_skew'])} "
-                          f"card(s) in the channel are format v{them} and this "
-                          f"machine speaks v{ernie_state.FORMAT_VERSION} -- one "
-                          f"of the two boards needs updating", file=sys.stderr)
-                if r["applied"] or r["unknown"]:
-                    print(f"[{now()[:19]}] state: applied {len(r['applied'])}, "
-                          f"{len(r['unknown'])} waiting on a thread")
-                    for hit in r["applied"]:
-                        print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
-                              + "; ".join(hit["changed"]))
-            except Exception as e:
-                print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
-
-        # The customer roster, Jira -> SQLite. Read-only against Jira, so it
-        # belongs in this loop for the same reason the state pull does, and
-        # for the same reason it does not belong in the outbox. Its own slow
-        # heartbeat, though: the list changes about never, and asking on every
-        # cycle would be 1440 searches a day to learn nothing.
-        try:
-            # Imported here because ernie_jira imports load_env from this
-            # module, and a top-level import either way round would be
-            # circular -- the same reason ernie_state is imported above.
-            import ernie_jira
-            cfg = ernie_jira.configured()
-            if cfg and ernie_jira.due(con):
-                cs = ernie_jira.run_once(con, cfg)
-                print(f"[{now()[:19]}] clients: {cs['seen']} seen, "
-                      f"{cs['offered']} offered, "
-                      f"{len(cs['written'])} aliases written")
-                # Only when the set has changed. A known collision -- IPI
-                # has been two live customers since the roster arrived --
-                # would otherwise print every hour for ever, and an alarm
-                # that never stops is the one nobody reads when a new one
-                # turns up. Clearing speaks too, so the log says when it
-                # went away as well as when it came.
-                if ernie_jira.note_collisions(con, cs["collisions"]):
-                    if cs["collisions"]:
-                        for c in cs["collisions"]:
-                            print(f"    collision: {c['short_name']!r} <- "
-                                  + ", ".join(x["client_id"]
-                                              for x in c["clients"]),
-                                  file=sys.stderr)
-                    else:
-                        print(f"[{now()[:19]}] clients: no short-name "
-                              f"collisions any more")
-        except Exception as e:
-            print(f"[{now()[:19]}] client pull failed: {e}", file=sys.stderr)
-
-        first = False
-        if a.once:
-            return
-        # Against the top of this pass, not the end of it, so a slow pass
-        # does not push the next one out by however long it took.
-        time.sleep(max(0.0, a.fast - (time.time() - t0)))
+    run(con, d, guild, a.db, fast=a.fast, interval=a.interval,
+        backfill=a.backfill, once=a.once)
 
 
 if __name__ == "__main__":
