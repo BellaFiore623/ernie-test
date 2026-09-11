@@ -53,10 +53,12 @@ def check_a_release_note_is_read_and_nothing_else_is() -> bool:
     """
     c = Check("a release note is read, and nothing else is")
 
-    c.equal(S.parse_release("**Release** 0.9.1"), "0.9.1", "the plain form")
+    c.equal(S.parse_release("**Release** 0.9.1"), ("0.9.1", ""),
+            "the plain form, with no floor")
     c.equal(S.parse_release("**Release** 0.9.1 -- installer is in Drive"),
-            "0.9.1", "prose after it is ignored")
-    c.equal(S.parse_release("**Release** 1.10.2"), "1.10.2", "multi-digit parts")
+            ("0.9.1", ""), "prose after it is ignored")
+    c.equal(S.parse_release("**Release** 1.10.2"), ("1.10.2", ""),
+            "multi-digit parts")
 
     for other, why in (
             ("**Board** — 3 open, 1 closed", "the summary message"),
@@ -66,7 +68,8 @@ def check_a_release_note_is_read_and_nothing_else_is() -> bool:
             ("**Release**", "nothing after the marker"),
             ("we should release 0.9.1 tomorrow", "somebody talking"),
             ("", "an empty message")):
-        c.equal(S.parse_release(other), "", f"not a release note: {why}")
+        c.equal(S.parse_release(other), ("", ""),
+                f"not a release note: {why}")
 
     return c.report()
 
@@ -107,7 +110,7 @@ def check_a_channel_it_cannot_read_changes_nothing() -> bool:
     c = Check("a channel it cannot read changes nothing")
 
     with Board() as b:
-        S.note_release(b.con, "0.9.1")
+        S.note_release(b.con, {"version": "0.9.1", "minimum": ""})
         b.con.commit()
 
         def stored():
@@ -120,13 +123,13 @@ def check_a_channel_it_cannot_read_changes_nothing() -> bool:
         S.note_release(b.con, None)                 # could not tell
         c.equal(stored(), "0.9.1", "None leaves what we already knew")
 
-        S.note_release(b.con, "")                   # read fine, no note
+        S.note_release(b.con, {})                   # read fine, no note
         c.equal(stored(), None, "and an absent note retires it")
 
         c.equal(S.read_release(FakePins(None), "c"), None,
                 "a pins request that came back empty-handed answers None")
-        c.equal(S.read_release(FakePins([]), "c"), "",
-                "a channel with no pins answers ''")
+        c.equal(S.read_release(FakePins([]), "c"), {},
+                "a channel with no pins answers {}")
     return c.report()
 
 
@@ -141,11 +144,13 @@ def check_the_highest_pinned_version_wins() -> bool:
     c = Check("the highest pinned version wins")
 
     d = FakePins(["**Release** 0.9.1", "**Release** 0.10.0", "not a note"])
-    c.equal(S.read_release(d, "c"), "0.10.0", "0.10.0 over 0.9.1, not string order")
+    c.equal(S.read_release(d, "c")["version"], "0.10.0",
+            "0.10.0 over 0.9.1, not string order")
     c.equal(d.asked, ["/channels/c/pins"], "one request, whatever the board size")
 
     # Discord has moved this route once already; both shapes have to read.
-    c.equal(S.read_release(FakePins(["**Release** 0.9.2"], shape="items"), "c"),
+    c.equal(S.read_release(FakePins(["**Release** 0.9.2"], shape="items"),
+                           "c")["version"],
             "0.9.2", "the newer {items: [{message}]} shape too")
     return c.report()
 
@@ -211,9 +216,95 @@ def check_it_fails_open_on_every_path() -> bool:
     return c.report()
 
 
+def check_a_note_can_make_an_update_mandatory() -> bool:
+    """
+    Two tiers, and the version number decides neither of them.
+
+    A patch release can be mandatory because it stops a build writing
+    something wrong; a minor one can be entirely optional because it adds a
+    panel. How big a change is and how dangerous it is to skip are different
+    questions, so the note answers the second out loud rather than leaving it
+    to be inferred from the digits.
+
+    **`blocked` was unreachable in the exe**, the same way `behind` was.
+    `floor` is this build's own MIN_BERT compared against this build's own
+    VERSION, and `check_version.py` keeps MIN_BERT at or below VERSION -- so
+    the branch was fully written, fully tested, and impossible to arrive at.
+    """
+    c = Check("a note can make an update mandatory")
+
+    c.equal(S.parse_release("**Release** 0.9.1 minimum 0.9.1"),
+            ("0.9.1", "0.9.1"), "a floor is read")
+    c.equal(S.parse_release("**Release** 0.9.1 -- in Drive, minimum 0.9.1"),
+            ("0.9.1", "0.9.1"), "and found after prose")
+    c.equal(S.parse_release("**Release** 0.9.1 MINIMUM 0.9.0"),
+            ("0.9.1", "0.9.0"), "the word is not case sensitive")
+    c.equal(S.parse_release("**Release** 0.9.1 minimum soon"),
+            ("0.9.1", ""), "a floor that is not a version is no floor")
+
+    # The floor rides with the note it was written beside.
+    got = S.read_release(
+        FakePins(["**Release** 0.9.0 minimum 0.9.0",
+                  "**Release** 0.9.1"]), "c")
+    c.equal(got, {"version": "0.9.1", "minimum": ""},
+            "an old note's floor does not outlive the note it belonged to")
+
+    old = "0.9.0"
+    c.equal(bert.build_standing(old, old, old, "0.9.1", "")[0], "behind",
+            "no floor: a note, not a wall")
+    state, said = bert.build_standing(old, old, old, "0.9.1", "0.9.1")
+    c.equal(state, "blocked", "a floor above us: read-only")
+    c.ok("0.9.1" in said, "and it names what to get")
+    c.ok("still here to read" in said,
+         "and says the board has not gone, only writing")
+    c.equal(bert.build_standing(old, old, old, "0.9.1", "0.9.0")[0], "behind",
+            "a floor at or below us blocks nobody")
+    c.equal(bert.build_standing("0.9.1", "0.9.1", "0.9.1", "0.9.1", "0.9.1")[0],
+            "ok", "and the build the floor names is fine")
+
+    return c.report()
+
+
+def check_a_floor_nobody_can_reach_is_never_obeyed() -> bool:
+    """
+    The one failure in this feature with no recovery in the field.
+
+    A floor above the build people can actually download takes every board to
+    read-only at once, and the fix is to install something that does not
+    exist. `MIN_BERT` has `check_version.py` standing over it; this number is
+    a sentence somebody typed into Discord on a Friday, with nothing between
+    them and everybody's board.
+
+    So it is refused twice. Once where the note is read, and once where the
+    board is taken away -- because the second is the one that matters and it
+    must not depend on the first having run.
+    """
+    c = Check("a floor nobody can reach is never obeyed")
+
+    c.equal(S.parse_release("**Release** 0.9.1 minimum 0.9.5"), ("0.9.1", ""),
+            "the parser drops a floor ahead of its own note")
+    c.equal(S.read_release(FakePins(["**Release** 0.9.1 minimum 2.0.0"]), "c"),
+            {"version": "0.9.1", "minimum": ""},
+            "so nothing downstream ever sees it")
+
+    # And again at the point of use, on a payload that never went through the
+    # parser -- an older Ernie, a hand-edited row, a field from anywhere.
+    old = "0.9.0"
+    c.equal(bert.build_standing(old, old, old, "0.9.1", "0.9.5")[0], "behind",
+            "and the board refuses it independently")
+    c.equal(bert.build_standing(old, old, old, "", "0.9.1")[0], "ok",
+            "a floor with no known build to reach it is ignored too")
+    c.equal(bert.build_standing(old, old, old, "0.9.1", "junk")[0], "behind",
+            "an unreadable floor blocks nobody")
+
+    return c.report()
+
+
 CHECKS = (check_a_release_note_is_read_and_nothing_else_is,
           check_the_note_is_invisible_to_the_board,
           check_a_channel_it_cannot_read_changes_nothing,
           check_the_highest_pinned_version_wins,
           check_the_exe_can_finally_notice,
-          check_it_fails_open_on_every_path)
+          check_it_fails_open_on_every_path,
+          check_a_note_can_make_an_update_mandatory,
+          check_a_floor_nobody_can_reach_is_never_obeyed)

@@ -77,6 +77,10 @@ PRETEND_ERNIE = ""
 # one that can ever fire, so without this the wording nobody can reach is the
 # wording everybody will actually see.
 PRETEND_NEWEST = ""
+# And the floor that note can set. The blocked screen is the one nobody can
+# reach by accident and the one most worth looking at before it is real: it
+# is what takes somebody's board to read-only.
+PRETEND_REQUIRED = ""
 # **Whether this window is the whole application.** `ernie_app` sets it before
 # building the window; a Bert started by `run.sh` or `bert.cmd` leaves it
 # False. The one thing it changes is the close warning, and it inverts it:
@@ -601,7 +605,7 @@ def card_skin(data, editing=False):
     return tint, edge, 1
 
 
-def build_standing(mine, theirs, floor, newest=""):
+def build_standing(mine, theirs, floor, newest="", required=""):
     """Whether this Bert is behind, and how far. Answers (state, sentence).
 
     Pure, and separate from the dialog that shows it, because the decision is
@@ -634,9 +638,30 @@ def build_standing(mine, theirs, floor, newest=""):
     """
     if not theirs and not newest:
         return "ok", ""
+
+    # **`floor` cannot answer this in the exe either**, and for the same
+    # reason `theirs` could not: it is this build's own MIN_BERT, compared
+    # against this build's own VERSION, and `check_version.py` keeps MIN_BERT
+    # at or below VERSION precisely so a release cannot lock everyone out. So
+    # in one process the blocked branch was structurally unreachable -- fully
+    # written, fully tested, and impossible to arrive at. `required` is the
+    # floor the release note sets, which is the only one outside this process.
+    #
+    # The guard is repeated here rather than trusted from the parser. That one
+    # runs where the note is read; this one runs where the board is taken
+    # away, and a floor ahead of a build nobody can download has no recovery
+    # in the field -- there is no newer build to install, and the boards that
+    # would have told somebody are the ones that went read-only.
+    # Obeyed only when a build that satisfies it is known to exist. Not
+    # knowing what can be downloaded is the same case as the floor being out
+    # of reach, and both resolve the same way: leave the board alone.
+    if required and newest and not ernie_version.is_older(newest, required):
+        if not floor or ernie_version.is_older(floor, required):
+            floor = required
+
     if floor and ernie_version.is_older(mine, floor):
         return "blocked", (
-            f"This copy of Bert is {mine}. This Ernie needs {floor} or newer, "
+            f"This copy of Bert is {mine}. This board needs {floor} or newer, "
             f"so changes are paused until it is updated. The board is still "
             f"here to read.")
     # The sentence names its source, because the two send you to different
@@ -5304,12 +5329,14 @@ class Bert(QMainWindow):
             build["version"] = PRETEND_ERNIE
         if PRETEND_NEWEST:
             build["newest"] = PRETEND_NEWEST
+        if PRETEND_REQUIRED:
+            build["required"] = PRETEND_REQUIRED
         build.setdefault("version", None)
         was = self.update_state
         self.update_state, self.update_said = build_standing(
             PRETEND_MINE or ernie_version.VERSION,
             build.get("version"), build.get("min_bert"),
-            build.get("newest") or "")
+            build.get("newest") or "", build.get("required") or "")
 
         if self.update_state != was and was == "blocked":
             self.banner.hide()          # updated underneath us, or moved on
@@ -6873,10 +6900,12 @@ def main():
                     help="testing only: pretend Ernie answered as build X")
     ap.add_argument("--pretend-newest", default="", metavar="X",
                     help="testing only: pretend the release note says X")
+    ap.add_argument("--pretend-required", default="", metavar="X",
+                    help="testing only: pretend the release note demands X")
     a = ap.parse_args()
-    global PRETEND_MINE, PRETEND_ERNIE, PRETEND_NEWEST
+    global PRETEND_MINE, PRETEND_ERNIE, PRETEND_NEWEST, PRETEND_REQUIRED
     PRETEND_MINE, PRETEND_ERNIE = a.pretend_version, a.pretend_ernie
-    PRETEND_NEWEST = a.pretend_newest
+    PRETEND_NEWEST, PRETEND_REQUIRED = a.pretend_newest, a.pretend_required
     app = QApplication(sys.argv)
     # Fusion draws the same way on every desktop, which is what makes one
     # QPalette enough to carry the dark theme through Qt's own widgets.

@@ -161,7 +161,7 @@ def no_config_dialog(env_name: str) -> None:
         pass
 
 
-def take_lock():
+def take_lock(name: str = MUTEX_NAME, port: int = 49731):
     """Hold the single-instance lock, or raise. Answers the handle.
 
     A named mutex rather than a pid file: a pid file outlives a crash and
@@ -169,13 +169,20 @@ def take_lock():
     -- reading Windows pids out of `/proc/<job>/winpid` because its own job
     numbers do not outlive the shell. The kernel already keeps this one
     honest.
+
+    `name` is an argument so the checks can take a lock of their own. Taking
+    the real one means the suite cannot run while Ernie is open, which is
+    most of the time now that it is installed -- and it fails as an *error*
+    rather than a red check, which reads as the suite being broken. The real
+    name is still what `main()` uses, and `check_app.py` holds it against the
+    installer's copy.
     """
     if os.name != "nt":
         # A socket bound to a fixed loopback port is the portable equivalent,
         # and it is here so this file can be exercised off Windows.
         s = socket.socket()
         try:
-            s.bind(("127.0.0.1", 49731))
+            s.bind(("127.0.0.1", port))
         except OSError as e:
             raise AlreadyRunning("another copy is already running") from e
         return s
@@ -187,7 +194,7 @@ def take_lock():
     k32.CreateMutexW.restype = wintypes.HANDLE
     k32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL,
                                  wintypes.LPCWSTR]
-    handle = k32.CreateMutexW(None, True, MUTEX_NAME)
+    handle = k32.CreateMutexW(None, True, name)
     # 183 is ERROR_ALREADY_EXISTS: the mutex was there, so somebody else has
     # it. The handle is still valid and still has to be closed.
     if ctypes.get_last_error() == 183:

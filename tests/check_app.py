@@ -157,11 +157,15 @@ def check_it_will_not_start_twice() -> bool:
     """
     c = Check("it will not start twice")
 
-    first = ernie_app.take_lock()
+    # A lock of this check's own, not the real one: the suite has to run
+    # while Ernie is open, which is most of the time now that it is installed.
+    # `check_the_installer_and_the_app_agree` is what holds the real name.
+    mine = "Local\ErnieBertCheck"
+    first = ernie_app.take_lock(mine, port=49732)
     try:
         raised = False
         try:
-            ernie_app.take_lock()
+            ernie_app.take_lock(mine, port=49732)
         except ernie_app.AlreadyRunning:
             raised = True
         c.ok(raised, "a second copy is refused while the first holds the lock")
@@ -174,7 +178,7 @@ def check_it_will_not_start_twice() -> bool:
             import ctypes
             ctypes.WinDLL("kernel32").CloseHandle(first)
 
-    after = ernie_app.take_lock()
+    after = ernie_app.take_lock(mine, port=49732)
     c.ok(after is not None, "and the lock is free again once it is let go")
     if hasattr(after, "close"):
         after.close()

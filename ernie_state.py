@@ -60,6 +60,11 @@ RELEASE_MARK = "**Release**"
 # board look *ahead*, never behind -- a silent no-op rather than a wrong
 # answer, and a silent no-op is what nobody would ever notice.
 RELEASE_VERSION = re.compile(r"\b(\d+(?:\.\d+)+)\b")
+# The optional second number: `**Release** 0.9.1 minimum 0.9.1`, which sends
+# anything older than 0.9.1 read-only instead of merely telling it to update.
+# Spelled out in a word rather than punctuation, because this is the line that
+# takes people's boards away and it should be impossible to type by accident.
+RELEASE_MINIMUM = re.compile(r"\bminimum\s+(\d+(?:\.\d+)+)\b", re.I)
 # The order Bert shows the bands in. The summary reads the same way round
 # as the board it describes, or comparing the two is needless work.
 BAND_ORDER = ("unassigned", "critical", "high", "medium", "low")
@@ -839,29 +844,58 @@ def note_format_skew(con, seen: list) -> None:
         (now_iso(), str(seen[-1]["v"]), FORMAT_VERSION, len(seen)))
 
 
-def parse_release(content: str) -> str:
-    """The version a release note carries, or "" for anything else.
+def parse_release(content: str) -> tuple[str, str]:
+    """A release note as (version, minimum). ("", "") for anything else.
 
     Strict: the marker, then something shaped like a version. Prose after it
     is fine and ignored -- `**Release** 0.9.1 -- installer is in Drive` is the
     message somebody would actually write, and the half that matters is the
     number.
+
+        **Release** 0.9.1                     worth updating
+        **Release** 0.9.1 minimum 0.9.1       older builds go read-only
+
+    **The minimum is the dangerous half, and it is checked here.** A floor
+    above the build people can actually download locks every board out at
+    once, and the only fix is a build that does not exist yet. In code that
+    is held by `check_version.py`; here it is a sentence somebody typed into
+    Discord on a Friday with nothing between them and everybody's board. So a
+    minimum ahead of its own note's version is **dropped**, not obeyed --
+    the note goes on meaning "update when you can", which is the wrong answer
+    in the harmless direction.
+
+    Deliberately not inferred from the number. A patch release can be
+    mandatory because it stops a build writing something wrong, and a minor
+    one can be entirely optional because it adds a panel; how big a change is
+    and how dangerous it is to skip are different questions, so the note
+    answers the second one out loud.
     """
     if not content.startswith(RELEASE_MARK):
-        return ""
-    m = RELEASE_VERSION.search(content[len(RELEASE_MARK):])
-    return m.group(1) if m else ""
+        return "", ""
+    rest = content[len(RELEASE_MARK):]
+    m = RELEASE_VERSION.search(rest)
+    if not m:
+        return "", ""
+    version = m.group(1)
+
+    minimum = ""
+    floor = RELEASE_MINIMUM.search(rest)
+    if floor:
+        minimum = floor.group(1)
+        if ernie_version.is_older(version, minimum):
+            minimum = ""            # see above: never obeyed, never fatal
+    return version, minimum
 
 
-def read_release(d: Discord, cid: str) -> str | None:
+def read_release(d: Discord, cid: str) -> dict | None:
     """The build the channel says everybody should be on.
 
-    Answers the version, "" for a channel that has no release note, and
-    **None for could not tell** -- which is the distinction the whole thing
-    turns on. "" retires the stored answer, because taking the note down is
-    how you say there is no newer build. None leaves it alone: a 403 on a
-    channel somebody re-permissioned, or Discord being unreachable, must not
-    quietly tell every board it is up to date.
+    Answers `{"version": ..., "minimum": ...}`, `{}` for a channel that has
+    no release note, and **None for could not tell** -- which is the
+    distinction the whole thing turns on. `{}` retires the stored answer,
+    because taking the note down is how you say there is no newer build. None
+    leaves it alone: a 403 on a channel somebody re-permissioned, or Discord
+    being unreachable, must not quietly tell every board it is up to date.
 
     Pinned rather than found by reading the channel, because the channel is
     the *state* channel and on production's board that is hundreds of
@@ -878,36 +912,42 @@ def read_release(d: Discord, cid: str) -> str | None:
     # both costs three lines and means a build in the field does not stop
     # answering the day the old one goes.
     items = raw.get("items", []) if isinstance(raw, dict) else raw
-    best = ""
+    best, floor = "", ""
     for it in items or []:
         m = it.get("message", it) if isinstance(it, dict) else {}
-        v = parse_release((m or {}).get("content") or "")
+        v, minimum = parse_release((m or {}).get("content") or "")
         # The highest version pinned, not the most recently pinned: two notes
         # left up is somebody forgetting to unpin the old one, and answering
-        # with the older of the two would tell everybody to downgrade.
+        # with the older of the two would tell everybody to downgrade. The
+        # floor travels with the version it was written beside, rather than
+        # being collected separately -- an old note's floor has no business
+        # outliving the note it belonged to.
         if v and (not best or ernie_version.is_older(best, v)):
-            best = v
-    return best
+            best, floor = v, minimum
+    return {"version": best, "minimum": floor} if best else {}
 
 
-def note_release(con, version: str | None) -> None:
+def note_release(con, seen: dict | None) -> None:
     """Remember the published build, or forget it. None means leave it be.
 
     One row, the same shape as `note_format_skew`, and for the same reason:
     it is one fact about what the channel says rather than a history of what
     it has said.
     """
-    if version is None:
+    if seen is None:
         return
+    version = (seen or {}).get("version") or ""
     if not version:
         con.execute("DELETE FROM release_seen")
         return
     con.execute(
-        """INSERT INTO release_seen (id, version, seen_at) VALUES (1,?,?)
+        """INSERT INTO release_seen (id, version, minimum, seen_at)
+           VALUES (1,?,?,?)
            ON CONFLICT (id) DO UPDATE SET
                version = excluded.version,
+               minimum = excluded.minimum,
                seen_at = excluded.seen_at""",
-        (version, now_iso()))
+        (version, (seen or {}).get("minimum") or "", now_iso()))
 
 
 def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:

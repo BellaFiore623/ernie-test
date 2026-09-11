@@ -433,6 +433,11 @@ CREATE TABLE IF NOT EXISTS state_format_skew (
 CREATE TABLE IF NOT EXISTS release_seen (
     id       INTEGER PRIMARY KEY CHECK (id = 1),
     version  TEXT NOT NULL,               -- what the note said, e.g. 0.9.1
+    -- The floor, when the note carries one: anything older goes read-only
+    -- rather than merely being told to update. '' is the ordinary case.
+    -- Never obeyed if it is ahead of `version` -- a floor above the build
+    -- people can download locks every board out with no way back.
+    minimum  TEXT NOT NULL DEFAULT '',
     seen_at  TEXT NOT NULL                -- when the pull last read it
 );
 

@@ -756,9 +756,11 @@ def run(con, d: Discord, guild: str, db: str, *, fast: int = FAST_SECONDS,
                 # 0.60/s.
                 def published():
                     row = con.execute(
-                        "SELECT version FROM release_seen WHERE id=1"
+                        "SELECT version, minimum FROM release_seen WHERE id=1"
                     ).fetchone()
-                    return row["version"] if row else None
+                    if not row:
+                        return None
+                    return (row["version"], row["minimum"] or "")
 
                 before = published()
                 ernie_state.note_release(
@@ -769,9 +771,17 @@ def run(con, d: Discord, guild: str, db: str, *, fast: int = FAST_SECONDS,
                 # line every minute saying the build is still the build is
                 # the one nobody reads when it finally says something else.
                 if before != after:
-                    print(f"[{now()[:19]}] release: "
-                          + (f"the channel says {after} is current"
-                             if after else "the release note is gone"))
+                    if not after:
+                        said = "the release note is gone"
+                    else:
+                        v, floor = after
+                        said = f"the channel says {v} is current"
+                        # Worth its own half-sentence: this one takes boards
+                        # away, and a line saying so is the only record that
+                        # anybody chose to.
+                        if floor:
+                            said += f", and {floor} is the minimum"
+                    print(f"[{now()[:19]}] release: {said}")
             except Exception as e:
                 print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
 

@@ -236,6 +236,10 @@ REQUIRED_COLUMNS = {
     "threads": ["owner_id"],
     "messages": ["author_display", "type"],
     "new_threads": ["rank", "sent_steps"],
+    # Purely a cache -- rewritten from Discord every minute -- but a missing
+    # column here is a board that cannot be told a build is mandatory, and
+    # failing at startup with the fix named beats finding out later.
+    "release_seen": ["minimum"],
 }
 
 
@@ -519,7 +523,7 @@ def health():
     # module there, so the two numbers are always equal and the update check
     # can never fire. This is the number that makes it fire.
     newest = con.execute(
-        "SELECT version FROM release_seen WHERE id=1").fetchone()
+        "SELECT version, minimum FROM release_seen WHERE id=1").fetchone()
 
     stuck = con.execute(
         """SELECT COUNT(*) AS n FROM events
@@ -546,8 +550,13 @@ def health():
         # git pull is the update and the other end of the API is a second
         # checkout. Absent when nothing has published one, and Bert fails
         # open on that the way it does on every other field here.
+        # `newest` is what anybody should be on; `required` is the floor the
+        # release note set, when it set one, and is what sends an older board
+        # read-only rather than merely telling it to update. Both are absent
+        # when nothing has published them, and Bert fails open on that.
         "build": {**ernie_version.payload(), "update_url": UPDATE_URL,
-                  "newest": newest["version"] if newest else None},
+                  "newest": newest["version"] if newest else None,
+                  "required": (newest["minimum"] or None) if newest else None},
         "last_sync": dict(last) if last else None,
         "seconds_since_sync": stale,
         # Which read of Discord that age belongs to, so Bert can tell a new
