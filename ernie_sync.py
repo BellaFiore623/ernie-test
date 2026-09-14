@@ -189,8 +189,31 @@ class Discord:
             timeout=30.0,
         )
 
-    def write(self, method: str, path: str, **body):
-        """Any non-GET call goes through here, and here checks the guard."""
+    def write(self, method: str, path: str, retry_5xx: bool = False, **body):
+        """Any non-GET call goes through here, and here checks the guard.
+
+        **`retry_5xx` is off by default, and the default is the safety.**
+        `get()` has always ridden out Discord's 5xx with a backoff, because a
+        repeated read costs nothing. Writes did not, so a `503` -- which
+        Discord serves often enough to meet twice in one afternoon -- raised
+        straight out. Found on a run of six thousand consecutive writes,
+        which is simply more writes than this had ever done in a row.
+
+        The asymmetry was not an oversight to be deleted, though. A 5xx does
+        **not** tell you whether the request was processed, so retrying a
+        POST can post twice -- which is the failure `events.sent_steps`
+        exists to prevent, and which once put three identical "marked this
+        complete" messages into one customer thread. So the decision stays
+        with the caller, who is the only one who knows whether doing it again
+        is harmless.
+
+        **Opt in only where repeating is genuinely a no-op**: archiving a
+        thread that is already archived, editing a message to the text it
+        already holds, pinning a pinned message. **Never** for posting a
+        message, opening a thread, or renaming one -- a rename is two per ten
+        minutes on a shared budget and posts a system message every time, so
+        a silent retry spends somebody else's allowance.
+        """
         if not self.writes_allowed:
             raise GuildMismatch(
                 f"Write blocked. ALLOW_DISCORD_WRITES must equal "
@@ -208,6 +231,11 @@ class Discord:
                 if wait <= RETRY_MAX_S and attempt < 2:
                     time.sleep(wait + 0.1)
                     continue
+            # Discord being briefly unwell, where the caller has said that
+            # doing this twice is the same as doing it once.
+            if retry_5xx and r.status_code >= 500 and attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
             r.raise_for_status()
             time.sleep(PACING)
             return r.json() if r.content else {}

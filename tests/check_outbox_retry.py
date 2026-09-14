@@ -331,7 +331,135 @@ def check_the_loop_stops_when_asked() -> bool:
     return c.report()
 
 
-CHECKS = (check_the_loop_stops_when_asked,
+def check_only_harmless_writes_ride_out_a_blip() -> bool:
+    """
+    The read path rode out Discord's 5xx and the write path did not.
+
+    `get()` has always retried a 500 with a backoff, because a repeated read
+    costs nothing. `write()` only ever handled 429 and then raised, so a
+    `503` -- which Discord serves often enough to meet twice in one afternoon
+    -- came straight out. Found on a run of six thousand consecutive writes,
+    which is simply more writes in a row than this had ever done; it killed
+    the run twice.
+
+    **It is opt-in, and that is the whole design.** A 5xx does not say
+    whether the request was processed, so an automatic retry on a POST can
+    post twice -- the failure every other check in this file exists to
+    prevent, and the one that once put three identical "marked this complete"
+    messages in a customer thread. So the caller decides, and only where
+    doing it again is genuinely a no-op: archiving an archived thread,
+    editing a message to the text it already holds, pinning a pinned message.
+
+    Never a message, a new thread, or a rename. A rename especially: two per
+    ten minutes on a budget shared between both machines, and a system
+    message in the customer thread every time, so a silent retry spends
+    somebody else's allowance.
+    """
+    c = Check("only harmless writes ride out a blip")
+
+    import inspect
+    import ernie_sync
+
+    sig = inspect.signature(ernie_sync.Discord.write)
+    c.ok("retry_5xx" in sig.parameters, "write() can be told to ride one out")
+    c.equal(sig.parameters["retry_5xx"].default, False,
+            "and does not, unless it is asked")
+
+    src = inspect.getsource(ernie_sync.Discord.write)
+    c.ok("retry_5xx and" in src and "500" in src,
+         "the retry is gated on the flag, not on the status alone")
+
+    # The rule, read off every call site in the tree. A POST that creates
+    # something must never carry it; the three no-ops should.
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    bad = []
+    opted = []
+    for rel in ("ernie_outbox.py", "ernie_state.py", "ernie_status.py",
+                "tools/clone_prod_threads.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and getattr(node.func, "attr", "") == "write"):
+                continue
+            wants = any(k.arg == "retry_5xx" for k in node.keywords)
+            if not wants:
+                continue
+            piece = ast.get_source_segment(text, node) or ""
+            opted.append(f"{rel}:{node.lineno}")
+            method = node.args[0].value if node.args and isinstance(
+                node.args[0], ast.Constant) else "?"
+            # POST creates; PATCH/PUT here only ever re-state something.
+            if method == "POST":
+                bad.append(f"{rel}:{node.lineno} {piece[:60]}")
+            if "name=" in piece and method == "PATCH":
+                bad.append(f"{rel}:{node.lineno} rename must not retry")
+
+    c.ok(opted, f"some writes opt in: {len(opted)} of them")
+    c.ok(not bad, "and nothing that creates or renames does: " + "; ".join(bad))
+
+    return c.report()
+
+
+def check_a_half_written_thread_resumes_where_it_stopped() -> bool:
+    """
+    The clone's ledger counted threads, so a resume repeated a thread's posts.
+
+    It recorded "thread made" and "thread finished" and nothing between, so a
+    failure part way through a hundred-message thread meant the next run began
+    that thread again at its first line. Both real deaths happened to land on
+    thread creation, before any message went out -- luck, not design, and the
+    ledger is the only thing that could have made it design.
+
+    Same shape as `events.sent_steps`: written between the writes rather than
+    after the last, because a count held in memory is lost in exactly the case
+    it exists for.
+    """
+    c = Check("a half-written thread resumes where it stopped")
+
+    import importlib.util
+    import pathlib
+    import tempfile
+    root = pathlib.Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "clone", root / "tools" / "clone_prod_threads.py")
+    clone = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(clone)
+
+    with tempfile.TemporaryDirectory() as d:
+        path = str(pathlib.Path(d) / "ledger.json")
+        led = clone.Ledger(path)
+        c.equal(led.posted("t1"), 0, "a thread nobody has started is at nought")
+
+        led.note_thread("t1", "new-1")
+        led.note_posted("t1", 7)
+        # Reopened from disk, because the point is surviving the process.
+        again = clone.Ledger(path)
+        c.equal(again.posted("t1"), 7, "seven posted survives a restart")
+        c.ok(not again.finished("t1"), "and the thread is not done")
+        c.equal(again.thread_for("t1"), "new-1",
+                "while the thread it made is still known, so no second one")
+
+        again.finish("t1")
+        done = clone.Ledger(path)
+        c.ok(done.finished("t1"), "finishing it is recorded")
+        c.equal(done.posted("t1"), 0,
+                "and the count is dropped, since the thread is skipped whole")
+
+        # A ledger written before counts existed must still load.
+        import json as _json
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump({"threads": {"t9": "x"}, "done": []}, fh)
+        old = clone.Ledger(path)
+        c.equal(old.posted("t9"), 0, "an older ledger reads as nought, not a crash")
+
+    return c.report()
+
+
+CHECKS = (check_only_harmless_writes_ride_out_a_blip,
+          check_a_half_written_thread_resumes_where_it_stopped,
+          check_the_loop_stops_when_asked,
           check_a_message_is_posted_once_however_often_the_rest_fails,
           check_a_thread_is_renamed_once,
           check_one_ticket_makes_one_thread,

@@ -183,10 +183,13 @@ class Ledger:
 
     def __init__(self, path: str):
         self.path = path
-        self.data = {"threads": {}, "done": []}
+        self.data = {"threads": {}, "done": [], "posted": {}}
         if os.path.exists(path):
             with open(path, encoding="utf-8") as fh:
                 self.data = json.load(fh)
+        # A ledger written by an older run has no counts; an absent count is
+        # nought, which is the right answer for a thread it never finished.
+        self.data.setdefault("posted", {})
 
     def save(self):
         tmp = self.path + ".tmp"
@@ -204,8 +207,26 @@ class Ledger:
     def finished(self, src):
         return src in self.data["done"]
 
+    def posted(self, src) -> int:
+        """How many of this thread's messages already went out.
+
+        The ledger used to record only "thread made" and "thread finished",
+        so a failure part way through a hundred-message thread meant the
+        resume began that thread again from its first line. Both deaths in
+        the real run happened to land on thread creation, before any message
+        -- which was luck, not design.
+        """
+        return int(self.data["posted"].get(src, 0))
+
+    def note_posted(self, src, n):
+        self.data["posted"][src] = n
+        self.save()
+
     def finish(self, src):
         self.data["done"].append(src)
+        # The count has done its work; the thread is done and will be skipped
+        # whole from here.
+        self.data["posted"].pop(src, None)
         self.save()
 
 
@@ -292,14 +313,25 @@ def main() -> None:
             made += 1
             time.sleep(THREAD_PACING)
 
-        for m in msgs:
+        # Resume where this thread got to rather than at its first line.
+        already = ledger.posted(src)
+        for i, m in enumerate(msgs):
+            if i < already:
+                continue
+            # Deliberately no retry_5xx: a 503 does not say whether the
+            # message landed, and posting one twice is the thing the ledger
+            # exists to stop. A failure here leaves the count where it is and
+            # the next pass picks up from exactly this message.
             d.write("POST", f"/channels/{tid}/messages",
                     **body_of(m, not a.no_names))
             posted += 1
+            ledger.note_posted(src, i + 1)
             time.sleep(PACING)
 
         if t["completed_at"]:
-            d.write("PATCH", f"/channels/{tid}", archived=True)
+            # Archiving an archived thread is the same as archiving it once,
+            # so this one may ride out a blip.
+            d.write("PATCH", f"/channels/{tid}", archived=True, retry_5xx=True)
 
         ledger.finish(src)
         print(f"  [{n}/{len(work)}] {t['name'][:60]}  ({len(msgs)} messages)")

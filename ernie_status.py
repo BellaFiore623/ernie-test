@@ -338,7 +338,7 @@ def publish(d: Discord, con, db: str) -> dict:
                 # carrying both.
                 d.write("PATCH",
                         f"/channels/{card.thread_id}/messages/{was['message_id']}",
-                        content="", embeds=[embed])
+                        content="", embeds=[embed], retry_5xx=True)
                 con.execute(
                     """UPDATE thread_status SET body=?, sent_at=?
                         WHERE thread_id=?""", (body, now(), card.thread_id))
@@ -376,7 +376,9 @@ def pin_pending(d: Discord, con) -> int:
     done = 0
     for r in con.execute("SELECT * FROM thread_status WHERE pinned = 0"):
         try:
-            d.write("PUT", f"/channels/{r['thread_id']}/pins/{r['message_id']}")
+            # Pinning a pinned message is the same as pinning it once.
+            d.write("PUT", f"/channels/{r['thread_id']}/pins/{r['message_id']}",
+                    retry_5xx=True)
         except Exception as e:
             print(f"  status: couldn't pin in {r['thread_id']}: "
                   f"{str(e).splitlines()[0]}", file=sys.stderr)

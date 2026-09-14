@@ -485,7 +485,9 @@ def publish_summary(d: Discord, cid: str, cards: list[Card],
         elif old == content:
             counts["unchanged"] += 1
             continue
-        d.write("PATCH", f"/channels/{cid}/messages/{m['id']}", content=content)
+        # An edit to the text it already holds is the same edit.
+        d.write("PATCH", f"/channels/{cid}/messages/{m['id']}", content=content,
+                retry_5xx=True)
         counts["edited"] += 1
 
     for m in existing[len(parts):]:
@@ -655,7 +657,7 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
             else:
                 sent = d.write("PATCH",
                                f"/channels/{cid}/messages/{known['message_id']}",
-                               content=content)
+                               content=content, retry_5xx=True)
                 counts["edited"] += 1
 
             if sent:

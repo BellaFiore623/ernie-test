@@ -215,7 +215,8 @@ def post_one(con, d: Discord, event) -> str:
         row = con.execute("SELECT archived FROM threads WHERE thread_id=?",
                           (tid,)).fetchone()
         if row and row["archived"]:
-            d.write("PATCH", f"/channels/{tid}", archived=False)
+            # Unarchiving an open thread is the same as unarchiving it once.
+            d.write("PATCH", f"/channels/{tid}", archived=False, retry_5xx=True)
             con.execute("UPDATE threads SET archived=0 WHERE thread_id=?", (tid,))
 
         if rename_to and "renamed" not in done:
@@ -240,7 +241,7 @@ def post_one(con, d: Discord, event) -> str:
 
         # Now put it where it belongs.
         if verb in ARCHIVES:
-            d.write("PATCH", f"/channels/{tid}", archived=True)
+            d.write("PATCH", f"/channels/{tid}", archived=True, retry_5xx=True)
             con.execute(
                 "UPDATE threads SET archived=1, archived_by_ernie=1 WHERE thread_id=?",
                 (tid,))

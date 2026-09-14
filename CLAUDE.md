@@ -619,6 +619,33 @@ activity feed, undo, and the outbox.
   work items. Not reachable on either board today: the longest card renders
   724 of 2000.
 - Writes take an idempotency `key`; retries return the original result.
+- **The read path rode out Discord's 5xx and the write path did not.**
+  `Discord.get()` has always retried a 500 with a backoff, because a repeated
+  read costs nothing; `write()` handled 429 and then raised, so a `503` came
+  straight out. Found the only way it could be -- on a run of **six thousand
+  consecutive writes** cloning production's threads into the sandbox, where
+  Discord served two 503s in one afternoon and killed the run twice. Nothing
+  in 1,877 assertions could have caught it, because the sandbox's whole board
+  was thirty-four tidy threads and you never do enough writes in a row to
+  meet a bad afternoon.
+  **It is opt-in, and the default is the safety.** A 5xx does not say whether
+  the request was processed, so retrying a POST can post twice -- which is
+  exactly what `events.sent_steps` exists to prevent, and what once put three
+  identical "marked this complete" messages into one customer thread. So the
+  caller decides, and only where repeating is genuinely a no-op: **archiving
+  an archived thread, editing a message to the text it already holds, pinning
+  a pinned message.** Six call sites. Never a message post, never opening a
+  thread, and never a rename -- two per ten minutes on a budget shared
+  between both machines, with a system message each time, so a silent retry
+  spends somebody else's allowance.
+  **What it was costing quietly**: the outbox writes through the same method,
+  so every transient 503 burned one of `MAX_ATTEMPTS`, and a handful spread
+  over a day could strand a change for good. It surfaced as `stuck` in
+  `/health`, which reads as "something is wrong with this card" rather than
+  "Discord was briefly unwell."
+  `tests/check_outbox_retry.py` holds the rule by walking every `write()`
+  call in the tree: a POST carrying `retry_5xx` fails the check, and so does
+  a rename.
 - **One editor at a time, and the second click offers to finish the first.**
   `editor_is_busy()` used to say no and stop, leaving somebody to find the
   other card themselves. It now offers Save / Discard / Keep editing, with
