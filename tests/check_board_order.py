@@ -416,28 +416,6 @@ def check_a_folded_band_opens_for_what_goes_into_it() -> bool:
     return c.report()
 
 
-class Box:
-    """A stand-in for the search field, which is all filtering() reads of it."""
-
-    def __init__(self, text=""):
-        self._text = text
-
-    def text(self):
-        return self._text
-
-
-class Narrowed:
-    """Enough of Bert for filtering(), so no widget has to be built."""
-
-    def __init__(self, term="", filters=None, equip=None):
-        self.search = Box(term)
-        self.filters = filters if filters is not None else {
-            "PROD": True, "OPS": True, "ENG": True, "CS": True}
-        # Empty is unnarrowed, the opposite of `filters` -- an equipment chip
-        # narrows by being *on*.
-        self.equip = set(equip or ())
-
-
 def check_a_build_ticket_links_to_jira() -> bool:
     """
     A key on the card, pointing at the issue -- and no Jira access at all.
@@ -599,13 +577,6 @@ def check_a_ticket_with_no_equipment_is_hidden_and_counted_for() -> bool:
     c.ok(sum(counts.values()) < len([x for x in cards if not x["completed_at"]]),
          "the chips add to less than the board, which is the honest answer")
 
-    # The narrowing has to count as narrowing, or a band it emptied stands
-    # there as a heading over nothing -- the same rule the search follows.
-    f = bert.Bert.filtering
-    c.ok(f(Narrowed(equip={"ODE"})),
-         "a chip counts as narrowing, so an emptied band hides")
-    c.ok(not f(Narrowed()), "and no chip on is not narrowing")
-
     return c.report()
 
 
@@ -642,10 +613,11 @@ def check_an_empty_band_is_still_named() -> bool:
     c.ok(rail is not None, "the rail builds its own list")
     body_src = ast.get_source_segment(src, rail) or "" if rail else ""
     skip = [ln for ln in body_src.splitlines() if "continue" in ln]
-    c.ok(any("filtering" in ln for ln in body_src.splitlines()
-             if "not group" in ln),
-         "an empty band is skipped only when a filter emptied it")
-    c.ok(skip, "and the skip is still there for that case")
+    c.ok(not any("not group" in ln and "continue" in body_src
+                 for ln in body_src.splitlines() if "filtering" in ln),
+         "no band is skipped for being empty, however narrow the board")
+    c.ok("for band in BANDS" in body_src,
+         "it walks every band rather than the cards it happens to hold")
 
     # The zone is a target, not a label, so it stays drag-only.
     zone = [ln for ln in body_src.splitlines() if "RailZone" in ln]
@@ -654,98 +626,73 @@ def check_an_empty_band_is_still_named() -> bool:
     c.ok(any("dragging" in ln for ln in guard),
          "shown only while a card is in the air, not stacked up at rest")
 
-    # And the board keeps its band, because the band carries the + button.
+    # And the board keeps its band, because the band carries the + button
+    # and is the target a drag lands on.
     drag_h = method("Band", "_apply_drag_height")
     vis = ast.get_source_segment(src, drag_h) or "" if drag_h else ""
-    c.ok("filtering" in vis,
-         "a board band hides only when a filter emptied it")
+    c.ok("setVisible(True)" in vis,
+         "a board band is visible whatever the filter is doing")
+    c.ok("filtering" not in vis,
+         "and does not ask, so it cannot take its + New Ticket away")
 
     return c.report()
 
 
-def check_filtering_knows_what_narrowed_the_board() -> bool:
+def check_every_band_is_drawn_however_narrow_the_board() -> bool:
     """
-    Genuinely empty is worth showing; filtered empty is not.
+    A band is a drop target and a `+ New Ticket`, not only a heading.
 
-    Somebody who typed a search did that on purpose, and five headings over
-    one result fights the narrowing rather than helping it. The queue
-    checkboxes count for the same reason -- they are the other way to ask for
-    less than the board holds.
+    An empty band used to hide while a filter was on, on the reasoning that
+    somebody narrowing the view did it deliberately and five headings over
+    one result fights the narrowing. The first half is true about headings
+    and it quietly took the rest with it: with a chip on, a card could not be
+    dragged into an empty priority and a ticket could not be started in one,
+    because neither the target nor the button existed.
+
+    That is the same bug already recorded one comment up in `Band` -- "with
+    everything in Needs Attention there was no way to start a ticket in
+    Critical at all, measured, four of the five buttons did not exist" --
+    coming back whenever the board was narrowed.
+
+    It also brought back the glitch that rule was written to stop: empty
+    bands appearing the *instant* a card was picked up, because a drag makes
+    them visible again. The list rearranges under the pointer at the moment
+    somebody is aiming at it.
+
+    Read off the source, because these checks never make a QApplication.
     """
-    c = Check("filtering() knows what narrowed the board")
+    c = Check("every band is drawn however narrow the board")
 
-    f = bert.Bert.filtering
-    c.ok(not f(Narrowed()), "a board showing everything is not filtered")
-    c.ok(f(Narrowed(term="penn")), "a search narrows it")
-    c.ok(not f(Narrowed(term="   ")),
-         "but whitespace alone is not a search")
-    c.ok(f(Narrowed(filters={"PROD": True, "OPS": False})),
-         "a queue switched off narrows it too")
-    c.ok(not f(Narrowed(filters={"PROD": True, "OPS": True})),
-         "and every queue on does not")
-
-    return c.report()
-
-
-def check_the_rail_says_when_a_filter_took_a_band() -> bool:
-    """
-    A band a filter emptied is dropped -- and used to be dropped in silence.
-
-    The rule is right and stays: somebody narrowing the view did it on
-    purpose, and five headings over one result fights the narrowing rather
-    than helping it. What was wrong is that nothing said so. The board
-    announces being narrowed in three places -- chips light up, `Show all`
-    appears, the queue boxes carry counts -- and the running order announced
-    it nowhere. A band simply ceased to exist.
-
-    Reported exactly as that reads from outside: tickets missing from the
-    running order, hunted as a scrolling fault, the activity feed collapsed
-    to find more height. The real cause was an equipment chip left on, and
-    the single card in Low carrying no equipment to match it -- so Low went
-    empty, and an empty band under a filter is not drawn.
-
-    The note goes in the footer, which sits outside the scroll area and is on
-    screen at any scroll position: the question gets asked at the bottom of a
-    long list, and should be answerable without going there.
-    """
-    c = Check("the rail says when a filter took a band")
-
-    # Nothing hidden says nothing, so the ordinary hint stays.
-    text, tip = bert.band_filter_note([])
-    c.equal(text, "", "an unnarrowed board says nothing about filters")
-    c.equal(tip, "", "and carries no tooltip")
-
-    text, tip = bert.band_filter_note(["low"])
-    c.equal(text, "1 band hidden by the filter", "one band reads as one")
-    c.ok("Low" in tip, "and the tooltip names it")
-    c.ok("filter" in text, "the word filter is in the line itself, not only the tip")
-
-    text, tip = bert.band_filter_note(["critical", "low"])
-    c.equal(text, "2 bands hidden by the filter", "two bands read as two")
-    c.ok("Critical" in tip and "Low" in tip, "and both are named")
-    # It has to say what to do, or it explains a disappearance and stops.
-    c.ok("Clear the search" in tip, "and it says how to get them back")
-
-    # The names are the board's own, not the database's.
-    c.ok("unassigned" not in bert.band_filter_note(["unassigned"])[1],
-         "a band is named the way the board names it, not the way a row does")
-    c.ok(bert.BAND_LABEL["unassigned"] in bert.band_filter_note(["unassigned"])[1],
-         f"-- {bert.BAND_LABEL['unassigned']!r}")
-
-    # And the rail actually asks. A pure function nothing calls is decoration.
     src = (ROOT / "bert.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
+
+    band = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Band")
+    body = ast.get_source_segment(src, band) or ""
+    c.ok("self.setVisible(True)" in body,
+         "a band on the board is visible, full stop")
+    c.ok("filtering()" not in body,
+         "and its visibility does not ask whether the board is narrowed")
+
     rail = next(n for n in ast.walk(tree)
                 if isinstance(n, ast.ClassDef) and n.name == "Rail")
-    body = ast.get_source_segment(src, rail) or ""
-    c.ok("band_filter_note" in body, "the rail asks for the wording")
-    c.ok("hidden.append(band)" in body,
-         "and collects the bands it skipped rather than forgetting them")
+    rbody = ast.get_source_segment(src, rail) or ""
+    c.ok("filtering()" not in rbody,
+         "the running order does not ask either, so it cannot skip one")
+    # Every band, walked -- not the cards, or a band with nothing in it never
+    # gets its turn.
+    c.ok("for band in BANDS:" in rbody, "it walks the bands, not the cards")
+
+    # BANDS is the list both lists walk, and it has to hold all five or this
+    # is true of a shorter board than anybody has.
+    c.equal(len(bert.BANDS), 5, "there are five bands to draw")
+    for b in ("unassigned", "critical", "high", "medium", "low"):
+        c.ok(b in bert.BANDS, f"including {b}")
 
     return c.report()
 
 
-CHECKS = (check_the_rail_says_when_a_filter_took_a_band,
+CHECKS = (check_every_band_is_drawn_however_narrow_the_board,
           check_a_build_ticket_links_to_jira,
           check_only_build_tickets_are_shown,
 check_the_equipment_chips_narrow_to_what_was_clicked,
@@ -756,5 +703,4 @@ check_predicate, check_new_cards_rank, check_one_order,
           check_the_rail_clips_to_its_width,
           check_a_collapsed_band_still_lands_a_drop,
           check_a_folded_band_opens_for_what_goes_into_it,
-          check_an_empty_band_is_still_named,
-          check_filtering_knows_what_narrowed_the_board)
+          check_an_empty_band_is_still_named)

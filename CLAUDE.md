@@ -413,27 +413,25 @@ activity feed, undo, and the outbox.
   measured, four of the five buttons did not exist. **The drop zone is still
   drag-only**, though, because a zone is a target rather than a label and four
   of them stacked up at rest pushes the running order off the bottom.
-  **A band a *filter* emptied still hides**: somebody who typed a search did
-  that deliberately, and five headings over one result fights the narrowing
-  rather than helping it. `Bert.filtering()` is the one question both lists
-  ask, and the queue checkboxes count as narrowing for the same reason the
-  search does.
-  **But never in silence, and that took a bug report to notice.** The board
-  says it is narrowed in three places -- the chips light up, `Show all`
-  appears, the queue boxes carry their counts -- and the running order said
-  nothing at all: a band simply ceased to exist. From outside that reads as
-  the software having lost the tickets in it, and it was reported exactly
-  that way, as a scrolling fault, after the activity feed had been collapsed
-  to hunt for more height. The real cause was an equipment chip left on and
-  the single card in Low carrying no equipment to match it.
-  So the rail's footer says `2 bands hidden by the filter`, with a tooltip
-  naming them and saying how to get them back. **The footer, not the end of
-  the list**: it sits outside the scroll area and is on screen at any scroll
-  position, and the question gets asked at the bottom of a long list by
-  somebody who should not have to go there to find the answer.
-  `band_filter_note()` is pure, for the reason `build_standing` is -- the
-  wording is the part worth being sure about, and a check can exercise it
-  without a QApplication.
+  **And a band a *filter* emptied is drawn too.** It used to hide, on the
+  reasoning that somebody narrowing the view did it deliberately and five
+  headings over one result fights the narrowing. That is true about the
+  headings and it quietly took the rest with them: **a band is a drop target
+  and it carries `+ New Ticket`**, so with a chip on there was again no way
+  to drag a card into an empty priority or start one there -- which is
+  exactly the bug measured above, coming back whenever the board was
+  narrowed. It also brought back the glitch the rule was written against,
+  since a drag makes empty bands reappear: the list rearranging itself under
+  the pointer at the moment somebody is aiming at it.
+  Found from the other end. A board with one card in Low and an equipment
+  chip on drew no Low at all, and was reported as tickets going missing from
+  the running order and hunted as a scrolling fault -- the feed collapsed to
+  look for more height, which is precisely the wrong place. The first answer
+  was a footer saying `2 bands hidden by the filter`; the better one, and the
+  one taken, was to stop hiding them. **Explaining a disappearance is worse
+  than not disappearing.**
+  `Bert.filtering()` went with it -- it existed for this rule alone, and a
+  predicate nothing asks is dead code with a check standing over it.
 - **The place in a list is a card, not a scrollbar number.** `render()` tears
   every card down and builds it again whenever the data changes, so both
   scrolling lists have to be put back afterwards -- and the number alone is not
