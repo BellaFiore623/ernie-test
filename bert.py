@@ -3284,13 +3284,29 @@ class Card(QFrame):
         today. The second is the common case on a live board; the first is
         what the sandbox is full of, because the seeder writes every message
         as the bot.
+
+        A timestamp with no timezone is read as UTC rather than refused.
+        Everything that writes one here is already UTC -- Discord's own, and
+        SQLite's `datetime('now')`, which is UTC and carries no offset -- so
+        attaching one is reading the value rather than guessing at it.
+        **Without that it was not a wrong number, it was a dead card**:
+        subtracting a naive datetime from an aware one raises TypeError,
+        which is not ValueError, so it escaped `_build_view` and the whole
+        card failed to draw. The same mismatch is already written down as a
+        SQL trap in CLAUDE.md -- Python writes a `T`, SQLite writes a space --
+        and this is that trap one language up.
         """
-        if not ts:
+        # A string or it is nothing: the column is TEXT, so this is the shape
+        # it always arrives in, and asking rather than catching keeps a real
+        # mistake further up from being swallowed here as "no age".
+        if not isinstance(ts, str) or not ts:
             return None
         try:
             then = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         except ValueError:
-            return None
+            return None                      # not a timestamp at all
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - then).days
 
     @staticmethod

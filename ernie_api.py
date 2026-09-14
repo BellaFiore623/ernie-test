@@ -303,15 +303,46 @@ REQUIRED_COLUMNS = {
 
 
 def check_schema() -> None:
+    """Refuse to start on a database this build cannot read, and say the fix.
+
+    **A missing table and a missing column are different problems with
+    different remedies, and saying which is the whole point of this.** A
+    column is what `migrations/` is for. A *table* is not: schema.sql is all
+    CREATE TABLE IF NOT EXISTS and `ernie_load.connect()` applies it on every
+    open, so the table appears the moment anything opens the database that
+    way -- and the migration for that table's column, run against a database
+    with no table, correctly does nothing.
+
+    Told to run a migrate_*.py, somebody in that position runs it, is told
+    "no such table -- schema.sql creates it on the next open", starts the API
+    again and gets the same refusal. Found against a copy of production's own
+    mirror, which predates `release_seen` and `client_collisions` and is
+    exactly the database the first real run there will meet.
+    """
     con = db()
-    missing = []
+    absent, missing = [], []
     for table, cols in REQUIRED_COLUMNS.items():
         have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        if not have:
+            absent.append(table)            # no such table, not a stale one
+            continue
         missing += [f"{table}.{c}" for c in cols if c not in have]
     con.close()
+    if not (absent or missing):
+        return
+
+    why, fix = [], []
+    if absent:
+        why.append("no " + ", ".join(sorted(absent)))
+        # The API is a reader and deliberately never applies schema.sql
+        # itself, so this names the thing that does.
+        fix.append(f"python -c \"import ernie_load; "
+                   f"ernie_load.connect('{DB}').close()\"")
     if missing:
-        sys.exit(f"{DB} is behind this build -- missing {', '.join(missing)}.\n"
-                 f"Run the matching migrate_*.py against it first.")
+        why.append("missing " + ", ".join(missing))
+        fix.append("run the matching migrations/migrate_*.py against it")
+    sys.exit(f"{DB} is behind this build -- {'; '.join(why)}.\n"
+             + "\n".join(f"  {i}. {f}" for i, f in enumerate(fix, 1)))
 
 
 def conflict(code: str, message: str, **extra):

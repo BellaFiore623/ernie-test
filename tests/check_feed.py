@@ -845,6 +845,49 @@ def check_a_cards_corner_survives_a_long_client() -> bool:
     return c.report()
 
 
+def check_a_timestamp_with_no_timezone_does_not_kill_the_card() -> bool:
+    """
+    Subtracting a naive datetime from an aware one raises TypeError.
+
+    Which is not ValueError, so it went straight past the guard, out of
+    `_age_forms`, out of `_fit_foot` and out of `_build_view` -- the card did
+    not draw at all. Not a wrong number: a dead card, and every card in that
+    thread.
+
+    Production's 20,755 human timestamps all carry an offset today, so this
+    was latent rather than live. It is worth closing anyway, because the same
+    mismatch is already written down in CLAUDE.md as a SQL trap that broke the
+    outbox once: Python writes ISO8601 with a `T`, SQLite's `datetime('now')`
+    writes a space and no offset. Anything that ever puts one of those in
+    `messages.created_at` takes the board out.
+
+    Read as UTC rather than refused, because everything writing one here
+    already is -- Discord's own, and SQLite's -- so attaching the offset is
+    reading the value rather than guessing at it.
+    """
+    c = Check("a timestamp with no timezone does not kill the card")
+
+    day = 86400
+    aware = bert.Card._age_days(iso(-3 * day))
+    naive = bert.Card._age_days(iso(-3 * day).split("+")[0])
+    c.equal(naive, aware, "a naive timestamp reads the same as an aware one")
+
+    # SQLite's own shape, space and all.
+    sqlite_ish = iso(-3 * day).split("+")[0].replace("T", " ")
+    c.equal(bert.Card._age_days(sqlite_ish), aware,
+            "and so does datetime('now'), separator and all")
+
+    # Anything that is not a timestamp is no age, never an exception.
+    for junk in (None, "", "not a date", 12345, 3.5):
+        try:
+            got = bert.Card._age_days(junk)
+        except Exception as e:                      # noqa: BLE001 - the point
+            got = f"{type(e).__name__}"
+        c.equal(got, None, f"{junk!r} is no age rather than a crash")
+
+    return c.report()
+
+
 def check_a_cards_buttons_never_leave_the_card() -> bool:
     """
     The footer was laid out chips-first, and a QLabel does not shrink.
@@ -1149,7 +1192,8 @@ def check_a_feed_row_sits_on_one_line() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_cards_buttons_never_leave_the_card,
+CHECKS = (check_a_timestamp_with_no_timezone_does_not_kill_the_card,
+          check_a_cards_buttons_never_leave_the_card,
           check_the_age_gives_up_words_before_it_is_cut,
           check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,

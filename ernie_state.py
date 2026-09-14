@@ -67,17 +67,34 @@ RELEASE_MARK = "**Release**"
 # Written after the first note posted by hand rather than by a script turned
 # out to say `Release 0.9.1` -- no asterisks -- and the channel went quiet.
 RELEASE_OPENER = re.compile("^[ *_#>`~-]*release[sd]?(?![a-z])[ *_#>`~:,.-]*", re.I)
-# A version is digits and dots and nothing else. Strict on the way in, because
-# everything downstream is deliberately forgiving: `as_tuple` reads an
-# unparseable version as 0, so junk that got this far could only ever make a
-# board look *ahead*, never behind -- a silent no-op rather than a wrong
-# answer, and a silent no-op is what nobody would ever notice.
-RELEASE_VERSION = re.compile(r"\b(\d+(?:\.\d+)+)\b")
+# A version is digits and dots, and it is the **first** thing after the word
+# rather than merely somewhere after it. Searching loosely is what made
+# `Release v0.9.1` read as `9.1`: a word boundary does not fall between `v`
+# and `0`, so the match began at the `9`. Worth being careful about precisely
+# because the git tags are `v0.9.0` and `v0.9.1`, and the release recipe
+# writes the tag two lines above the note -- so typing the `v` is the natural
+# slip rather than an odd one.
+#
+# **It failed in both directions and neither said anything.** `v0.9.1` gave
+# `9.1`, far ahead of any real build, so every board was told to fetch
+# something that does not exist and went on saying so until somebody edited
+# the note. `v1.0.0` gave `0.0`, behind everything, so a genuine release
+# announced nothing at all -- the note up, looking right, and nobody told.
+#
+# So the `v` is allowed and swallowed, and the number has to start where the
+# marker left off. Everything downstream stays forgiving: `as_tuple` reads an
+# unparseable version as 0, so anything still getting past this can only make
+# a board look ahead, which is a silent no-op rather than a wrong answer.
+RELEASE_VERSION = re.compile(r"^[vV]?(\d+(?:\.\d+)+)\b")
 # The optional second number: `**Release** 0.9.1 minimum 0.9.1`, which sends
 # anything older than 0.9.1 read-only instead of merely telling it to update.
 # Spelled out in a word rather than punctuation, because this is the line that
 # takes people's boards away and it should be impossible to type by accident.
-RELEASE_MINIMUM = re.compile(r"\bminimum\s+(\d+(?:\.\d+)+)\b", re.I)
+# The `v` is swallowed here for the same reason it is above, and it matters
+# more: a floor that quietly fails to apply leaves somebody believing they
+# made a release mandatory when they did not. The word is still required, so
+# nothing about that is loosened.
+RELEASE_MINIMUM = re.compile(r"\bminimum\s+[vV]?(\d+(?:\.\d+)+)\b", re.I)
 # The order Bert shows the bands in. The summary reads the same way round
 # as the board it describes, or comparing the two is needless work.
 BAND_ORDER = ("unassigned", "critical", "high", "medium", "low")
@@ -887,7 +904,7 @@ def parse_release(content: str) -> tuple[str, str]:
     if not opener:
         return "", ""
     rest = content[opener.end():]
-    m = RELEASE_VERSION.search(rest)
+    m = RELEASE_VERSION.match(rest)
     if not m:
         return "", ""
     version = m.group(1)

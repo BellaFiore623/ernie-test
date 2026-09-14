@@ -1327,6 +1327,17 @@ or worse, how long a ticket takes, or which ones have been open since April.
   told apart, and a **negative** reads as nothing too: that is a clock
   disagreeing rather than an age, and `-1d` on a card is a bug report nobody
   can act on.
+  **A timestamp with no timezone is read as UTC, and used to kill the card.**
+  Subtracting a naive datetime from an aware one raises `TypeError`, which is
+  not `ValueError`, so it went past the guard and out of `_build_view` -- not
+  a wrong number, a card that did not draw, and every card in that thread.
+  Production's 20,755 human timestamps all carry an offset today, so it was
+  latent; it is closed anyway because this is the SQL trap already written
+  down here one language up -- Python writes ISO8601 with a `T`, SQLite's
+  `datetime('now')` writes a space and no offset -- and anything that ever
+  puts one of those in `messages.created_at` would take the board out. UTC
+  rather than refused, because everything writing one here already is, so
+  attaching the offset is reading the value rather than guessing at it.
 - **A card's buttons never leave the card, and they used to.** The footer was
   laid out chips-first and buttons-after, and an unwrapped `QLabel` cannot be
   made narrower than its own text -- so two amber issue chips claimed the row
@@ -1897,6 +1908,18 @@ imports it. Bump it there and nowhere else.
   being able to tell, and leaves what is already known: a 403 on a
   re-permissioned channel must not quietly tell every board it is up to date
   at the moment it stopped being able to find out.
+  **And the version is read from where the word left off, not searched for.**
+  `Release v0.9.1` read as **`9.1`**: the number was found with a loose
+  search, and a word boundary does not fall between `v` and `0`, so the match
+  began at the `9`. The `v` is the natural thing to type -- the tags are
+  `v0.9.0` and `v0.9.1`, and the recipe above writes the tag two lines before
+  the note. It failed in **both** directions and neither said anything:
+  `v0.9.1` gave a version far ahead of any real build, so every board was
+  told to fetch something that does not exist and went on saying so until
+  somebody edited the note; `v1.0.0` gave `0.0`, behind everything, so a
+  genuine release announced nothing at all. The `v` is swallowed now, in the
+  minimum as well -- a floor that quietly fails to apply leaves somebody
+  believing they made a release mandatory when they did not.
   The parser is **strict** and everything downstream is forgiving, which is
   the safe way round: `as_tuple` reads an unparseable version as 0, so junk
   that got past it could only ever make a board look *ahead* of the release --
@@ -1942,7 +1965,24 @@ imports it. Bump it there and nowhere else.
   after the build went out, and every future one would have done the same.
   `ernie_load.ADDED_COLUMNS` is the list and `connect()` applies it on every
   open, idempotently, after the schema script -- a table has to exist before
-  it can be altered. **Only columns added after the first shipped build
+  it can be altered.
+  **A missing table and a stale one are different problems, and the refusal
+  has to say which.** `check_schema` named a `migrate_*.py` for both, and for
+  a missing table that is a loop: the migration opens the database, finds no
+  table, correctly does nothing and says schema.sql will create it on the
+  next open; the API refuses again in the same words. Found against a copy of
+  production's mirror, which predates `release_seen` and `client_collisions`
+  and is exactly the database the first run there will meet. The API is a
+  reader and still never applies schema.sql itself -- what changed is that it
+  now names `ernie_load.connect()` for an absent table and a migration only
+  for an absent column.
+  **And `run.sh` brings the database up to the build before it starts
+  anything**, which closes a race rather than a mistake: sync and api start
+  within milliseconds of each other, the sync would have created the tables
+  on its own first connect, and losing that race left the api exiting with
+  nothing on screen but "api not responding yet". `ernie_app` already did
+  exactly this before starting its API thread; this is the same line for the
+  from-source stack. **Only columns added after the first shipped build
   belong there**: everything before it is already in `schema.sql`, and any
   database new enough to be an installed one was created from that.
   `migrations/` stays as the record and for databases that predate the exe.

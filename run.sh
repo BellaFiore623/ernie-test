@@ -195,6 +195,19 @@ start() {                       # start <name> <command...>
 
 echo "starting [$ENVNAME]  db=$DB  port=$PORT"
 
+# Bring the database up to this build before anything opens it, because the
+# API refuses to start on one that is behind -- and it is a reader, so it
+# never applies schema.sql itself. The sync would create the missing tables
+# on its own first connect, but sync and api start here within milliseconds
+# of each other, so which of them got there first was a race: lose it and the
+# api exits and all you see is "api not responding yet". `ernie_app` already
+# does exactly this before it starts its own API thread; this is the same
+# line for the from-source stack. Idempotent -- every CREATE is IF NOT EXISTS.
+if ! python -c "import ernie_load, sys; ernie_load.connect(sys.argv[1]).close()" "$DB"; then
+  echo "  could not open $DB to bring it up to date" >&2
+  exit 1
+fi
+
 start sync   python ernie_sync.py --env "$ENVFILE" --db "$DB"
 [ "$OUTBOX" = yes ] && start outbox python ernie_outbox.py --env "$ENVFILE" --db "$DB"
 start api    python ernie_api.py --db "$DB" --port "$PORT" --host "$HOST" --env "$ENVFILE"

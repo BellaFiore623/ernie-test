@@ -588,6 +588,68 @@ def check_the_database_exists_before_anything_races_for_it() -> bool:
     return c.report()
 
 
+def check_a_missing_table_is_told_apart_from_a_stale_one() -> bool:
+    """
+    The refusal used to name a remedy that cannot work.
+
+    A missing *column* is what `migrations/` is for. A missing *table* is not:
+    schema.sql is all CREATE TABLE IF NOT EXISTS and `ernie_load.connect()`
+    applies it on every open, so the table appears the moment anything opens
+    the database that way -- and the migration for that table's column, run
+    against a database with no table, looks, finds nothing and correctly does
+    nothing.
+
+    So somebody was sent round a loop: the API refuses and says run the
+    migration, the migration says "no such table -- schema.sql creates it on
+    the next open", the API refuses again with the same words. Found against
+    a copy of production's own mirror, which predates `release_seen` and
+    `client_collisions` and is exactly the database the first real run there
+    will meet.
+
+    The API is a reader and must go on never applying schema.sql itself, so
+    what changes is what it *says*: the two cases are separated and each is
+    given the thing that actually fixes it.
+    """
+    c = Check("a missing table is told apart from a stale one")
+
+    import sqlite3
+    import tempfile
+    import ernie_api
+
+    was = ernie_api.DB
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            p = str(pathlib.Path(d) / "empty.db")
+            sqlite3.connect(p).close()          # a database with no tables
+            ernie_api.DB = p
+            try:
+                ernie_api.check_schema()
+                said = ""
+            except SystemExit as e:
+                said = str(e)
+
+            c.ok(said, "it refuses a database with nothing in it")
+            c.ok("no " in said, "and says the tables are absent, not stale")
+            c.ok("ernie_load" in said and "connect" in said,
+                 "naming the thing that creates them")
+            c.ok("migrate_" not in said,
+                 "and not a migration, which would do nothing here")
+
+            # Following it has to actually work, which is the whole finding.
+            import ernie_load as load
+            load.connect(p).close()
+            try:
+                ernie_api.check_schema()
+                after = "passes"
+            except SystemExit as e:
+                after = str(e)
+            c.equal(after, "passes", "and doing what it says is enough")
+    finally:
+        ernie_api.DB = was
+
+    return c.report()
+
+
 def check_an_installed_copy_can_migrate_itself() -> bool:
     """
     A shipped exe has no shell, and `migrations/` is a directory of scripts.
@@ -699,7 +761,8 @@ def check_the_supervisor_sets_up_what_the_cli_does() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_blocked_outbox_says_so,
+CHECKS = (check_a_missing_table_is_told_apart_from_a_stale_one,
+          check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
           check_the_two_loops_never_share_a_client,

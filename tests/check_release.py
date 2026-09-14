@@ -299,6 +299,48 @@ def check_a_floor_nobody_can_reach_is_never_obeyed() -> bool:
     return c.report()
 
 
+def check_the_version_is_read_from_where_the_word_left_off() -> bool:
+    """
+    `Release v0.9.1` read as `9.1`, and the `v` is the natural thing to type.
+
+    The number was found with a loose search, and a word boundary does not
+    fall between `v` and `0` -- so the match began at the `9`. The git tags
+    are `v0.9.0` and `v0.9.1`, and the release recipe writes the tag two
+    lines above the note, so this is the ordinary slip rather than an odd one.
+
+    **It failed both ways and neither said anything.** `v0.9.1` gave `9.1`,
+    far ahead of any real build, so every board was told to fetch something
+    that does not exist and went on saying so until somebody edited the note.
+    `v1.0.0` gave `0.0`, behind everything, so a real release announced
+    nothing at all.
+    """
+    c = Check("the version is read from where the word left off")
+
+    c.equal(S.parse_release("Release v0.9.1"), ("0.9.1", ""),
+            "a v is swallowed rather than eating the first digit")
+    c.equal(S.parse_release("Release V1.0.0"), ("1.0.0", ""),
+            "upper case too, and a leading 1 survives")
+    c.equal(S.parse_release("**Release** 0.9.1"), ("0.9.1", ""),
+            "the plain form is untouched")
+
+    # The number has to open what is left, or prose carries a version out of
+    # a sentence that was never a release note.
+    c.equal(S.parse_release("Release the hounds 0.9.1"), ("", ""),
+            "a number further along the line is not the version")
+    c.equal(S.parse_release("Release v"), ("", ""),
+            "and a v with no number is not one either")
+
+    # The floor takes a v as well, and that one matters more: a minimum that
+    # quietly fails to apply leaves somebody believing they made a release
+    # mandatory when they did not.
+    c.equal(S.parse_release("**Release** v0.9.1 minimum v0.9.1"),
+            ("0.9.1", "0.9.1"), "the minimum takes a v too")
+    c.equal(S.parse_release("Release 0.9.1 minimum 0.9.2"), ("0.9.1", ""),
+            "and a floor ahead of its own note is still dropped")
+
+    return c.report()
+
+
 def check_the_opener_forgives_how_a_person_writes_it() -> bool:
     """
     The note is written by a person now, so it has to read like one.
@@ -344,7 +386,8 @@ def check_the_opener_forgives_how_a_person_writes_it() -> bool:
     return c.report()
 
 
-CHECKS = (check_the_opener_forgives_how_a_person_writes_it,
+CHECKS = (check_the_version_is_read_from_where_the_word_left_off,
+          check_the_opener_forgives_how_a_person_writes_it,
           check_a_release_note_is_read_and_nothing_else_is,
           check_the_note_is_invisible_to_the_board,
           check_a_channel_it_cannot_read_changes_nothing,
