@@ -119,6 +119,10 @@ class Board:
             con.close()
 
 
+# The bot's own id, for a fake that has to answer "is this message mine".
+BOT_ID = "bot-1"
+
+
 class FakeDiscord:
     """
     Stands in for Discord.write(). Records the calls; sends nothing.
@@ -128,15 +132,37 @@ class FakeDiscord:
     PATCH is the whole surface they touch.
     """
 
-    def __init__(self):
+    def __init__(self, messages=None):
         self.calls: list[tuple[str, str, str]] = []
         # The real client carries it, and creating a thread records which
         # guild the thread it just made belongs to.
         self.guild_id = GUILD
+        # What a channel already contains, by channel id. Empty is an empty
+        # thread, which is what almost every check wants -- `ernie_status`
+        # reads this before posting, to adopt a status message another board
+        # left there rather than adding a second one.
+        self.messages = dict(messages or {})
+        self.gets: list[str] = []
 
     def write(self, verb: str, path: str, **kw):
         self.calls.append((verb, path, kw.get("content", "")))
         return {"id": f"msg-{len(self.calls)}"}
+
+    def get(self, path: str, **params):
+        """Enough of the read side for the one thing that reads before writing."""
+        self.gets.append(path)
+        if path == "/users/@me":
+            return {"id": BOT_ID}
+        if path.endswith("/messages"):
+            return list(self.messages.get(path.split("/")[2], []))
+        return None
+
+    def status_embed(self, author=None, title="Ticket status · High"):
+        """A message shaped like one `ernie_status` posts."""
+        n = len(self.messages) + len(self.calls) + 1
+        return {"id": str(1000 + n),
+                "author": {"id": author or BOT_ID},
+                "embeds": [{"title": title}]}
 
     def verbs(self) -> list[str]:
         return [v for v, _, _ in self.calls]

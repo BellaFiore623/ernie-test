@@ -969,6 +969,28 @@ has been done, when it last moved and who moved it.
   posting time, granting the permission afterwards would have changed nothing;
   as it went, the grant plus one more pass pinned all five with no reposting
   and no editing, confirmed against Discord's own pin list.
+- **A board with no row looks in the thread before it posts.**
+  `thread_status` is per database and the thread is not, so every board kept
+  its own `message_id` with no way to learn of anybody else's -- and a board
+  with no row posted a fresh one. **N boards meant N status embeds in one
+  customer thread**, each edited by the board that made it and ignored by the
+  rest. `#ernie-state` never had this, because its messages name their own
+  `thread_id` and a second board finds and edits the one already there; this
+  is that idea one channel along, with the thread as the key.
+  **The two-stack setup is the documented one**, so this was waiting for the
+  second person to run a stack: two bot embeds in every thread people are
+  working in, and in production those are real customer threads. Found on the
+  sandbox after a weekend of two databases on one machine -- 10 of 34 threads
+  carrying two or three, four belonging to no database that still existed,
+  and a burst of notifications every time a board started.
+  **The title is the marker and always was.** Every status embed begins
+  `STATUS_TITLE`, so `adopt()` works on messages written long before it
+  existed -- which is the point, since the ones needing adoption are the ones
+  already out there. The **oldest** wins, so two boards adopting
+  independently converge rather than taking one duplicate each. It costs one
+  GET, only for a thread this board has no row for, and `wanted()` has
+  already filtered to threads Ernie *witnessed* -- so a fresh install, which
+  inherits everything and witnesses nothing, asks for nothing at all.
 - **Every thread gets one, work items or not.** A third of open tickets have
   none, and the trigger being "a card exists" is what puts the message near the
   top of the thread rather than fifty replies down. With nothing to list it

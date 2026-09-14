@@ -16,6 +16,7 @@ thing to do to a channel people are working in.
 
 import pathlib
 
+import support
 from support import Board, Check, FakeDiscord, PARENT, iso
 
 import bert
@@ -244,7 +245,7 @@ def check_it_posts_once_then_edits() -> bool:
         d2 = FakeDiscord()
         again = st.publish(d2, b.con, b.path)
         c.equal({k: v for k, v in again.items() if k != "pinned"},
-                {"posted": 0, "edited": 0, "failed": 0},
+                {"posted": 0, "adopted": 0, "edited": 0, "failed": 0},
                 "a pass over an unchanged board writes nothing at all")
         c.equal(d2.calls, [], "and does not touch Discord")
 
@@ -463,7 +464,110 @@ def check_a_pending_equipment_number_is_left_out() -> bool:
     return c.report()
 
 
-CHECKS = (check_the_message_says_what_is_left,
+def check_a_second_board_adopts_rather_than_posting() -> bool:
+    """
+    `thread_status` is per database. The thread is not.
+
+    Every board kept its own `message_id` and had no way to learn of anybody
+    else's, so a board with no row posted a fresh one -- N boards, N status
+    embeds in one customer thread, each edited by its maker and ignored by
+    the rest. **The two-stack setup is the documented one**, so this was
+    waiting for the second person to run a stack: two bot embeds in every
+    thread people are actually working in.
+
+    Found on the sandbox after a weekend with two databases on one machine:
+    10 of 34 threads carrying two or three, four belonging to no database
+    that still existed.
+
+    `#ernie-state` never had it, because its messages name their own
+    `thread_id` and a second board finds and edits the existing one. This is
+    that idea one channel along -- and the marker was already there, since
+    every status embed's title has always begun `Ticket status`.
+    """
+    c = Check("a second board adopts rather than posting")
+
+    with Board() as b:
+        tid = a_card(b)
+        work(b, tid, "replace cable")
+
+        # A thread that already carries one, put there by a board this
+        # database has never heard of.
+        theirs = {"id": "900", "author": {"id": support.BOT_ID},
+                  "embeds": [{"title": "Ticket status · Medium"}]}
+        d = FakeDiscord(messages={tid: [theirs]})
+
+        r = st.publish(d, b.con, b.path)
+        c.equal(r["posted"], 0, "nothing new is posted into the thread")
+        c.equal(r["adopted"], 1, "the message already there is adopted")
+        c.equal(r["edited"], 1, "and written with this board's rendering")
+
+        row = b.con.execute("SELECT message_id FROM thread_status "
+                            "WHERE thread_id=?", (tid,)).fetchone()
+        c.equal(row["message_id"], "900",
+                "the stored id is theirs, so both boards now edit one message")
+        c.ok(all(v != "POST" for v, _, _ in d.calls),
+             "and Discord was never asked to post")
+
+    return c.report()
+
+
+def check_adoption_is_careful_about_what_it_adopts() -> bool:
+    """
+    Reading before writing is only safe if it recognises the right thing.
+
+    Adopting somebody else's message would be worse than posting a second
+    one: this board would then edit a stranger's message on every change.
+    So it takes only its own author's, only an embed, and only one whose
+    title is the marker -- and of those, the **oldest**, so two boards
+    adopting independently land on the same message instead of one each.
+    """
+    c = Check("adoption is careful about what it adopts")
+
+    with Board() as b:
+        tid = a_card(b)
+        d = FakeDiscord()
+
+        c.equal(st.adopt(d, tid), None, "an empty thread has nothing to adopt")
+
+        d.messages[tid] = [
+            # The other bot posts embeds into these threads all day.
+            {"id": "100", "author": {"id": "other-bot"},
+             "embeds": [{"title": "Build Request"}]},
+            # Our own plain messages -- "marked this complete", the started
+            # note -- carry no embed and are not this.
+            {"id": "200", "author": {"id": support.BOT_ID}, "embeds": []},
+            # An embed of ours that is not a status message.
+            {"id": "300", "author": {"id": support.BOT_ID},
+             "embeds": [{"title": "Something else entirely"}]},
+        ]
+        c.equal(st.adopt(d, tid), None,
+                "and neither another bot's embed, nor ours without the marker")
+
+        d.messages[tid] += [
+            {"id": "700", "author": {"id": support.BOT_ID},
+             "embeds": [{"title": "Ticket status · High"}]},
+            {"id": "500", "author": {"id": support.BOT_ID},
+             "embeds": [{"title": "Ticket status · closed by Julian"}]},
+        ]
+        c.equal(st.adopt(d, tid), "500",
+                "the oldest status message wins, so two boards converge on one")
+
+    # The marker has to be what render actually writes, or adoption quietly
+    # stops finding anything and every board posts its own again.
+    card = S.Card(thread_id="1", name="PROD: A - 01Jan26 - x",
+                            priority="high", rank=1000.0)
+    c.ok(st.render(card)["title"].startswith(st.STATUS_TITLE),
+         "and the marker is what render() puts in the title")
+    card.completed = True
+    c.ok(st.render(card)["title"].startswith(st.STATUS_TITLE),
+         "for a closed ticket too")
+
+    return c.report()
+
+
+CHECKS = (check_a_second_board_adopts_rather_than_posting,
+          check_adoption_is_careful_about_what_it_adopts,
+          check_the_message_says_what_is_left,
           check_an_empty_ticket_says_so,
           check_a_closed_ticket_does_not_say_it_twice,
           check_nothing_in_it_moves_on_its_own,

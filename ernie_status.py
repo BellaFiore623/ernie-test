@@ -83,6 +83,13 @@ def clip(value: str) -> str:
     return value if len(value) <= FIELD_MAX else value[:FIELD_MAX - 1] + "\u2026"
 
 
+# Every status embed's title starts with this, and always has. It is what
+# `adopt()` recognises one by, which is why it is a constant rather than
+# written into the two f-strings below: a title that stopped starting with it
+# would silently stop being findable, and every board would post its own again.
+STATUS_TITLE = "Ticket status"
+
+
 def render(card: ernie_state.Card, facts: dict | None = None) -> dict:
     """The status, as an embed.
 
@@ -242,9 +249,52 @@ def stored(con) -> dict:
             con.execute("SELECT * FROM thread_status")}
 
 
+def adopt(d: Discord, tid: str) -> str | None:
+    """A status message already in this thread, whoever put it there.
+
+    **`thread_status` is per database, and the thread is not.** Every board
+    keeps its own `message_id` and had no way to learn about anybody else's,
+    so a board with no row posted a fresh one -- and N boards meant N status
+    embeds in one customer thread, each edited by the board that made it and
+    ignored by the rest. Measured on the sandbox after a weekend of two
+    databases on one machine: 10 of 34 threads carrying two or three, and
+    four belonging to no database that still existed.
+
+    `#ernie-state` never had this problem because **its messages are
+    self-describing** -- each names its own `thread_id`, so a second board
+    finds the existing one and edits it. This is that idea, one channel
+    along: the thread is the key, and the message is found by looking.
+
+    **The title is the marker, and it always was.** Every status embed this
+    has ever posted begins `Ticket status`, so adoption works on messages
+    written long before this function existed -- which is the whole point,
+    since the ones needing adoption are exactly the ones already out there.
+
+    **The oldest wins**, so two boards adopting independently converge on one
+    message rather than each taking a different duplicate.
+
+    Costs one GET, and only for a thread this board has no row for. `wanted()`
+    has already filtered to threads Ernie *witnessed*, so a fresh install --
+    which inherits every thread and witnesses none -- asks for nothing at all.
+    """
+    got = d.get(f"/channels/{tid}/messages", limit=50)
+    if not got:
+        return None
+    me = (d.get("/users/@me") or {}).get("id")
+    if not me:
+        return None
+    ours = [m for m in got
+            if (m.get("author") or {}).get("id") == me
+            and any((e.get("title") or "").startswith(STATUS_TITLE)
+                    for e in m.get("embeds") or [])]
+    # Snowflakes sort chronologically, which is the only order Discord gives
+    # and the only one needed here.
+    return min((m["id"] for m in ours), key=int, default=None)
+
+
 def publish(d: Discord, con, db: str) -> dict:
     """One pass: post the missing ones, edit the ones that would read differently."""
-    counts = {"posted": 0, "edited": 0, "failed": 0}
+    counts = {"posted": 0, "adopted": 0, "edited": 0, "failed": 0}
     have = stored(con)
 
     facts = ticket_facts(con)
@@ -256,15 +306,33 @@ def publish(d: Discord, con, db: str) -> dict:
             continue
         try:
             if was is None:
-                sent = d.write("POST", f"/channels/{card.thread_id}/messages",
-                               embeds=[embed])
-                con.execute(
-                    """INSERT INTO thread_status (thread_id, message_id, body,
-                                                  sent_at, pinned)
-                       VALUES (?,?,?,?,0)""",
-                    (card.thread_id, sent["id"], body, now()))
-                counts["posted"] += 1
-            else:
+                # Look before posting. A thread that already carries one of
+                # ours belongs to a board that got here first, and a second
+                # message is the failure this exists to prevent.
+                found = adopt(d, card.thread_id)
+                if found:
+                    con.execute(
+                        """INSERT INTO thread_status (thread_id, message_id,
+                                                      body, sent_at, pinned)
+                           VALUES (?,?,'',?,0)""",
+                        (card.thread_id, found, now()))
+                    con.commit()
+                    # Empty body, so the edit below writes our rendering into
+                    # it on this same pass rather than a cycle later.
+                    was = {"message_id": found}
+                    counts["adopted"] += 1
+                else:
+                    sent = d.write("POST",
+                                   f"/channels/{card.thread_id}/messages",
+                                   embeds=[embed])
+                    con.execute(
+                        """INSERT INTO thread_status (thread_id, message_id,
+                                                      body, sent_at, pinned)
+                           VALUES (?,?,?,?,0)""",
+                        (card.thread_id, sent["id"], body, now()))
+                    counts["posted"] += 1
+
+            if was is not None:
                 # content="" as well as the embed, so a message written by
                 # an earlier build as plain text loses the text rather than
                 # carrying both.
