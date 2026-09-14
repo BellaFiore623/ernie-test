@@ -3703,6 +3703,30 @@ class Band(QWidget):
         e.acceptProposedAction()
 
 
+def band_filter_note(hidden):
+    """What the running order's footer says about bands a filter took away.
+
+    Pure, and separate from the label it fills, for the reason
+    `build_standing` and `ticket_url` are: the wording is the part worth
+    being sure about, and a check can exercise it without a QApplication --
+    which these checks deliberately never make, because a widget built
+    without one does not raise, it aborts the process.
+
+    ("", "") when nothing is hidden, so the caller puts its ordinary hint
+    back rather than this having an opinion about what that is.
+    """
+    if not hidden:
+        return "", ""
+    n = len(hidden)
+    names = ", ".join(BAND_LABEL[b] for b in hidden)
+    text = f"{n} band{'' if n == 1 else 's'} hidden by the filter"
+    tip = (f"{names} {'is' if n == 1 else 'are'} empty while the board is "
+           f"narrowed, so {'it is' if n == 1 else 'they are'} not drawn." + "\n\n"
+           "Clear the search, the queue boxes or the equipment chips to see "
+           "them again.")
+    return text, tip
+
+
 class RailRow(QFrame):
     """One row in the side rail: who it's for, and what the job is.
 
@@ -3984,7 +4008,7 @@ class Rail(QWidget):
         self.scroll.setWidget(inner)
         outer.addWidget(self.scroll, 1)
 
-        self.hint = QLabel("Drag to reorder, click to jump")
+        self.hint = QLabel(self.RAIL_HINT)
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet(f"color:{T.MUTED}; font-size:10px;"
                                 f" background:transparent;")
@@ -4057,6 +4081,34 @@ class Rail(QWidget):
         """
         return max(self.width() - RAIL_ROW_CHROME, 40)
 
+    RAIL_HINT = "Drag to reorder, click to jump"
+
+    def _say_hint(self, hidden):
+        """The footer, which says when the filter has taken a band away.
+
+        A band emptied by a filter is dropped rather than left standing as a
+        heading over nothing -- somebody narrowing the view did that on
+        purpose, and five headings over one result fights the narrowing. That
+        rule is right and it is staying.
+
+        **What was wrong is that it happened in silence.** The board says it
+        is narrowed in three places -- the chips light up, `Show all` appears,
+        the queue boxes carry their counts -- and the running order said
+        nothing at all. A band simply ceased to exist, which from outside
+        reads as the software having lost the tickets in it. Reported exactly
+        that way: a hunt for a scrolling fault, the activity feed collapsed to
+        find more height, and the real answer was a chip left on with the one
+        card in Low carrying no equipment to match it.
+
+        It goes in the footer rather than at the end of the list, because the
+        footer sits outside the scroll area and is on screen whatever you have
+        scrolled to. The question gets asked at the bottom; it should be
+        answerable without having to go there.
+        """
+        text, tip = band_filter_note(hidden)
+        self.hint.setText(text or self.RAIL_HINT)
+        self.hint.setToolTip(tip)
+
     def set_cards(self, cards):
         # Same signature check the bands use.
         # The clip widths are part of what a row draws, so a rail that has been
@@ -4065,8 +4117,11 @@ class Rail(QWidget):
         # Which bands are folded is part of the picture, the same way the
         # clip width is: without it here, collapsing a band changes nothing
         # on screen until the cards themselves happen to change.
+        #
+        # Whether the board is narrowed is in here too, because the footer
+        # says so and a filter can change without the card list changing.
         sig = json.dumps([cards, self.board.dragging, room,
-                          sorted(self.collapsed)],
+                          sorted(self.collapsed), self.board.filtering()],
                          sort_keys=True, default=str)
         if sig == self._sig:
             self.cards = cards
@@ -4086,6 +4141,7 @@ class Rail(QWidget):
 
         # Walk the bands rather than the cards, so a band with nothing in it
         # still gets its turn.
+        hidden = []
         for band in BANDS:
             group = [c for c in self.cards if c["priority"] == band]
             # An empty band is still named. It used to appear only while a
@@ -4095,6 +4151,8 @@ class Rail(QWidget):
             # you were aiming at it, and nothing to aim at before that. The
             # head already knows how to say "empty".
             if not group and not self.board.dragging and self.board.filtering():
+                # Dropped, but never in silence -- see _say_hint.
+                hidden.append(band)
                 continue
             # Every band is named, the first one included: the word is a
             # label rather than a separator, and "Needs Attention" at the top
@@ -4114,6 +4172,7 @@ class Rail(QWidget):
             # the running order pushed off the bottom.
             if not group and self.board.dragging:
                 self.lay.addWidget(RailZone(band))
+        self._say_hint(hidden)
         self.lay.addStretch()
 
     def toggle_band(self, priority):

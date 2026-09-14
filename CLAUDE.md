@@ -418,6 +418,22 @@ activity feed, undo, and the outbox.
   rather than helping it. `Bert.filtering()` is the one question both lists
   ask, and the queue checkboxes count as narrowing for the same reason the
   search does.
+  **But never in silence, and that took a bug report to notice.** The board
+  says it is narrowed in three places -- the chips light up, `Show all`
+  appears, the queue boxes carry their counts -- and the running order said
+  nothing at all: a band simply ceased to exist. From outside that reads as
+  the software having lost the tickets in it, and it was reported exactly
+  that way, as a scrolling fault, after the activity feed had been collapsed
+  to hunt for more height. The real cause was an equipment chip left on and
+  the single card in Low carrying no equipment to match it.
+  So the rail's footer says `2 bands hidden by the filter`, with a tooltip
+  naming them and saying how to get them back. **The footer, not the end of
+  the list**: it sits outside the scroll area and is on screen at any scroll
+  position, and the question gets asked at the bottom of a long list by
+  somebody who should not have to go there to find the answer.
+  `band_filter_note()` is pure, for the reason `build_standing` is -- the
+  wording is the part worth being sure about, and a check can exercise it
+  without a QApplication.
 - **The place in a list is a card, not a scrollbar number.** `render()` tears
   every card down and builds it again whenever the data changes, so both
   scrolling lists have to be put back afterwards -- and the number alone is not

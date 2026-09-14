@@ -21,6 +21,8 @@ import ernie_extract as ex
 import ernie_load as load
 import ernie_state as S
 
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
 
 def a_record(name: str, owner: str | None = None) -> ex.ThreadRecord:
     """The parsed thread ensure_card is handed, with nothing else going on."""
@@ -685,7 +687,66 @@ def check_filtering_knows_what_narrowed_the_board() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_build_ticket_links_to_jira,
+def check_the_rail_says_when_a_filter_took_a_band() -> bool:
+    """
+    A band a filter emptied is dropped -- and used to be dropped in silence.
+
+    The rule is right and stays: somebody narrowing the view did it on
+    purpose, and five headings over one result fights the narrowing rather
+    than helping it. What was wrong is that nothing said so. The board
+    announces being narrowed in three places -- chips light up, `Show all`
+    appears, the queue boxes carry counts -- and the running order announced
+    it nowhere. A band simply ceased to exist.
+
+    Reported exactly as that reads from outside: tickets missing from the
+    running order, hunted as a scrolling fault, the activity feed collapsed
+    to find more height. The real cause was an equipment chip left on, and
+    the single card in Low carrying no equipment to match it -- so Low went
+    empty, and an empty band under a filter is not drawn.
+
+    The note goes in the footer, which sits outside the scroll area and is on
+    screen at any scroll position: the question gets asked at the bottom of a
+    long list, and should be answerable without going there.
+    """
+    c = Check("the rail says when a filter took a band")
+
+    # Nothing hidden says nothing, so the ordinary hint stays.
+    text, tip = bert.band_filter_note([])
+    c.equal(text, "", "an unnarrowed board says nothing about filters")
+    c.equal(tip, "", "and carries no tooltip")
+
+    text, tip = bert.band_filter_note(["low"])
+    c.equal(text, "1 band hidden by the filter", "one band reads as one")
+    c.ok("Low" in tip, "and the tooltip names it")
+    c.ok("filter" in text, "the word filter is in the line itself, not only the tip")
+
+    text, tip = bert.band_filter_note(["critical", "low"])
+    c.equal(text, "2 bands hidden by the filter", "two bands read as two")
+    c.ok("Critical" in tip and "Low" in tip, "and both are named")
+    # It has to say what to do, or it explains a disappearance and stops.
+    c.ok("Clear the search" in tip, "and it says how to get them back")
+
+    # The names are the board's own, not the database's.
+    c.ok("unassigned" not in bert.band_filter_note(["unassigned"])[1],
+         "a band is named the way the board names it, not the way a row does")
+    c.ok(bert.BAND_LABEL["unassigned"] in bert.band_filter_note(["unassigned"])[1],
+         f"-- {bert.BAND_LABEL['unassigned']!r}")
+
+    # And the rail actually asks. A pure function nothing calls is decoration.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    rail = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Rail")
+    body = ast.get_source_segment(src, rail) or ""
+    c.ok("band_filter_note" in body, "the rail asks for the wording")
+    c.ok("hidden.append(band)" in body,
+         "and collects the bands it skipped rather than forgetting them")
+
+    return c.report()
+
+
+CHECKS = (check_the_rail_says_when_a_filter_took_a_band,
+          check_a_build_ticket_links_to_jira,
           check_only_build_tickets_are_shown,
 check_the_equipment_chips_narrow_to_what_was_clicked,
           check_a_ticket_with_no_equipment_is_hidden_and_counted_for,
