@@ -19,7 +19,7 @@ import json
 import pathlib
 import re
 
-from support import Check
+from support import Check, iso
 
 import bert
 
@@ -835,8 +835,111 @@ def check_a_cards_corner_survives_a_long_client() -> bool:
                 and n.name == "_build_view")
     body = ast.get_source_segment(_bert_src(), view) or ""
     c.ok("unsent_mark" in body, "the head asks whether anything is unsent")
-    c.ok(body.index("unsent_mark") > body.index("_ago("),
-         "and the mark is added after the age, so it sits in the corner")
+    # Anchored on the PIP count rather than the age: the age used to be the
+    # last column before the mark and now sits in the footer, so pinning the
+    # order to it would be asking about a widget that is no longer in the row.
+    c.ok(body.index("unsent_mark") > body.index("PIPs"),
+         "and the mark is added after every other column, so it sits in the "
+         "corner")
+
+    return c.report()
+
+
+def check_a_cards_buttons_never_leave_the_card() -> bool:
+    """
+    The footer was laid out chips-first, and a QLabel does not shrink.
+
+    An unwrapped QLabel reports its whole text as a minimum width, so two
+    amber issue chips claimed the row and Edit and Complete were pushed off
+    the end of the card. Rendered and measured at the board column's own
+    463px minimum: one chip laid **Complete out at x=470 on a 463px card**,
+    and two needed 850px -- over even at the full 846. Not rare: 13 of
+    production's 50 open cards carry an issue chip and 4 carry two.
+
+    Nothing reported it because nothing failed. The layout did what it was
+    asked and what went missing went off-screen, which is the same way Undo
+    disappeared out of a feed row -- and it resolves the same way. **The text
+    gives way; the controls never do.**
+
+    Read off the source rather than by building a Card: a widget made with no
+    QApplication does not raise, it aborts the process, and these checks
+    deliberately never make one.
+    """
+    c = Check("a card's buttons never leave the card")
+
+    tree = ast.parse(_bert_src())
+    card = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Card")
+    view = next(n for n in card.body if isinstance(n, ast.FunctionDef)
+                and n.name == "_build_view")
+    body = ast.get_source_segment(_bert_src(), view) or ""
+
+    # The buttons exist before anything is fitted, or there is nothing to
+    # measure the chips against and the fitter is guessing.
+    c.ok("self.edit_btn" in body and "self.done_btn" in body,
+         "the footer builds its buttons")
+    c.ok("_fit_foot" in body, "and asks what the row can hold")
+    c.ok(body.index("self.done_btn = ") < body.index("_fit_foot"),
+         "with both buttons made before the row is fitted")
+
+    # The chips are never added straight from chip(): that is the version
+    # that cannot be made narrower than its own words.
+    fit = next((n for n in card.body if isinstance(n, ast.FunctionDef)
+                and n.name == "_fit_foot"), None)
+    c.ok(fit is not None, "the fitter is a function of its own")
+    fsrc = ast.get_source_segment(_bert_src(), fit) or ""
+    c.ok("elided_chip" in fsrc, "and issue chips go through elided_chip")
+
+    # A chip cut to nothing is worse than no chip: the floor has to be big
+    # enough to carry the word that tells two issues apart.
+    c.ok(getattr(bert, "CARD_ISSUE_MIN_W", 0) >= 124,
+         "an issue chip keeps room for its first word "
+         f"(CARD_ISSUE_MIN_W = {getattr(bert, 'CARD_ISSUE_MIN_W', None)})")
+
+    return c.report()
+
+
+def check_the_age_gives_up_words_before_it_is_cut() -> bool:
+    """
+    The toolbar's rule, one row down.
+
+    `status_forms()` drops a noun rather than letting Qt squeeze the label,
+    because a word given up whole still reads and half a word does not. The
+    card's age has the same two forms for the same reason -- and its short
+    one is exactly what the card said before it was labelled at all, so
+    giving the words up costs the number nothing.
+
+    Pure, so it can be exercised without a QApplication: `_age_forms` does
+    date arithmetic and returns strings, and builds no widget.
+    """
+    c = Check("the age gives up words before it is cut")
+
+    day = 86400
+    forms = bert.Card._age_forms(iso(-3 * day))
+    c.equal(len(forms), 2, "there are two forms to choose between")
+    c.ok(forms[0].startswith("Last reply"),
+         f"the long one names what it counts: {forms[0]!r}")
+    c.equal(forms[-1], "3d", "and the short one is the bare number")
+    c.ok(len(forms[0]) > len(forms[-1]), "longest first, so the first that fits wins")
+
+    # "Last updated" is the one wording that must never appear: this is the
+    # newest message from a person, and cards.updated_at is a different fact.
+    c.ok("updated" not in forms[0].lower(),
+         "and it does not claim the ticket was updated")
+
+    c.equal(bert.Card._age_forms(iso(-2 * day))[0], "Last reply 2d",
+            "the number is the days, not a bucket")
+    c.equal(bert.Card._age_forms(iso(-day))[0], "Last reply 1d",
+            "and one day reads as one")
+
+    # Blank has two causes and neither draws anything.
+    c.equal(bert.Card._age_forms(None), [],
+            "no timestamp -- nobody has ever posted -- says nothing")
+    c.equal(bert.Card._age_forms(iso(-60)), [],
+            "and somebody posting today says nothing either")
+    # A clock disagreeing is not an age.
+    c.equal(bert.Card._age_forms(iso(3 * day)), [],
+            "a message stamped in the future is not shown as -3d")
 
     return c.report()
 
@@ -1046,7 +1149,9 @@ def check_a_feed_row_sits_on_one_line() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_work_item_added, check_a_work_item_removed,
+CHECKS = (check_a_cards_buttons_never_leave_the_card,
+          check_the_age_gives_up_words_before_it_is_cut,
+          check_a_work_item_added, check_a_work_item_removed,
           check_an_edit_that_is_not_work,
           check_it_survives_a_row_it_cannot_read,
           check_renamed_says_the_new_name,

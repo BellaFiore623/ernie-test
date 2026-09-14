@@ -141,6 +141,11 @@ RAIL_MAX_W = 460           # wider is a second board, not a running order
 RAIL_ROW_CHROME = 26
 CARD_HEAD_SPACING = 8      # between the columns of a card's top row
 CARD_CLIENT_MIN_W = 44     # a client name never shrinks past this, it elides
+CARD_FOOT_SPACING = 16     # between the columns of a card's bottom row
+CARD_ISSUE_MIN_W = 124     # an issue chip that cannot show its first word
+                           # says nothing: measured, 'equipment' and
+                           # 'client cr' are each 124px, and those first
+                           # words are what tell the two issues apart
 CARD_MIN_W = 140           # below this a card is not a card, whatever the window
 RAIL_REDRAW_MS = 140       # after the handle settles, not during
 RAIL_BAR_H = 2             # the rule beside a band's name in the running order
@@ -1475,6 +1480,40 @@ def chip(text, bg, fg, dashed=False):
     return lab
 
 
+def age_css():
+    """How the age reads on a card. A function, like `btn_css()`, because the
+    colour comes off the palette in force and a string frozen at import would
+    be whichever theme the module happened to be imported under."""
+    return f"color:{T.MUTED}; font-size:11px; background:transparent;"
+
+
+def elided_chip(text, bg, fg, room):
+    """A chip cut to the room it is given, with the whole of it on hover.
+
+    `chip()` is a QLabel, and an unwrapped QLabel cannot be made narrower
+    than its own text -- it reports that width as a floor and shoves whatever
+    comes after it off the end of the row. That is the feed's rule arrived at
+    on a card: **the text is what gives way, never the controls.**
+
+    Cut against the font it actually draws in, the way a rail row and the
+    client name are, rather than at a character count -- these sit in a
+    stylesheet with padding and a border, so the chrome is measured off the
+    hint rather than assumed.
+    """
+    lab = chip(text, bg, fg)
+    lab.ensurePolished()
+    fm = QFontMetrics(lab.font())
+    chrome = lab.sizeHint().width() - fm.horizontalAdvance(text)
+    if lab.sizeHint().width() > room:
+        cut = fm.elidedText(text, Qt.ElideRight, max(room - chrome, 0))
+        lab.setText(cut)
+        # Only when something was actually hidden: a tooltip repeating the
+        # words under it is noise on every card that has one.
+        if cut != text:
+            lab.setToolTip(text)
+    return lab
+
+
 def ticket_url(base, key):
     """Where a PIP key lives, or "" if it cannot be said.
 
@@ -1581,11 +1620,12 @@ class ClickableLabel(QLabel):
     Reports no minimum width, for the reason FeedLine does: an ordinary
     QLabel cannot be made narrower than its text, so it claims the whole
     client name as a floor and shoves everything after it off the end. The
-    card's corner is fixed columns -- the PIP count, the age, the mark
-    saying a change has not gone out -- and they were the ones that
+    card's corner is fixed columns -- the build-ticket link, the PIP count,
+    the mark saying a change has not gone out -- and they were the ones that
     disappeared. Measured with a real customer: 'Municipal Authority of
-    Westmoreland County' wants 408px inside a 300px card, and the age and
-    the mark both landed past the edge, cut away in silence.
+    Westmoreland County' wants 408px inside a 300px card, and the age (which
+    sat here then) and the mark both landed past the edge, cut away in
+    silence.
 
     The text is what gives way. That is the same call the feed rows make,
     and for the same reason -- a clipped name is still a name, while a
@@ -2577,8 +2617,6 @@ class Card(QFrame):
         # this is a real distinction there -- and in the sandbox, where every
         # thread has exactly one, it correctly says nothing at all.
         pips = d.get("ticket_count") or 0
-        ago = QLabel(self._ago(d.get("last_human_at")))
-        ago.setStyleSheet(f"color:{T.MUTED}; font-size:11px; background:transparent;")
 
         # Built before they are placed, so the client can be told what is
         # actually left instead of claiming the row and shoving them off it.
@@ -2602,7 +2640,6 @@ class Card(QFrame):
 
         if pips > 1:
             after.append(chip(f"{pips} PIPs", T.CHIP_BG, T.MUTED))
-        after.append(ago)
 
         # Last in the row, so it sits in the card's top corner: this is the
         # one thing on the card about the change rather than about the ticket.
@@ -2674,16 +2711,16 @@ class Card(QFrame):
             self.body.addWidget(work)
 
         foot = QHBoxLayout()
-        foot.setSpacing(16)
-        foot.addStretch()
-        for issue in (d.get("issues") or [])[:2]:
-            if issue not in BLOCKING:
-                foot.addWidget(chip(issue.replace("_", " "), T.AMBER_BG, T.AMBER_FG))
+        foot.setSpacing(CARD_FOOT_SPACING)
 
+        # The buttons are built before they are placed, so the chips can be
+        # told what is actually left instead of claiming the row and pushing
+        # them off it. Measured before this: one issue chip on a card in a
+        # 463px column laid Complete out at x=470 -- the primary action, off
+        # the edge of its own card, on 13 of production's 50 open tickets.
         self.edit_btn = QPushButton("Edit")
         self.edit_btn.setStyleSheet(btn_css())
         self.edit_btn.clicked.connect(self.enter_edit)
-        foot.addWidget(self.edit_btn)
 
         # Qt puts a button's icon on the left, always.
         self.done_btn = QPushButton("Complete ")
@@ -2692,6 +2729,14 @@ class Card(QFrame):
         self.done_btn.setIcon(tick_icon(T.OK_FG))
         self.done_btn.setIconSize(QSize(12, 12))
         self.done_btn.clicked.connect(lambda: self.board.complete(self.thread_id))
+
+        age, chips = self._fit_foot(d)
+        if age:
+            foot.addWidget(age)
+        foot.addStretch()
+        for w in chips:
+            foot.addWidget(w)
+        foot.addWidget(self.edit_btn)
         foot.addWidget(self.done_btn)
         self.body.addLayout(foot)
         self.set_writable(self.board.writable())
@@ -2699,13 +2744,141 @@ class Card(QFrame):
 
     # -- edit mode ---------------------------------------------------------
 
+    def _fit_foot(self, d):
+        """The footer's columns, fitted to the card before any of them is placed.
+
+        The row was laid out chips-first, buttons-after, and a QLabel reports
+        its whole text as a minimum width -- so the chips took the row and the
+        buttons were pushed past the card's edge. Rendered and measured at the
+        board column's own 463px minimum: one chip put **Complete at x=470 on
+        a 463px card**, and two needed 850px, over even at the full 846. Not
+        hypothetical and not rare -- 13 of production's 50 open cards carry an
+        issue chip and 4 carry two. Nothing reported it because nothing had
+        failed: the layout did exactly what it was asked, and what went
+        missing went off-screen.
+
+        **The controls never give way**, which is the feed's rule arrived at
+        on a card. What gives way, in order:
+
+        1. **The age gives up its words first.** `_fit_toolbar` already does
+           this with `status_forms()` -- shortened before anything is cut,
+           because a word dropped whole still reads and half a word does not.
+           `Last reply 3d` becomes `3d`, which is what the card said before
+           it was labelled at all.
+        2. **Then a second chip is dropped**, its text moving into the one
+           that stays. Two stubs cut to four letters each say less between
+           them than one chip that can be read, and the tooltip loses nothing.
+        3. **Then the age goes altogether**, because it is context and an
+           amber chip is the card asking for somebody. Measured at the 463px
+           minimum, keeping `12d` left the chip a pixel under its floor and
+           took the issue off the card to make room for a number.
+        4. **Only then is the survivor cut**, to `CARD_ISSUE_MIN_W` at worst,
+           with the whole of it on hover.
+
+        Nothing is ever dropped in silence: whatever is not on the row is in
+        the tooltip of what is.
+        """
+        texts = [i.replace("_", " ") for i in (d.get("issues") or [])[:2]
+                 if i not in BLOCKING]
+
+        room0 = self.room or self.width()
+        m = self.body.contentsMargins()
+        room0 -= m.left() + m.right()
+        for b in (self.edit_btn, self.done_btn):
+            b.ensurePolished()
+            room0 -= b.sizeHint().width()
+
+        def room_for(age_w, n):
+            # Every gap in the row, the stretch's own included.
+            fixed = 2 + (1 if age_w else 0)
+            return room0 - age_w - CARD_FOOT_SPACING * (fixed + n)
+
+        def widths(ts):
+            out = []
+            for t in ts:
+                c = chip(t, T.AMBER_BG, T.AMBER_FG)
+                c.ensurePolished()
+                out.append(c.sizeHint().width())
+            return out
+
+        # Longest first, so the first that fits is the most it can say.
+        forms = self._age_forms(d.get("last_human_at"))
+        want = widths(texts)
+
+        chosen = forms[-1] if forms else None
+        keep = texts
+        for form in forms or [None]:
+            if sum(want) <= room_for(self._age_width(form), len(texts)):
+                chosen = form
+                break
+        else:
+            # Nothing fits whole, so the age is already down to its number.
+            # Two chips are worth keeping only if both can still be read:
+            # `eq...` beside `cl...` says less between them than one chip
+            # somebody can finish reading.
+            if (len(texts) == 2
+                    and room_for(self._age_width(chosen), 2) < CARD_ISSUE_MIN_W * 2):
+                keep = texts[:1]
+            if keep and room_for(self._age_width(chosen),
+                                 len(keep)) < CARD_ISSUE_MIN_W:
+                # The age goes last but it goes before the chip does. It is
+                # context -- how long this has been quiet -- and an amber chip
+                # is the card asking for somebody. Measured at the column's
+                # 463px minimum, keeping `12d` left the chip one pixel under
+                # its floor, so the issue and its tooltip vanished off a card
+                # to make room for a number.
+                chosen = None
+                if room_for(0, len(keep)) < CARD_ISSUE_MIN_W:
+                    keep = []
+
+        age = self._age_label(chosen, d.get("last_human_at"))
+        made = []
+        for i, t in enumerate(keep):
+            c = elided_chip(t, T.AMBER_BG, T.AMBER_FG,
+                            self._shares(keep, room_for(
+                                self._age_width(chosen), len(keep)))[i])
+            # Whatever is not on the row is still readable on what is.
+            if i == 0 and len(keep) < len(texts):
+                c.setToolTip("\n".join(texts))
+            made.append(c)
+        return age, made
+
+    @staticmethod
+    def _shares(texts, room):
+        """How much of `room` each chip gets.
+
+        Not an even split: a chip that already fits keeps its own width and
+        hands the difference on, so `client cr not found` is not shortened to
+        pay for a neighbour that had room to spare. Settled by going round
+        until nothing more fits, which for two chips is at most twice.
+        """
+        made = [chip(t, T.AMBER_BG, T.AMBER_FG) for t in texts]
+        for w in made:
+            w.ensurePolished()
+        want = [w.sizeHint().width() for w in made]
+        out = [None] * len(want)
+        while True:
+            open_ = [i for i, v in enumerate(out) if v is None]
+            if not open_:
+                return out
+            share = max(room // len(open_), 0)
+            fits = [i for i in open_ if want[i] <= share]
+            if not fits:
+                for i in open_:
+                    out[i] = share
+                return out
+            for i in fits:
+                out[i] = want[i]
+                room -= want[i]
+
     def _client_room(self, fixed):
         """What the card's top row has left for the client name.
 
         Measured rather than assumed. A rail row can take a constant off its
         width because every row is the same shape; a card's head is not -- the
-        queue tag, an "edited" chip, a PIP count, the age and the unsent mark
-        are each there or not, and each as wide as its own text. So the chrome
+        queue tag, an "edited" chip, a PIP count, the build-ticket link and
+        the unsent mark are each there or not, and each as wide as its own
+        text. So the chrome
         is asked how big it is.
 
         sizeHint() after ensurePolished(), because the padding these carry
@@ -3102,6 +3275,25 @@ class Card(QFrame):
         self._press = None
 
     @staticmethod
+    def _age_days(ts):
+        """Whole days since `ts`, or None where there is no usable one.
+
+        None and 0 are different answers and both draw nothing, which is why
+        they are told apart here rather than at the label: no timestamp means
+        no person has ever posted in the thread, and 0 means somebody posted
+        today. The second is the common case on a live board; the first is
+        what the sandbox is full of, because the seeder writes every message
+        as the bot.
+        """
+        if not ts:
+            return None
+        try:
+            then = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return (datetime.now(timezone.utc) - then).days
+
+    @staticmethod
     def _ago(ts):
         """How long since a person last said anything in the thread.
 
@@ -3110,15 +3302,84 @@ class Card(QFrame):
         would have assumed anyway -- and it read as information, which cost it
         a glance each time. The number is worth having exactly when it is not
         today.
+
+        A negative reads as nothing too. It means a message is stamped in the
+        future, which is a clock disagreeing rather than an age, and "-1d" on
+        a card is a bug report nobody can act on.
         """
-        if not ts:
-            return ""
-        try:
-            then = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        except ValueError:
-            return ""
-        d = (datetime.now(timezone.utc) - then).days
-        return "" if d == 0 else "1d" if d == 1 else f"{d}d"
+        d = Card._age_days(ts)
+        return "" if d is None or d <= 0 else f"{d}d"
+
+    @classmethod
+    def _age_forms(cls, ts):
+        """What the age can say, longest first, or nothing at all.
+
+        Two forms rather than one, for the reason `status_forms()` has them:
+        a row too tight for the whole label should drop a **word**, not cut
+        one. `Last reply 3d` is 143px and `3d` is 22, and the short form is
+        exactly what the card said before it was labelled -- so giving the
+        words up costs the number nothing.
+        """
+        d = cls._age_days(ts)
+        if d is None or d <= 0:
+            return []
+        # "Last reply", not "last updated": this is the newest message from a
+        # person, where `cards.updated_at` is this machine's own clock about
+        # its own row -- two different facts, and the wrong word would send a
+        # reader to the wrong one. The bare number read as the *ticket's* age,
+        # which is the more obvious thing to put on a card and is not what it
+        # is; the words are what stop that, and the tooltip is then free to
+        # carry only the two rules it cannot show.
+        return [f"Last reply {d}d", f"{d}d"]
+
+    @staticmethod
+    def _age_width(text):
+        """What a form costs the row. 0 for no age, which takes no column."""
+        if not text:
+            return 0
+        w = QLabel(text)
+        w.setStyleSheet(age_css())
+        w.ensurePolished()
+        return w.sizeHint().width()
+
+    @classmethod
+    def _age_label(cls, text, ts):
+        """The age as it sits on the card, or None when there is nothing to say.
+
+        Built only when it has a number, rather than added blank: an empty
+        label still takes a column and its spacing, and a row of invisible
+        chrome is the kind of thing that is only ever found by measuring.
+
+        **It sits in the footer, not the card's corner**, which is also what
+        makes the words affordable. Every column in the head is paid for by
+        the client name -- `_client_room` subtracts each one -- and the corner
+        had just grown a `Build PIP-8448` link, which is wide. Measured across
+        production's 50 open cards, the corner runs 207px on average and 342px
+        at its widest inside a column whose minimum is 463, and the age was
+        56px of that on every card; at the narrowest the client name was
+        pinned at `CARD_CLIENT_MIN_W`, clamped at its floor having run out
+        altogether. The footer's left-hand end was empty, because everything
+        in it is pushed right by a stretch, so the age costs the name nothing
+        there -- and there is room for words, which in the head there was not.
+
+        The tooltip says what the number counts, because neither form does.
+        `3d` on a ticket reads as the *ticket's* age, which is the more
+        obvious thing to put on a card and is not what this is; and the two
+        rules that decide when it is blank -- bots do not count, today says
+        nothing -- can only live here, since a card that is blank has no
+        widget to hover.
+        """
+        if not text:
+            return None
+        d = cls._age_days(ts)
+        w = QLabel(text)
+        w.setStyleSheet(age_css())
+        day = "day" if d == 1 else "days"
+        w.setToolTip(f"A person last posted in this thread {d} {day} ago." + "\n\n"
+                     "Messages from bots don't count, and nothing is shown "
+                     "when somebody has posted today.")
+        return w
+
 
 
 class Band(QWidget):

@@ -1286,6 +1286,83 @@ or worse, how long a ticket takes, or which ones have been open since April.
   imitating Python-Interface-Bot on the reasoning that "Bert shows nothing
   from a Build Request yet", which stopped being true here -- so the sandbox
   had no build tickets at all and the feature was invisible on it.
+- **The age moved to the footer, because every column in the head is paid
+  for by the client name.** `_client_room` subtracts each one, so the corner
+  and the customer are drawing on the same width -- and the corner had just
+  grown a `Build PIP-8448` link, which is wide. Measured across production's
+  50 open cards, the corner runs **207px on average and 342px at its widest**
+  inside a column whose minimum is 463, and the age is **56px of that on
+  every card**. At the narrowest the client name was pinned at
+  `CARD_CLIENT_MIN_W` -- clamped at its floor, having run out altogether --
+  and it gets 68px there now, 56 more at every width above it.
+  **The footer's left-hand end was free**, because everything in it is pushed
+  right by a stretch, so the age costs nothing there. The **corner stays the
+  mark's**: "last in the row, so it sits in the card's top corner" is a
+  decision about the one thing on a card that is about the change rather than
+  the ticket, and the age leaving does not change who owns that end.
+  **It says what it counts, because the number never did.** `3d` in the
+  corner of a ticket reads as the *ticket's* age, which is the more obvious
+  thing to put on a card and is not what this is: it is `last_human_at`, the
+  newest message with `is_bot = 0`. So it reads **`Last reply 3d`**, and
+  **never "last updated"** -- `cards.updated_at` is this machine's own clock
+  about its own row, a different fact, and the wrong word sends a reader to
+  it. The tooltip carries the two rules no label can show, and is the only
+  place a person looking at a card can find the bot one. Drawn only when
+  there is a number, rather than added blank -- an empty label still takes a
+  column and its spacing.
+  **And it gives up its words before anything is cut**, which is
+  `_fit_toolbar`'s rule one row down: `Last reply 3d` is 143px and `3d` is
+  22, and the short form is exactly what the card said before it was
+  labelled, so the words cost the number nothing. `_age_forms` is pure and
+  returns them longest first, so the first that fits is the most the row can
+  say.
+  **Blank has two causes and they are not the same news.** No timestamp
+  means nobody has *ever* posted; 0 days means somebody posted today, which
+  is deliberately silent because most of the board is today most of the time.
+  Production shows a number on **all 50** open cards and is blank for neither
+  reason. The sandbox is blank on **30 of 34**, because the seeder writes
+  every message as the bot -- so the four that do show one are the threads
+  opened by hand on 2026-09-11. A board looking broken there is the seeder,
+  not the figure. `_age_days` returns `None` against `0` so the two stay
+  told apart, and a **negative** reads as nothing too: that is a clock
+  disagreeing rather than an age, and `-1d` on a card is a bug report nobody
+  can act on.
+- **A card's buttons never leave the card, and they used to.** The footer was
+  laid out chips-first and buttons-after, and an unwrapped `QLabel` cannot be
+  made narrower than its own text -- so two amber issue chips claimed the row
+  and Edit and Complete were pushed past the edge. Rendered and measured at
+  the board column's own 463px minimum: one chip laid **Complete out at
+  x=470 on a 463px card**, and two needed 850px, over even at the full 846.
+  **13 of production's 50 open cards carry an issue chip and 4 carry two**,
+  so this was live on a quarter of the board. Nothing reported it because
+  nothing had failed -- the layout did exactly what it was asked, and what
+  went missing went off-screen. It is the feed row's finding on a card, and
+  it resolves the same way: **the text gives way, the controls never do.**
+  `_fit_foot` fits the whole row before a widget is placed, which is why the
+  buttons are built before they are added. What gives way, in order: the age
+  drops its **words**; then a *second* chip is dropped, its text moving into
+  the one that stays; then the age goes **altogether**; and only then is the
+  survivor cut, with the whole of it on hover. Nothing is ever dropped in
+  silence -- whatever is not on the row is in the tooltip of what is.
+  **The age goes before the chip does**, because it is context and an amber
+  chip is the card asking for somebody. Found by measuring rather than
+  reasoned to: at the column's 463px minimum, keeping `12d` left the chip
+  **one pixel** under its floor, so the issue and its tooltip went off the
+  card to make room for a number. Verified across 240 renders -- both themes,
+  five ages, six widths, four issue combinations -- that nothing lands off
+  the card, no chip draws empty, and every issue is either readable in full
+  or in a tooltip.
+  **Two stubs say less than one chip.** `eq...` beside `cl...` is two amber
+  shapes and no information, so `CARD_ISSUE_MIN_W` is the width a chip needs
+  to carry its **first word** -- measured, `equipment` and `client cr` are
+  124px each, and those first words are the whole of what tells the two
+  issues apart. Below that the second chip goes rather than both being cut to
+  nothing.
+  **Room is shared, not split evenly.** A chip that already fits keeps its
+  own width and hands the difference on, so `client cr not found` is not
+  shortened to pay for a neighbour with room to spare. `_shares` settles it
+  by going round until nothing more fits, which for two chips is at most
+  twice.
 - **A filter says how many it holds.** `PROD (3)`, `OPS (4)`. The checkboxes
   said which tags exist and nothing about how much was behind each, so the
   answer to "how much OPS work is there" was to click three boxes off and
