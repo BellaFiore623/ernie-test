@@ -2194,6 +2194,62 @@ def a_few(n, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
+# **The equipment the board can be narrowed to, and what each covers.**
+#
+# The names are what people say; `eq_type` is what `ernie_extract` reads off
+# a title, and the two are not the same word. Measured against production's
+# 889 threads: SSD 217, EReel 166, ODE 52, LED 14, OLK 3.
+#
+# **Bot covers SSD and LED**, because both are bots -- production carries
+# `SSD0040: Edge AI Services DEMO bot` and `OPS: IPI - LED Bot (exception)
+# LED0059`, which says so outright. Splitting LED into a chip of its own is
+# one line here if it turns out to be a distinct thing to the people using
+# this; folding it in was the call that keeps the row to the four that were
+# asked for.
+#
+# A thread can carry several: 65 of production's threads have two or more and
+# one has six, so a card matching *any* selected type is shown rather than
+# needing all of them.
+EQUIPMENT_FILTERS = (
+    ("Bot", ("SSD", "LED")),
+    ("E-Reels", ("EReel",)),
+    ("ODE", ("ODE",)),
+    ("OLK", ("OLK",)),
+)
+
+
+def equipment_types(chosen) -> set:
+    """The `eq_type` values behind a set of chip labels."""
+    return {t for name, types in EQUIPMENT_FILTERS if name in chosen
+            for t in types}
+
+
+def equipment_counts(cards) -> dict:
+    """How many open tickets carry each kind, across the whole board.
+
+    The whole board, always -- the same rule `queue_counts` follows and for
+    the same two reasons. Counted after filtering, turning one chip on would
+    change the number on another; counted against the search it would answer
+    "how many did you find", which is what the board itself already shows.
+
+    A card with several pieces counts once under each kind it carries, so
+    these deliberately do not sum to the board. **Most cards are under none
+    of them**: 31 of production's 50 open cards have no equipment parsed at
+    all, so the chips add to well under the board's size and a reader has to
+    be able to see that rather than wonder where the rest went. That is what
+    the counts are for.
+    """
+    out = {name: 0 for name, _ in EQUIPMENT_FILTERS}
+    for c in cards:
+        if c.get("completed_at"):
+            continue
+        types = {e.get("eq_type") for e in (c.get("equipment") or [])}
+        for name, wanted in EQUIPMENT_FILTERS:
+            if types & set(wanted):
+                out[name] += 1
+    return out
+
+
 def queue_counts(cards):
     """How many open tickets wear each tag.
 
@@ -2217,6 +2273,66 @@ def queue_counts(cards):
 def queue_label(queue, count):
     """`OPS` until the board has loaded, `OPS (5)` after."""
     return queue if count is None else f"{queue} ({count})"
+
+
+class EquipChip(QPushButton):
+    """One equipment filter, as a pill that fills when it is on.
+
+    **Deliberately not a checkbox**, though the queue filters beside it are.
+    Those default to all-checked and you *uncheck* to narrow; these default
+    to none-on, and turning one on narrows to it -- opposite conventions, and
+    two rows of identical-looking controls behaving oppositely is the kind of
+    thing nobody works out from looking. A pill is visibly a different
+    control, so the different rule reads as intended rather than as a bug.
+
+    None on means the board is unnarrowed, which is what makes "click ODE to
+    see the ODEs" work in one click rather than three unchecks.
+    """
+
+    def __init__(self, name):
+        super().__init__(name)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.count = None
+        f = QFont()
+        f.setPointSize(9)
+        f.setWeight(QFont.DemiBold)
+        self.setFont(f)
+        self._paint()
+
+    def _paint(self):
+        # On, it is the accent; off, it is a control sitting a step under the
+        # bar it is on -- the same relationship every other control here has
+        # to the surface behind it.
+        self.setStyleSheet(
+            f"QPushButton {{ color:{T.MUTED}; background:{T.CONTROL};"
+            f" border:1px solid {T.LINE}; border-radius:10px;"
+            f" padding:3px 10px; }}"
+            f"QPushButton:hover {{ border-color:{T.ACCENT}; }}"
+            f"QPushButton:checked {{ color:{T.ON_ACCENT};"
+            f" background:{T.ACCENT}; border-color:{T.ACCENT}; }}")
+
+    def set_count(self, n):
+        """How many open tickets carry this kind. Guarded like QueueBox's.
+
+        `render()` runs on every poll and every drag, and `updateGeometry` on
+        five controls relays the row each time. The number moves when a
+        ticket is made, closed or retitled; nothing else needs the layout
+        touched.
+        """
+        if n == self.count:
+            return
+        self.count = n
+        self.setText(f"{self.text().split('  ')[0]}  {n}")
+        self.setToolTip(
+            f"{n} open ticket{'' if n == 1 else 's'} carrying "
+            f"{self.text().split('  ')[0]}. Counted across the whole board, so "
+            f"it does not move with the search."
+            "\n\n"
+            f"A ticket with several pieces is counted under each, and one "
+            f"with none is under no chip at all -- so these do not add up to "
+            f"the board.")
+        self.updateGeometry()
 
 
 class QueueBox(QCheckBox):
@@ -4327,6 +4443,10 @@ class Bert(QMainWindow):
         self.await_since = 0.0      # started from, to tell a new one landing
                                     # from the same one ageing
         self.filters = {q: True for q in T.QUEUE}
+        # Which equipment chips are on. **Empty means unnarrowed**, which is
+        # the opposite of `filters` above and is why they are not checkboxes:
+        # turning one on narrows to it, rather than turning one off hiding it.
+        self.equip: set[str] = set()
         self.cards = []
         self.feed = []
         # Which rows are open, by event_id. The feed is rebuilt from
@@ -4389,6 +4509,12 @@ class Bert(QMainWindow):
         self.toast_timer.timeout.connect(self._clear_toast)
 
         outer.addWidget(self._toolbar())
+        # **Its own row, because the first one has no room.** At the window's
+        # minimum width the toolbar already asks for about 45px more than it
+        # has -- `_fit_toolbar` exists entirely to shorten two labels until it
+        # fits -- so five more controls in there would be five more things for
+        # it to squeeze, and the search box would lose the width again.
+        outer.addWidget(self._equipment_row())
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -4559,6 +4685,59 @@ class Bert(QMainWindow):
         QTimer.singleShot(0, self.refresh)
         if not self.name():
             QTimer.singleShot(300, self.open_settings)
+
+    def _equipment_row(self):
+        """The equipment filters, under the toolbar.
+
+        Chips rather than checkboxes, and none-on meaning everything: see
+        `EquipChip`. The row filters the board **and the running order**,
+        which is what the queue checkboxes beside it already do -- the two
+        lists are the same board said twice, and one showing five tickets
+        while the other shows thirty-four reads as a fault in both.
+        """
+        row = QWidget()
+        row.setStyleSheet(
+            f"background:{T.WELL}; border-bottom:1px solid {T.LINE};")
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(16, 6, 16, 6)
+        lay.setSpacing(6)
+
+        caption = QLabel("Equipment")
+        caption.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
+                              f" background:transparent;")
+        lay.addWidget(caption)
+        lay.addSpacing(4)
+
+        self.chips = {}
+        for name, _ in EQUIPMENT_FILTERS:
+            chip = EquipChip(name)
+            chip.toggled.connect(
+                lambda on, k=name: (self.equip.add(k) if on
+                                    else self.equip.discard(k), self.render()))
+            lay.addWidget(chip)
+            self.chips[name] = chip
+
+        # Only when something is on, because a control that does nothing is
+        # noise -- and this one says, in a word, what state the row is in.
+        self.clear_equip = QPushButton("Show all")
+        self.clear_equip.setStyleSheet(btn_css())
+        self.clear_equip.setCursor(Qt.PointingHandCursor)
+        self.clear_equip.clicked.connect(self._clear_equipment)
+        self.clear_equip.hide()
+        lay.addSpacing(6)
+        lay.addWidget(self.clear_equip)
+
+        lay.addStretch()
+        return row
+
+    def _clear_equipment(self):
+        """Back to the whole board, without four separate clicks."""
+        for chip in self.chips.values():
+            chip.blockSignals(True)
+            chip.setChecked(False)
+            chip.blockSignals(False)
+        self.equip.clear()
+        self.render()
 
     def _toolbar(self):
         bar = self.bar = QWidget()
@@ -6421,7 +6600,11 @@ class Bert(QMainWindow):
         narrowing rather than helping it.
         """
         return bool(self.search.text().strip()
-                    or not all(self.filters.values()))
+                    or not all(self.filters.values())
+                    # An equipment chip narrows exactly as deliberately as a
+                    # search does, so a band it emptied hides rather than
+                    # standing there as a heading over nothing.
+                    or self.equip)
 
     def begin_drag(self):
         self.dragging = True
@@ -6628,10 +6811,29 @@ class Bert(QMainWindow):
         # Before any of the filtering below, deliberately -- see queue_counts.
         for q, n in queue_counts(self.cards).items():
             self.qboxes[q].set_count(n)
+        for name, n in equipment_counts(self.cards).items():
+            self.chips[name].set_count(n)
+        self.clear_equip.setVisible(bool(self.equip))
+
+        wanted_types = equipment_types(self.equip)
 
         def keep(c):
             if not self.filters.get(c.get("queue") or "", True):
                 return False
+            # **Any of the chosen kinds, not all of them.** 65 of production's
+            # threads carry two or more pieces and one carries six, so a
+            # ticket about a bot *and* a reel belongs under both chips.
+            #
+            # A ticket with no equipment at all matches nothing and is hidden
+            # while any chip is on -- which is what a filter is, and is worth
+            # knowing about rather than discovering: **31 of production's 50
+            # open cards have none**, so one chip can empty most of the board
+            # legitimately. That is what the counts on the chips are for, and
+            # why `Show all` appears the moment one is on.
+            if wanted_types:
+                mine = {e.get("eq_type") for e in (c.get("equipment") or [])}
+                if not (mine & wanted_types):
+                    return False
             if term:
                 hay = " ".join(str(c.get(k) or "") for k in
                                ("name", "client_raw", "client_override",

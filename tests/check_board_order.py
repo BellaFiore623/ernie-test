@@ -427,10 +427,101 @@ class Box:
 class Narrowed:
     """Enough of Bert for filtering(), so no widget has to be built."""
 
-    def __init__(self, term="", filters=None):
+    def __init__(self, term="", filters=None, equip=None):
         self.search = Box(term)
         self.filters = filters if filters is not None else {
             "PROD": True, "OPS": True, "ENG": True, "CS": True}
+        # Empty is unnarrowed, the opposite of `filters` -- an equipment chip
+        # narrows by being *on*.
+        self.equip = set(equip or ())
+
+
+def check_the_equipment_chips_narrow_to_what_was_clicked() -> bool:
+    """
+    Click ODE, see the ODEs. One click, not three unchecks.
+
+    The queue checkboxes beside these default to all-on and narrow by being
+    turned *off*; these default to all-off and narrow by being turned *on*.
+    Opposite conventions, which is exactly why they are pills rather than a
+    second row of checkboxes -- a control that looks the same and behaves
+    backwards is the kind of thing nobody works out by looking.
+    """
+    c = Check("the equipment chips narrow to what was clicked")
+
+    def card(tid, *types):
+        return {"thread_id": tid, "completed_at": None,
+                "equipment": [{"eq_type": t, "raw": f"{t}-1"} for t in types]}
+
+    cards = [card("a", "ODE"), card("b", "EReel"), card("c", "SSD"),
+             card("d", "OLK"), card("e")]           # no equipment at all
+
+    def shown(chosen):
+        want = bert.equipment_types(chosen)
+        if not want:
+            return {x["thread_id"] for x in cards}
+        return {x["thread_id"] for x in cards
+                if {e["eq_type"] for e in x["equipment"]} & want}
+
+    c.equal(shown(set()), {"a", "b", "c", "d", "e"},
+            "nothing on shows the whole board")
+    c.equal(shown({"ODE"}), {"a"}, "ODE shows only the ODE")
+    c.equal(shown({"E-Reels"}), {"b"}, "E-Reels reads EReel, which is what "
+                                       "the parser calls it")
+    c.equal(shown({"Bot"}), {"c"}, "Bot reads SSD")
+    c.equal(shown({"ODE", "OLK"}), {"a", "d"},
+            "two chips is either, not both")
+
+    # A ticket about a bot and a reel belongs under both chips: 65 of
+    # production's threads carry two or more pieces and one carries six.
+    cards.append(card("f", "SSD", "EReel"))
+    c.ok("f" in shown({"Bot"}) and "f" in shown({"E-Reels"}),
+         "a ticket with two pieces is under both")
+
+    return c.report()
+
+
+def check_a_ticket_with_no_equipment_is_hidden_and_counted_for() -> bool:
+    """
+    The half of this that could look like a bug.
+
+    **31 of production's 50 open cards carry no equipment at all.** So one
+    chip can legitimately empty most of the board, and a reader who does not
+    know that sees three quarters of their tickets vanish and reasonably
+    concludes the filter is broken.
+
+    Hiding them is right -- a ticket with no equipment is not an ODE. What
+    makes it legible is the counts: the chips are numbered off the whole
+    board, they visibly do not add up to it, and `Show all` appears the
+    moment one is on.
+    """
+    c = Check("a ticket with no equipment is hidden, and counted for")
+
+    cards = [{"thread_id": "a", "completed_at": None,
+              "equipment": [{"eq_type": "ODE"}]},
+             {"thread_id": "b", "completed_at": None, "equipment": []},
+             {"thread_id": "c", "completed_at": None},
+             {"thread_id": "d", "completed_at": "2026-01-01",
+              "equipment": [{"eq_type": "ODE"}]}]
+
+    want = bert.equipment_types({"ODE"})
+    kept = [x["thread_id"] for x in cards
+            if {e["eq_type"] for e in (x.get("equipment") or [])} & want]
+    c.equal(kept, ["a", "d"], "only the ones carrying an ODE survive the chip")
+
+    counts = bert.equipment_counts(cards)
+    c.equal(counts["ODE"], 1, "the count is open tickets only, not closed ones")
+    c.equal(counts["Bot"], 0, "and a kind nothing carries counts nought")
+    c.ok(sum(counts.values()) < len([x for x in cards if not x["completed_at"]]),
+         "the chips add to less than the board, which is the honest answer")
+
+    # The narrowing has to count as narrowing, or a band it emptied stands
+    # there as a heading over nothing -- the same rule the search follows.
+    f = bert.Bert.filtering
+    c.ok(f(Narrowed(equip={"ODE"})),
+         "a chip counts as narrowing, so an emptied band hides")
+    c.ok(not f(Narrowed()), "and no chip on is not narrowing")
+
+    return c.report()
 
 
 def check_an_empty_band_is_still_named() -> bool:
@@ -511,7 +602,9 @@ def check_filtering_knows_what_narrowed_the_board() -> bool:
     return c.report()
 
 
-CHECKS = (check_predicate, check_new_cards_rank, check_one_order,
+CHECKS = (check_the_equipment_chips_narrow_to_what_was_clicked,
+          check_a_ticket_with_no_equipment_is_hidden_and_counted_for,
+check_predicate, check_new_cards_rank, check_one_order,
           check_a_reorder_says_where_it_went,
           check_a_reorder_that_moves_nothing_says_nothing,
           check_the_rail_clips_to_its_width,

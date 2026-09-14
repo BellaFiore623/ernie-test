@@ -1231,6 +1231,36 @@ or worse, how long a ticket takes, or which ones have been open since April.
   stops believing. It sits straight after the tally, which cannot show a
   ticket that arrived as one tag and left as another.
 
+- **The equipment row narrows by being turned on, and says so by not being
+  a checkbox.** `EQUIPMENT_FILTERS` maps the four names people say -- Bot,
+  E-Reels, ODE, OLK -- onto the `eq_type` the parser reads off a title, which
+  is not the same word: measured across production's 889 threads, SSD 217,
+  EReel 166, ODE 52, LED 14, OLK 3. **Bot covers SSD and LED**, because
+  production says so outright -- `SSD0040: Edge AI Services DEMO bot` and
+  `OPS: IPI - LED Bot (exception) LED0059`. Splitting LED out is one line if
+  it turns out to be its own thing to the people using this.
+  **Pills, not checkboxes, and that is the whole of why.** The queue filters
+  beside them default to all-on and narrow by being turned *off*; these
+  default to none-on and narrow by being turned *on*, so one click shows the
+  ODEs instead of three unchecks hiding everything else. Two rows of
+  identical-looking controls behaving oppositely is the thing nobody works
+  out by looking, so they are visibly a different control.
+  **Any of the chosen kinds, never all.** 65 of production's threads carry
+  two or more pieces and one carries six, so a ticket about a bot and a reel
+  belongs under both chips.
+  **A ticket with no equipment is hidden while a chip is on, and that needs
+  saying**: 31 of production's 50 open cards carry none at all, so one chip
+  can legitimately empty most of the board -- which reads as a broken filter
+  to anybody who does not know. The counts on the chips are what makes it
+  legible, deliberately not adding up to the board, and `Show all` appears
+  the moment a chip is on so getting back is one click.
+  **Its own row under the toolbar**, because that bar already asks for about
+  45px more than it has at the window's minimum width -- `_fit_toolbar`
+  exists entirely to shorten two labels until it fits, and five more controls
+  would be five more things for it to squeeze.
+  It narrows the **running order too**, which is what the queue checkboxes
+  already do: the two lists are the same board said twice, and one showing
+  three tickets while the other shows thirty-four reads as a fault in both.
 - **A filter says how many it holds.** `PROD (3)`, `OPS (4)`. The checkboxes
   said which tags exist and nothing about how much was behind each, so the
   answer to "how much OPS work is there" was to click three boxes off and
