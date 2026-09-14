@@ -62,6 +62,23 @@ CONTENT_CAP = 2000
 PACING = 0.4
 THREAD_PACING = 1.2      # thread creation is metered harder than posting
 
+# **Discord's own records, and only those.** A non-zero `type` does not mean
+# a system message: **19 is a REPLY** and **20 and 21 are a bot answering a
+# slash or context-menu command**, which is how Python-Interface-Bot posts
+# its Build and Return embeds. Those are ordinary conversation and carry the
+# content this whole exercise exists to copy.
+#
+# Read "type != 0" as "system" once, and it cost 357 real messages out of 388
+# deleted -- 288 replies, 51 command answers, 18 context-menu answers --
+# against 41 renames that genuinely needed removing. The check written to
+# confirm the deletion counted what remained against the `type == 0` messages
+# alone, so it shared the mistake and reported nothing real had gone.
+#
+# 4 is CHANNEL_NAME_CHANGE, which carries the new title as its content and
+# becomes a fake paste if replayed. 6 is CHANNEL_PINNED_MESSAGE, which has no
+# content at all. Those two are the whole list.
+SYSTEM_TYPES = {4, 6}
+
 # Embed keys Discord accepts on the way in. The mirror stores what came out,
 # which carries receive-only fields that a POST rejects.
 EMBED_KEYS = {"title", "description", "url", "color", "fields",
@@ -103,7 +120,7 @@ def messages_of(con, thread_id: str) -> list:
     """
     return con.execute(
         """SELECT m.message_id, m.author_display, m.author_name, m.is_bot,
-                  r.content, r.embeds_json
+                  COALESCE(m.type, 0) AS type, r.content, r.embeds_json
              FROM messages m
              JOIN message_revisions r ON r.message_id = m.message_id
             WHERE m.thread_id = ?
@@ -230,6 +247,77 @@ class Ledger:
         self.save()
 
 
+def prune_system(con, d, ledger, work, with_names: bool, dry: bool) -> dict:
+    """Take back the system messages an earlier run posted as conversation.
+
+    The clone used to replay everything, so Discord's own records -- renames
+    above all -- arrived looking like somebody had typed a thread title into
+    the chat. The extractor duly read equipment out of one and put a reel on
+    a card production does not credit with one, which is how it was noticed:
+    an equipment chip reading one higher than the real board.
+
+    Matched by **content and counted**, not by content alone. A thread can
+    hold a genuine message that says the same words as a rename -- that is
+    the entire ambiguity -- so this removes at most as many as production
+    says were system messages, oldest first, and leaves any surplus alone.
+    Deleting somebody's real message to tidy up an artefact of ours would be
+    a worse fault than the one being repaired.
+    """
+    counts = {"looked": 0, "deleted": 0, "missing": 0, "archived": 0}
+    for t, msgs in work:
+        src = t["thread_id"]
+        tid = ledger.thread_for(src)
+        if not tid:
+            continue
+        # **Discord refuses a delete in an archived thread**, with a 400
+        # rather than anything that reads like the reason. Unarchiving to
+        # tidy one up costs more than it fixes: a sync watching would see the
+        # thread reopen, reopen its card, then close it again when the
+        # archive went back -- and a reopen posts into the thread, so 132
+        # closed tickets would each get a line about coming back to the
+        # board. These are completed cards, off the board, and
+        # `equipment_counts` reads open ones only, so the artefact there
+        # costs nothing that is being looked at.
+        if t["completed_at"]:
+            counts["archived"] += 1
+            continue
+        wanted = {}
+        for m in msgs:
+            if m["type"] not in SYSTEM_TYPES:
+                continue
+            body = body_of(m, with_names).get("content", "")
+            wanted[body] = wanted.get(body, 0) + 1
+        if not wanted:
+            continue
+        counts["looked"] += sum(wanted.values())
+
+        # Oldest first, so "at most this many" takes the earliest ones --
+        # which is where a replayed record sits relative to a later reply.
+        seen, before = [], None
+        while True:
+            page = d.get(f"/channels/{tid}/messages", limit=100,
+                         **({"before": before} if before else {}))
+            if not page:
+                break
+            seen.extend(page)
+            if len(page) < 100:
+                break
+            before = page[-1]["id"]
+        for m in reversed(seen):
+            body = m.get("content") or ""
+            if wanted.get(body):
+                wanted[body] -= 1
+                counts["deleted"] += 1
+                if not dry:
+                    # Deleting one that has already gone answers 404, which
+                    # would raise; it is not worth riding out, so it is not
+                    # opted in.
+                    d.write("DELETE", f"/channels/{tid}/messages/{m['id']}")
+                    time.sleep(PACING)
+        counts["missing"] += sum(wanted.values())
+    return counts
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--source", default="prod-snapshot-20260910.db",
@@ -244,6 +332,9 @@ def main() -> None:
                     help="post message text verbatim, without the speaker")
     ap.add_argument("--dry-run", action="store_true",
                     help="say what would be written and write nothing")
+    ap.add_argument("--prune-system", action="store_true",
+                    help="delete system messages an earlier run replayed as "
+                         "chat, rather than cloning anything")
     a = ap.parse_args()
 
     if not os.path.exists(a.source):
@@ -260,7 +351,9 @@ def main() -> None:
     est = (len(work) * THREAD_PACING + total_msgs * PACING) / 60
     print(f"  about {est:.0f} minutes of writes\n")
 
-    if a.dry_run:
+    # The preview is about cloning. --prune-system is a different job and
+    # needs the connection, so its dry run happens further down.
+    if a.dry_run and not a.prune_system:
         for t, msgs in work[:8]:
             mark = " [closed]" if t["completed_at"] else ""
             print(f"  {t['name'][:68]}{mark}")
@@ -295,6 +388,20 @@ def main() -> None:
     print(f"writing into #{ch.get('name')} in guild {guild}")
 
     ledger = Ledger(a.ledger)
+
+    if a.prune_system:
+        got = prune_system(con, d, ledger, work, not a.no_names, a.dry_run)
+        verb = "would delete" if a.dry_run else "deleted"
+        print(f"  system messages production recorded: {got['looked']}")
+        print(f"  {verb}: {got['deleted']}")
+        if got["archived"]:
+            print(f"  left alone in {got['archived']} archived threads "
+                  f"-- Discord refuses a delete in one")
+        if got["missing"]:
+            print(f"  not found in the sandbox: {got['missing']} "
+                  f"(already gone, or never posted)")
+        return
+
     made = posted = skipped = 0
     for n, (t, msgs) in enumerate(work, 1):
         src = t["thread_id"]
@@ -316,6 +423,21 @@ def main() -> None:
         # Resume where this thread got to rather than at its first line.
         already = ledger.posted(src)
         for i, m in enumerate(msgs):
+            # Discord's own records are not conversation and must not be
+            # replayed as if they were. **Type 4 is a rename**, and it carries
+            # the new title as its content -- posted as chat it becomes
+            # somebody apparently pasting a thread title, which is exactly the
+            # ambiguity `messages.type` is stored to end: 573 of production's
+            # messages parse as a title and 550 of those were typed by people.
+            # Replayed, 203 renames became 203 pastes, and the extractor read
+            # equipment out of one of them and put a reel on a card that
+            # production does not credit with one.
+            #
+            # Recreating them honestly is not available either: a rename would
+            # have to be a real rename, at two per ten minutes.
+            if m["type"] in SYSTEM_TYPES:
+                ledger.note_posted(src, i + 1)
+                continue
             if i < already:
                 continue
             # Deliberately no retry_5xx: a 503 does not say whether the
