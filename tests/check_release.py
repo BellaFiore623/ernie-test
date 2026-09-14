@@ -63,7 +63,6 @@ def check_a_release_note_is_read_and_nothing_else_is() -> bool:
     for other, why in (
             ("**Board** — 3 open, 1 closed", "the summary message"),
             ("```json\n{\"thread\": \"1\"}\n```", "a card payload"),
-            ("Release 0.9.1", "the marker has to be the marker"),
             ("**Release** soon", "no version in it"),
             ("**Release**", "nothing after the marker"),
             ("we should release 0.9.1 tomorrow", "somebody talking"),
@@ -300,7 +299,53 @@ def check_a_floor_nobody_can_reach_is_never_obeyed() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_release_note_is_read_and_nothing_else_is,
+def check_the_opener_forgives_how_a_person_writes_it() -> bool:
+    """
+    The note is written by a person now, so it has to read like one.
+
+    It was `content.startswith("**Release**")`, exactly -- which was fine
+    while a script posted it and wrong the moment a person did. The first
+    note written by hand said `Release 0.9.1`, with no asterisks, and the
+    channel went quiet: `read_release` answered {}, which `note_release`
+    treats as "the note was taken down" and retires the stored version. Every
+    board would have stopped knowing 0.9.1 existed.
+
+    **It can afford to be forgiving because it is reading a pin.** Pinning is
+    a deliberate act; nobody pins a message by accident, so the text does not
+    have to carry the whole burden of proving it was meant. What it must
+    still refuse is somebody *talking* about a release in a pinned message --
+    which is why the word has to start the message rather than appear in it.
+    """
+    c = Check("the opener forgives how a person writes it")
+
+    for text, why in (
+            ("**Release** 0.9.1 -- installer is in Drive", "the documented form"),
+            ("Release 0.9.1 -- installer is in Drive", "no asterisks, as posted"),
+            ("release 0.9.1", "lower case"),
+            ("RELEASE 0.9.1", "shouted"),
+            ("# Released: 0.9.1", "a heading, past tense, a colon"),
+            ("__Release__ 0.9.1", "underscores instead of asterisks"),
+            ("   **Release**   0.9.1", "whitespace either side"),
+            ("> Release 0.9.1", "quoted")):
+        c.equal(S.parse_release(text)[0], "0.9.1", f"reads: {why}")
+
+    c.equal(S.parse_release("**Release** 0.9.1 minimum 0.9.1"),
+            ("0.9.1", "0.9.1"), "and a floor still reads through it")
+
+    # The half that has to stay strict.
+    for text, why in (
+            ("we should release 0.9.1 tomorrow", "somebody talking about one"),
+            ("Releasing 0.9.1 later", "a different word that starts the same"),
+            ("**Board** - 3 open, 1 closed", "the summary message"),
+            ("Release notes are in Drive", "no version in it at all"),
+            ("", "an empty message")):
+        c.equal(S.parse_release(text), ("", ""), f"ignores: {why}")
+
+    return c.report()
+
+
+CHECKS = (check_the_opener_forgives_how_a_person_writes_it,
+          check_a_release_note_is_read_and_nothing_else_is,
           check_the_note_is_invisible_to_the_board,
           check_a_channel_it_cannot_read_changes_nothing,
           check_the_highest_pinned_version_wins,

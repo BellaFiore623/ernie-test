@@ -1762,6 +1762,18 @@ imports it. Bump it there and nowhere else.
   HTML interstitial often enough that a check which must fail open would
   simply stop reporting, with nothing to say so. The installer is a person
   clicking; this is not.
+  **And read the way a person writes it.** It was
+  `startswith("**Release**")`, exactly -- fine while a script posted the note
+  and wrong the moment a person did. The first one written by hand said
+  `Release 0.9.1`, no asterisks, and the channel went quiet: `read_release`
+  answered `{}`, which `note_release` reads as the note having been taken
+  down, so every board would have stopped knowing 0.9.1 existed.
+  `RELEASE_OPENER` takes any markdown, any case, `Release`/`Released`/
+  `Releases`, and any punctuation after. **It can afford to, because it is
+  reading a pin** -- pinning is deliberate, so the text does not have to
+  carry the whole burden of proving it was meant. What stays strict is that
+  the word must *start* the message, so somebody talking about a release in a
+  pinned message is still not one.
   **Posted by a person, not the bot.** Discord lets nobody edit somebody
   else's message, so a note the bot wrote can only ever be changed by running
   something -- and the one person who has to change it every release is then

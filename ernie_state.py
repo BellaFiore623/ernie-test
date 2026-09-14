@@ -54,6 +54,19 @@ SUMMARY_HEARTBEAT_S = 600   # how stale "last checked" may get before a rewrite
 # neither cards nor summary and `publish()` never has it in the list it prunes.
 # Which is to say it is already safe where it sits; this only has to read it.
 RELEASE_MARK = "**Release**"
+# **How forgiving the opener is, and why it can afford to be.** The note is
+# read off a *pin*, and pinning is a deliberate act -- nobody pins a message
+# by accident, so the message itself does not have to carry the whole burden
+# of proving it was meant. What this must still refuse is somebody *talking*
+# about a release in a pinned message, which is why the word has to start the
+# message rather than merely appear in it.
+#
+# So: any amount of markdown or whitespace, the word in any case, any of the
+# obvious endings, and any punctuation after it. `**Release** 0.9.1`,
+# `Release 0.9.1`, `# Released: 0.9.1` and `__release__ 0.9.1` all read.
+# Written after the first note posted by hand rather than by a script turned
+# out to say `Release 0.9.1` -- no asterisks -- and the channel went quiet.
+RELEASE_OPENER = re.compile("^[ *_#>`~-]*release[sd]?(?![a-z])[ *_#>`~:,.-]*", re.I)
 # A version is digits and dots and nothing else. Strict on the way in, because
 # everything downstream is deliberately forgiving: `as_tuple` reads an
 # unparseable version as 0, so junk that got this far could only ever make a
@@ -870,9 +883,10 @@ def parse_release(content: str) -> tuple[str, str]:
     and how dangerous it is to skip are different questions, so the note
     answers the second one out loud.
     """
-    if not content.startswith(RELEASE_MARK):
+    opener = RELEASE_OPENER.match(content or "")
+    if not opener:
         return "", ""
-    rest = content[len(RELEASE_MARK):]
+    rest = content[opener.end():]
     m = RELEASE_VERSION.search(rest)
     if not m:
         return "", ""
