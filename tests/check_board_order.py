@@ -508,6 +508,14 @@ def check_a_ticket_with_no_equipment_is_hidden_and_counted_for() -> bool:
             if {e["eq_type"] for e in (x.get("equipment") or [])} & want]
     c.equal(kept, ["a", "d"], "only the ones carrying an ODE survive the chip")
 
+    # Both rows write a count the same way, off one function. `Bot 3` reads
+    # as the name of a third bot, which is what the chips said until somebody
+    # read one back.
+    c.equal(bert.queue_label("Bot", 3), "Bot (3)",
+            "a chip's count is bracketed, like the queue boxes above it")
+    c.equal(bert.queue_label("Bot", None), "Bot",
+            "and there is no empty bracket before the board has loaded")
+
     counts = bert.equipment_counts(cards)
     c.equal(counts["ODE"], 1, "the count is open tickets only, not closed ones")
     c.equal(counts["Bot"], 0, "and a kind nothing carries counts nought")

@@ -2270,9 +2270,15 @@ def queue_counts(cards):
     return out
 
 
-def queue_label(queue, count):
-    """`OPS` until the board has loaded, `OPS (5)` after."""
-    return queue if count is None else f"{queue} ({count})"
+def queue_label(name, count):
+    """`OPS` until the board has loaded, `OPS (5)` after.
+
+    Used by both filter rows, so the two cannot drift into writing the same
+    thing two ways. The brackets are load-bearing: `Bot 3` reads as the name
+    of a third bot, which is exactly what the equipment row said before
+    somebody read it back.
+    """
+    return name if count is None else f"{name} ({count})"
 
 
 class EquipChip(QPushButton):
@@ -2291,6 +2297,10 @@ class EquipChip(QPushButton):
 
     def __init__(self, name):
         super().__init__(name)
+        # Kept, rather than read back off the button's own text: the text
+        # grows a count and picking the name out of it again is a parser for
+        # a string this file wrote a line earlier.
+        self.name = name
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
         self.count = None
@@ -2323,10 +2333,10 @@ class EquipChip(QPushButton):
         if n == self.count:
             return
         self.count = n
-        self.setText(f"{self.text().split('  ')[0]}  {n}")
+        self.setText(queue_label(self.name, n))
         self.setToolTip(
             f"{n} open ticket{'' if n == 1 else 's'} carrying "
-            f"{self.text().split('  ')[0]}. Counted across the whole board, so "
+            f"{self.name}. Counted across the whole board, so "
             f"it does not move with the search."
             "\n\n"
             f"A ticket with several pieces is counted under each, and one "
