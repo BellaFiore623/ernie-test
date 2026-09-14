@@ -31,3 +31,4 @@ dist/
 # *source* run claim to be a build that does not exist. Ignored so an
 # interrupted build cannot commit one.
 build_commit.txt
+clone-ledger.json

@@ -1,9 +1,10 @@
 """
 The guards that stand between a test run and the real board.
 
-Four scripts here can do something to a Discord server that cannot be taken
+Five scripts here can do something to a Discord server that cannot be taken
 back or can put fiction where facts should be: `wipe_test.py` deletes every
-thread in a channel, `seed_test_server.py` creates two dozen, `ernie_state.py
+thread in a channel, `seed_test_server.py` creates two dozen,
+`tools/clone_prod_threads.py` recreates a couple of hundred, `ernie_state.py
 --check` runs a preflight that writes, and `tools/fake_stats_data.py` invents
 a year of history in a mirror. Each refuses to run against production, and
 each refusal is one comparison against one constant.
@@ -41,7 +42,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Every file that guards, and how it gets the constant. The two that import
 # it cannot drift; the one copy that cannot import is checked by value.
 GUARDING = ("wipe_test.py", "seed_test_server.py", "ernie_state.py",
-            "tools/fake_stats_data.py")
+            "tools/fake_stats_data.py", "tools/clone_prod_threads.py")
 
 
 def declarations():
