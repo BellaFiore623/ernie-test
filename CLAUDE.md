@@ -1899,11 +1899,20 @@ is the commit stamped into the exe.
 
 ```bash
 git checkout main && git merge development     # build from main, never dev
-git tag v0.9.1                                 # what is in the Drive folder
-python build.py --version 0.9.1 --installer    # ~80s -> dist/Ernie-0.9.1-setup.exe
-# upload that file to the Drive folder
+python build.py --version 0.9.1                # bumps VERSION; no build needed yet
+git commit -am "0.9.1"                         # the tag has to point at the bump
+git tag v0.9.1
+python build.py --installer                    # ~80s, from a clean tree
+# upload dist/Ernie-0.9.1-setup.exe to the Drive folder
 # edit the pinned note in #ernie-state:  **Release** 0.9.1
 ```
+
+**The bump is committed before the tag, and that order is the whole of it.**
+`--version` edits `ernie_version.py`, so tagging first points the tag at a
+commit that still says 0.9.0 -- and the exe then reports `0.9.1 (<sha>)`
+naming a commit where VERSION is 0.9.0. The build also warns that the tree is
+dirty, which is true and is easy to read past. Found on the first release
+actually cut this way.
 
 **Build from `main`, not `development`.** Otherwise the sha in the exe is a
 commit `main` does not contain, and `git log main` stops explaining what
