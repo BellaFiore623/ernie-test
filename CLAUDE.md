@@ -1762,6 +1762,13 @@ imports it. Bump it there and nowhere else.
   HTML interstitial often enough that a check which must fail open would
   simply stop reporting, with nothing to say so. The installer is a person
   clicking; this is not.
+  **Posted by a person, not the bot.** Discord lets nobody edit somebody
+  else's message, so a note the bot wrote can only ever be changed by running
+  something -- and the one person who has to change it every release is then
+  the one person who cannot. `read_release` reads the message's *content* and
+  never its author, precisely so the note can belong to whoever maintains it.
+  Found the first time a release was cut by somebody other than the script
+  that had posted the note.
   **A pin, not a message in the channel.** The state channel is hundreds of
   messages on a real board and the note would be somewhere in the middle of
   them, so finding it would mean paging the lot; a pin is one request whatever
