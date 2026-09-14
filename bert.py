@@ -1475,6 +1475,73 @@ def chip(text, bg, fg, dashed=False):
     return lab
 
 
+def ticket_url(base, key):
+    """Where a PIP key lives, or "" if it cannot be said.
+
+    Pure, and separate from the chip that shows it, for the reason
+    `build_standing` is: the decision is the part worth being sure about, and
+    a check can exercise it without a QApplication -- which these checks
+    deliberately never make, because a widget built without one does not
+    raise, it aborts the process.
+
+    **No Jira call is involved anywhere.** This is string arithmetic; the
+    desktop opens the result against the reader's own session. Confirmed
+    against production's own confirmation messages, which carry exactly this
+    URL beside the key they announce.
+
+    Empty for a missing half, so the chip cannot exist pointing nowhere --
+    the rule "Get the new build" follows about `BERT_UPDATE_URL`.
+    """
+    if not base or not key:
+        return ""
+    return f"{base.rstrip('/')}/browse/{key}"
+
+
+class LinkChip(QLabel):
+    """A chip that opens something in the browser.
+
+    **Nothing here talks to Jira.** The chip builds
+    `{base}/browse/PIP-8448` and hands it to the desktop, so it resolves
+    against the reader's own Jira session -- no token, no permission, no
+    request from Ernie. Confirmed against the real confirmation messages,
+    which carry that exact URL beside the key they announce.
+
+    It has to *look* like a link before it is clicked, which a plain chip
+    does not: the accent, a pointing hand, and an underline on hover. A chip
+    that silently happens to be clickable is one nobody clicks.
+    """
+
+    def __init__(self, text, url, tip=""):
+        super().__init__(text)
+        self.url = url
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(tip or url)
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        self._paint(False)
+
+    def _paint(self, hover):
+        self.setStyleSheet(
+            f"background:{T.CHIP_BG}; color:{T.ACCENT};"
+            f" border:1px solid {T.ACCENT}55; border-radius:5px;"
+            f" padding:1px 6px; font-size:11px;"
+            f"{' text-decoration:underline;' if hover else ''}")
+
+    def enterEvent(self, e):
+        self._paint(True)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._paint(False)
+        super().leaveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        # On release rather than press, so a click begun and dragged away
+        # does not fire -- the behaviour every other clickable thing has.
+        if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
+            QDesktopServices.openUrl(QUrl(self.url))
+        super().mouseReleaseEvent(e)
+
+
 class ClickableWidget(QWidget):
     """A plain widget that reports left clicks -- used for band headers."""
     clicked = Signal()
@@ -2516,7 +2583,25 @@ class Card(QFrame):
         # Built before they are placed, so the client can be told what is
         # actually left instead of claiming the row and shoving them off it.
         edited = chip("edited", T.CHIP_BG, T.MUTED) if d.get("client_override") else None
-        after = [chip(f"{pips} PIPs", T.CHIP_BG, T.MUTED)] if pips > 1 else []
+        after = []
+        # The build ticket, as a link to it. Only when there is one *and*
+        # somewhere for it to go: with no JIRA_BASE_URL configured there is no
+        # address, so there is no chip -- the same rule "Get the new build"
+        # follows, and for the same reason. A control cannot exist without
+        # somewhere to lead.
+        #
+        # One chip, never a list: measured against production, every thread
+        # that has a build ticket has exactly one -- 193 threads, 193 tickets.
+        key = d.get("build_ticket")
+        url = ticket_url((self.board.health or {}).get("jira_url"), key)
+        if url:
+            after.append(LinkChip(
+                f"Build {key}", url,
+                tip=f"Open {key} in Jira." + "\n\n"
+                    "Uses your own Jira sign-in; Ernie never reads it."))
+
+        if pips > 1:
+            after.append(chip(f"{pips} PIPs", T.CHIP_BG, T.MUTED))
         after.append(ago)
 
         # Last in the row, so it sits in the card's top corner: this is the

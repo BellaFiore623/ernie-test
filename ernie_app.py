@@ -238,6 +238,11 @@ def serve_api(db: str, port: int, ready: threading.Event):
     # the internals directly and silently skips what the CLI does around them.
     ernie_api.UPDATE_URL = ernie_api.clean_url(
         os.environ.get("BERT_UPDATE_URL"))
+    # And where Jira lives, so a card's build ticket can be a link. Same
+    # sentence as the line above, and `check_the_supervisor_sets_up_what_the
+    # _cli_does` caught this one being missing before it ever ran.
+    ernie_api.JIRA_URL = ernie_api.clean_url(
+        os.environ.get("JIRA_BASE_URL"))
     ernie_api.check_schema()
     cfg = uvicorn.Config(ernie_api.app, host="127.0.0.1", port=port,
                          log_level="warning")

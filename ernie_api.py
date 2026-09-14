@@ -207,6 +207,27 @@ EVENTS_MAX = 1000
 # exist without somewhere to go.
 UPDATE_URL = ""
 
+# **Where Jira lives, so a card can link to a ticket.** Published rather than
+# built into Bert, for the same reason `UPDATE_URL` is: the instance can move
+# without re-distributing anybody's copy.
+#
+# **Nothing here calls Jira for this.** A ticket link is a URL the desktop
+# opens, so it resolves against the reader's *own* Jira session -- no token,
+# no permission, no request from Ernie. The `JIRA_*` config the customer list
+# uses is a different job that happens to share a hostname.
+JIRA_URL = ""
+
+# **Which kinds of ticket a card shows.** Only builds, asked for that way.
+# Reversing it is this line: `("build", "return")` shows both.
+#
+# Measured against production before choosing: every thread that has a build
+# ticket has exactly one -- 193 threads, 193 tickets -- so a card shows one
+# chip or none, and there is no "which of them" to answer. `kind` is NULL on
+# 223 of 441 tickets overall, but that is history: all 32 open cards that
+# carry any ticket carry a *known* build one, so filtering to builds costs
+# the current board nothing.
+TICKET_KINDS_SHOWN = ("build",)
+
 
 def clean_url(raw):
     """A URL safe to hand to a desktop to open, or nothing.
@@ -616,6 +637,10 @@ def health():
         # be "sharing" by -- which is exactly the machine that needs telling.
         "format_skew": format_skew,
         "clients": roster,
+        # Where a ticket key links to. One string for the whole board rather
+        # than repeated on every card, and absent when no Jira is configured
+        # -- which is what makes the chip vanish rather than link nowhere.
+        "jira_url": JIRA_URL or None,
         # None rather than a zero, like every other block here: absent is the
         # ordinary state and a board with nothing invented in it should have
         # nothing to say about invented data.
@@ -864,6 +889,10 @@ def cards(
                    v.summary, v.confidence, v.archived,
                    (SELECT COUNT(*) FROM tickets t
                     WHERE t.thread_id = c.thread_id) AS ticket_count,
+                   (SELECT t.pip_key FROM tickets t
+                     WHERE t.thread_id = c.thread_id
+                       AND t.kind = 'build'
+                     ORDER BY t.created_at LIMIT 1) AS build_ticket,
                    (SELECT MAX(m.created_at) FROM messages m
                     WHERE m.thread_id = c.thread_id AND m.is_bot = 0) AS last_human_at
             FROM cards c
@@ -1004,7 +1033,8 @@ def cards(
                 "summary": t.summary, "confidence": t.confidence,
                 "archived": 0, "completed_at": None, "completed_by": None,
                 "client_override": None, "updated_at": d["created_at"],
-                "ticket_count": 0, "last_human_at": None, "title_pending": False,
+                "ticket_count": 0, "build_ticket": None,
+                "last_human_at": None, "title_pending": False,
                 "equipment": [], "issues": [],
                 "work_items": [{"item_id": None, "body": b, "done": False}
                                for b in json.loads(d["work_json"])],
@@ -1861,6 +1891,7 @@ if __name__ == "__main__":
     load_env(a.env)
     # Module level, so no `global` -- this block *is* the module.
     UPDATE_URL = clean_url(os.environ.get("BERT_UPDATE_URL"))
+    JIRA_URL = clean_url(os.environ.get("JIRA_BASE_URL"))
 
     DB = a.db
     print(f"ernie_api {ernie_version.describe()}")

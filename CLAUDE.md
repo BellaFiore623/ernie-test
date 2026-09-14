@@ -1261,6 +1261,31 @@ or worse, how long a ticket takes, or which ones have been open since April.
   It narrows the **running order too**, which is what the queue checkboxes
   already do: the two lists are the same board said twice, and one showing
   three tickets while the other shows thirty-four reads as a fault in both.
+- **A card links to its build ticket, and nothing here talks to Jira.**
+  `Build PIP-8448` in the card's corner, opening
+  `{JIRA_BASE_URL}/browse/PIP-8448` -- which the desktop resolves against the
+  *reader's own* Jira session. No token, no permission, no request from
+  Ernie; the `JIRA_*` config the customer list uses is a different job that
+  happens to share a hostname. Confirmed against production's own
+  confirmation messages, which carry that exact URL beside the key:
+  `Created **PIP-9457**: https://.../browse/PIP-9457`.
+  **The address is published, not built in.** `JIRA_URL` reaches `/health`
+  the way `UPDATE_URL` does, so the instance can move without re-distributing
+  anybody's copy -- and with none configured there is no address, so there is
+  no chip. `ticket_url()` is pure and returns `""` for a missing half, for
+  the reason `build_standing` is pure: a check can exercise the decision
+  without a QApplication, which these checks never make.
+  **Builds only, and reversing it is one line** --
+  `ernie_api.TICKET_KINDS_SHOWN`. `kind` is NULL on 223 of production's 441
+  tickets, which sounds fatal and is history: all 32 open cards carrying any
+  ticket carry a *known* build one, so the filter costs the current board
+  nothing. And every thread with a build ticket has exactly one -- 193
+  threads, 193 tickets -- so a card shows one chip or none and there is no
+  "which of them" to answer.
+  **The sandbox had to be given some.** `seed_test_server.py` stopped
+  imitating Python-Interface-Bot on the reasoning that "Bert shows nothing
+  from a Build Request yet", which stopped being true here -- so the sandbox
+  had no build tickets at all and the feature was invisible on it.
 - **A filter says how many it holds.** `PROD (3)`, `OPS (4)`. The checkboxes
   said which tags exist and nothing about how much was behind each, so the
   answer to "how much OPS work is there" was to click three boxes off and

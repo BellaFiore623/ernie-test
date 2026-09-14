@@ -436,6 +436,81 @@ class Narrowed:
         self.equip = set(equip or ())
 
 
+def check_a_build_ticket_links_to_jira() -> bool:
+    """
+    A key on the card, pointing at the issue -- and no Jira access at all.
+
+    The link is `{base}/browse/PIP-8448`, which the desktop opens against the
+    reader's own Jira session. Ernie never calls Jira for it: no token, no
+    permission, no request. Confirmed against production's own confirmation
+    messages, which carry that exact URL beside the key they announce.
+
+    **The chip cannot exist pointing nowhere**, which is the rule
+    `BERT_UPDATE_URL` already established: with no Jira configured there is no
+    address, so there is no chip, rather than a control that looks live and
+    goes nowhere.
+    """
+    c = Check("a build ticket links to Jira")
+
+    base = "https://edgeaisolutions.atlassian.net"
+    c.equal(bert.ticket_url(base, "PIP-8448"),
+            f"{base}/browse/PIP-8448", "the key becomes a browse URL")
+    c.equal(bert.ticket_url(base + "/", "PIP-8448"),
+            f"{base}/browse/PIP-8448", "a trailing slash does not double up")
+
+    for why, got in (("no Jira configured", bert.ticket_url(None, "PIP-8448")),
+                     ("no ticket on the card", bert.ticket_url(base, None)),
+                     ("neither", bert.ticket_url("", ""))):
+        c.equal(got, "", f"no address, so no chip: {why}")
+
+    return c.report()
+
+
+def check_only_build_tickets_are_shown() -> bool:
+    """
+    Asked for as builds only, and reversing it is one line.
+
+    Measured against production before choosing: `kind` is NULL on 223 of 441
+    tickets, which sounds fatal and is history -- **all 32 open cards that
+    carry any ticket carry a known build one**, so filtering to builds costs
+    the current board nothing. And every thread that has a build ticket has
+    exactly one (193 threads, 193 tickets), so a card shows one chip or none
+    and there is no "which of them" to answer.
+    """
+    c = Check("only build tickets are shown")
+
+    c.equal(tuple(api.TICKET_KINDS_SHOWN), ("build",),
+            "builds only, as asked")
+
+    with Board() as b:
+        tid = b.card("PROD: A - 01Jan26 - x", "medium")
+        for key, kind in (("PIP-1", "return"), ("PIP-2", "build"),
+                          ("PIP-3", None)):
+            # tickets.message_id is a real foreign key -- the confirmation
+            # message is what proves the ticket exists, so a row cannot name
+            # one that was never seen.
+            b.con.execute(
+                "INSERT INTO messages (message_id, thread_id, author_id, "
+                "author_name, is_bot, created_at, first_seen_at) "
+                "VALUES (?,?,?,?,1,datetime('now'),datetime('now'))",
+                (f"m{key}", tid, "bot", "Python-Interface-Bot"))
+            b.con.execute(
+                "INSERT INTO tickets (pip_key, thread_id, message_id, kind, "
+                "created_at) VALUES (?,?,?,?,datetime('now'))",
+                (key, tid, f"m{key}", kind))
+        b.con.commit()
+
+        got = b.con.execute(
+            """SELECT (SELECT t.pip_key FROM tickets t
+                        WHERE t.thread_id = c.thread_id AND t.kind = 'build'
+                        ORDER BY t.created_at LIMIT 1) AS build_ticket
+                 FROM cards c WHERE c.thread_id = ?""", (tid,)).fetchone()
+        c.equal(got["build_ticket"], "PIP-2",
+                "the build one, not the return and not the unknown")
+
+    return c.report()
+
+
 def check_the_equipment_chips_narrow_to_what_was_clicked() -> bool:
     """
     Click ODE, see the ODEs. One click, not three unchecks.
@@ -610,7 +685,9 @@ def check_filtering_knows_what_narrowed_the_board() -> bool:
     return c.report()
 
 
-CHECKS = (check_the_equipment_chips_narrow_to_what_was_clicked,
+CHECKS = (check_a_build_ticket_links_to_jira,
+          check_only_build_tickets_are_shown,
+check_the_equipment_chips_narrow_to_what_was_clicked,
           check_a_ticket_with_no_equipment_is_hidden_and_counted_for,
 check_predicate, check_new_cards_rank, check_one_order,
           check_a_reorder_says_where_it_went,
