@@ -44,6 +44,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `ernie-test.env.example` | The env file's shape, with no values. Copied, not edited. |
 | `backups/` | Where `tools/ernie_backup.py` writes, and where the `.pre-migrate-` / `.pre-reseed-` snapshots live under `snapshots/`. Gitignored; 55 MB of them were sitting in the root. |
 | `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
+| `plans/` | Work decided on but not started, with the reasoning and the open questions. A plan here is a thing to pick up, not a thing that is done. |
 | `tests/` | `python tests/run.py`. Standard library, no network, no database of yours -- the fixture builds one from `schema.sql` in a temp directory. |
 | `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |
 | `TESTING.md` | Hand this to the tester. Both setups, start to finish. |
@@ -1744,6 +1745,13 @@ changes worth interrupting somebody for; this gets all of them.
 - **Inert unless `CHANGELOG_CHANNEL_ID` is set, and only one machine should
   set it.** Both boards hold the whole history -- their own changes and
   replays of the other's -- so two loggers write every line twice.
+  **That is an accident of identity rather than a limit**, and
+  `plans/changelog-per-machine.md` is how to lift it: a replay is written
+  with a fresh uuid, so one real change is two unrelated rows and neither
+  machine can tell it is looking at a copy. Mark the replay and every machine
+  can log its own changes, once each, with nobody's uptime mattering to
+  anybody else. Not started -- the undo case wants settling first, because a
+  line struck through on one machine is a message another machine posted.
   **The channel is not called the same thing on both servers**: `#change-log`
   in the sandbox, **`#ernie-logs`** in production. The name is nowhere in the
   code -- the env carries an id -- so the only cost of the difference is a
