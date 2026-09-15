@@ -5139,7 +5139,7 @@ class Bert(QMainWindow):
         # has -- `_fit_toolbar` exists entirely to shorten two labels until it
         # fits -- so five more controls in there would be five more things for
         # it to squeeze, and the search box would lose the width again.
-        outer.addWidget(self._equipment_row())
+        outer.addWidget(self._filter_row())
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -5311,14 +5311,22 @@ class Bert(QMainWindow):
         if not self.name():
             QTimer.singleShot(300, self.open_settings)
 
-    def _equipment_row(self):
-        """The equipment filters, under the toolbar.
+    def _filter_row(self):
+        """Client, then equipment, then the way back out of both.
 
-        Chips rather than checkboxes, and none-on meaning everything: see
-        `EquipChip`. The row filters the board **and the running order**,
-        which is what the queue checkboxes beside it already do -- the two
-        lists are the same board said twice, and one showing five tickets
-        while the other shows thirty-four reads as a fault in both.
+        **Client first**, because it is the broader question: *whose* tickets
+        before *which kind*. Read the other way round the row asks you to
+        pick a piece of equipment before you have said who you are looking
+        at, which is not the order anybody arrives with.
+
+        Chips for equipment, a dropdown for the client: four kinds fit across
+        a row and 35 client names do not. Chips rather than checkboxes, and
+        none-on meaning everything: see `EquipChip`.
+
+        The row filters the board **and the running order**, which is what
+        the queue checkboxes above it already do -- the two lists are the
+        same board said twice, and one showing five tickets while the other
+        shows thirty-four reads as a fault in both.
         """
         row = QWidget()
         row.setStyleSheet(
@@ -5327,22 +5335,6 @@ class Bert(QMainWindow):
         lay.setContentsMargins(16, 6, 16, 6)
         lay.setSpacing(6)
 
-        caption = QLabel("Equipment")
-        caption.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
-                              f" background:transparent;")
-        lay.addWidget(caption)
-        lay.addSpacing(4)
-
-        self.chips = {}
-        for name, _ in EQUIPMENT_FILTERS:
-            chip = EquipChip(name)
-            chip.toggled.connect(
-                lambda on, k=name: (self.equip.add(k) if on
-                                    else self.equip.discard(k), self.render()))
-            lay.addWidget(chip)
-            self.chips[name] = chip
-
-        lay.addSpacing(14)
 
         # **A dropdown, where equipment gets chips.** Four kinds of equipment
         # fit across a row; the open board carries **35 distinct client names
@@ -5366,6 +5358,22 @@ class Bert(QMainWindow):
         self.client_box.currentIndexChanged.connect(self._client_picked)
         self._client_sig = None
         lay.addWidget(self.client_box)
+
+        caption = QLabel("Equipment")
+        caption.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
+                              f" background:transparent;")
+        lay.addWidget(caption)
+        lay.addSpacing(4)
+
+        self.chips = {}
+        for name, _ in EQUIPMENT_FILTERS:
+            chip = EquipChip(name)
+            chip.toggled.connect(
+                lambda on, k=name: (self.equip.add(k) if on
+                                    else self.equip.discard(k), self.render()))
+            lay.addWidget(chip)
+            self.chips[name] = chip
+
 
         # **After both, and it clears both.** Only when something is on,
         # because a control that does nothing is noise -- and this one says,

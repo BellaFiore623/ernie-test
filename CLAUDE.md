@@ -1483,6 +1483,11 @@ or worse, how long a ticket takes, or which ones have been open since April.
   `Bravo Environmental (7)` -- which is the equipment chips' rule, not the
   figures panel's: a filter says how much is behind each way of narrowing,
   and these two narrow differently on purpose.
+  **Client first, then equipment**, because that is the broader question:
+  *whose* tickets before *which kind*. Read the other way round the row asks
+  somebody to pick a piece of equipment before they have said who they are
+  looking at, which is not the order anyone arrives with. `_filter_row` is
+  named for what it holds rather than for the half that was built first.
   **It sits beside the chips, and `Show all` sits after both.** The two
   narrow the same board in the same way, so the control doing the same job
   belongs where the eye already is rather than across the row. `Show all`
