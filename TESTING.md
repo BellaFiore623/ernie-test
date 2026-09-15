@@ -35,6 +35,24 @@ and a clone.
 Either way you still pick two stacks or one stack above; how you installed
 and how you share are not related.
 
+## Two names, and they are not the same thing
+
+You install something called Bert and the next step hands you a file called
+`ernie.env`. That is deliberate rather than a leftover:
+
+| | |
+|---|---|
+| **Bert** | The application. The window, the Start menu shortcut, `Bert.exe`, the Add/Remove Programs entry — the board with the tickets on it. |
+| **Ernie** | The machinery. `ernie.env`, `ernie.db`, `%LOCALAPPDATA%\Ernie`, the logs — the half that talks to Discord. |
+| `ErnieBert` | The lock that stops two copies running against one database. Named after both, because one program is both. |
+
+**Bert never opens the env file or the database.** Not one line of it: it
+talks to Ernie over a local connection and nothing else, holds no Discord
+token, and does not know where that folder is. Everything that *does* read
+that file — the sync, the outbox, the state channel, the status messages — is
+Ernie. So the file is named after the half that reads it, and the program is
+named after the half you look at.
+
 ## The env file, and which one
 
 **The installer carries no token on purpose.** A secret baked into a setup
