@@ -863,7 +863,66 @@ def check_it_does_not_nag_about_what_the_card_arrived_with() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_name_typed_in_part_still_finds_its_client,
+def check_one_candidate_is_taken_and_two_are_not() -> bool:
+    """
+    A typo nobody noticed used to be saved as the typo.
+
+    `bravon` saved as `bravon`, with *Bravo Environmental* sitting in the box
+    the whole time. Somebody who knows they mistyped picks from the list; the
+    ones that survive are the slips nobody saw, which is exactly the case the
+    list could not help with.
+
+    **Exactly one candidate, or nothing happens.** `dukes` returns Duke's
+    Omaha and Duke's Root Control, and picking between two customers with
+    nobody watching is the wrong-customer failure this whole feature exists
+    to prevent -- the same rule `reconcile_aliases` follows when it refuses to
+    merge on resemblance. Two is a question, not a near miss.
+
+    **And it is announced before it happens.** The box says *will be saved as
+    Bravo Environmental* while somebody is still typing, so a correction is
+    one they can see coming. The same correction discovered after the fact is
+    the software having quietly changed what they wrote.
+    """
+    c = Check("one candidate is taken and two are not")
+
+    r = _roster()
+
+    # The case it was asked for.
+    c.equal(bert.client_resolve("trekkk", r), "Trekk",
+            "a near miss with one candidate is corrected")
+    c.ok("will be saved as Trekk" in bert.client_note("trekkk", r),
+         "and the box says so before the save, not after")
+
+    # The case it must refuse.
+    hits = [x["short_name"] for x in bert.client_matches("dukes", r, limit=3)]
+    c.ok(len(hits) > 1, f"`dukes` is genuinely ambiguous: {hits}")
+    c.equal(bert.client_resolve("dukes", r), "",
+            "so it is left exactly as typed")
+    c.ok("typed as-is" in bert.client_note("dukes", r),
+         "and the caution says it will be")
+
+    # A name that already resolves is nobody's mistake.
+    c.equal(bert.client_resolve("Trekk", r), "", "a name the roster knows stands")
+    c.equal(bert.client_resolve("Dukes Root Control", r), "",
+            "and so does a misspelling the alias table already resolves")
+
+    # A customer Jira has never heard of is a customer, not a typo.
+    c.equal(bert.client_resolve("Someone Entirely New Ltd", r), "",
+            "a name with no candidates at all is kept")
+
+    # Opening a card must not rewrite what it arrived carrying.
+    c.equal(bert.client_resolve("trekkk", r, opened_with="trekkk"), "",
+            "a name the editor opened with is not a mistake made now")
+    c.equal(bert.client_note("trekkk", r, opened_with="trekkk"), "",
+            "and nothing is said about it either")
+
+    c.equal(bert.client_resolve("", r), "", "an empty box resolves to nothing")
+
+    return c.report()
+
+
+CHECKS = (check_one_candidate_is_taken_and_two_are_not,
+          check_a_name_typed_in_part_still_finds_its_client,
           check_a_name_the_roster_does_not_know_says_so,
           check_it_does_not_nag_about_what_the_card_arrived_with,
           check_an_unlisted_client_is_shown_not_offered,

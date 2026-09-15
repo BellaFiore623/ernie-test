@@ -1744,6 +1744,34 @@ so the name is *picked* in Bert instead of typed.
   may offer anything -- and must offer *both* when a query is ambiguous rather
   than choosing: `dukes` returns Duke's Omaha and Duke's Root Control, and
   settles nothing.
+- **A single unambiguous candidate is taken; two are never chosen between.**
+  `bravon` used to save as `bravon`, with *Bravo Environmental* sitting in
+  the box the whole time. Somebody who knows they have mistyped picks from
+  the list -- the typos that survive are the ones nobody noticed, which is
+  precisely the case the list could not help with. `client_resolve()` takes
+  the candidate when there is **exactly one**, and does nothing at all when
+  there are two: `dukes` returns Duke's Omaha and Duke's Root Control, and
+  choosing between two customers with nobody watching is the wrong-customer
+  failure this whole feature exists to stop. The same line
+  `reconcile_aliases` holds when it refuses to merge on resemblance.
+  **Three things are left exactly as typed**: a name the roster already
+  knows, aliases included, because it already resolves; a name with no
+  candidates at all, because a customer exists before Jira hears about them;
+  and a name the editor *opened* with, because a card that arrived carrying
+  an unknown client is not a mistake anybody is making now -- the same guard
+  `client_note` uses, and what keeps `is_dirty` honest, since opening a card
+  must never make it dirty.
+  **It is announced before it happens.** The note under the box reads *will
+  be saved as Bravo Environmental* while somebody is still typing. A
+  correction you can see coming is a help; the same correction found
+  afterwards is the software having quietly changed what you wrote.
+  **And it lands in the title**, because that is what `save` sends and what
+  the thread is renamed to -- rewriting the box alone would change nothing,
+  since `_suggest_title` stops rebuilding once somebody types in the title
+  themselves. Only the client segment moves, only on a title that parses,
+  and only while the title still carries the name that was corrected:
+  somebody who typed a different client straight into the title meant that
+  one.
 - **A name the roster has never heard of says so, and is still accepted.**
   `client_note()` puts a caution under the box -- amber, because this is a
   pending state and not an error, and 6.4:1 against the palest card it can

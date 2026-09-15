@@ -1793,6 +1793,47 @@ def client_known(typed, roster) -> bool:
     return False
 
 
+def client_resolve(typed, roster, opened_with="") -> str:
+    """The name to save instead of what was typed, or "" to keep it as typed.
+
+    Asked for after `bravon` saved as `bravon`: the box had been offering
+    *Bravo Environments* the whole time and the person did not notice the
+    slip, which is the ordinary way a typo survives -- somebody who knew they
+    had mistyped would have picked from the list.
+
+    **Exactly one candidate, or nothing happens.** `dukes` returns Duke's
+    Omaha and Duke's Root Control, and choosing between two customers is the
+    wrong-customer failure this whole feature exists to prevent. Two is not a
+    near miss to be resolved; it is a question for a person.
+
+    **And only for a name somebody has just typed.** A card that arrived
+    carrying an unknown client -- a retired customer, or one from before the
+    roster existed -- is not a mistake anybody is making now, and rewriting
+    it because an editor was opened would change tickets nobody edited. The
+    same guard `client_note` uses, for the same reason, and what keeps
+    `is_dirty` honest: opening a card must not make it dirty.
+
+    A name the roster already knows is left alone, aliases included: `Dukes
+    Root Control` is a misspelling the board has used nine times and the
+    alias table points it at one customer, so it already resolves.
+
+    Pure, so the decision can be exercised without a QApplication.
+    """
+    typed = (typed or "").strip()
+    if not typed or client_known(typed, roster):
+        return ""
+    if client_squash(typed) == client_squash(opened_with):
+        return ""
+    # Two, so "exactly one" can be told apart from "more than one".
+    hits = client_matches(typed, roster, limit=2)
+    if len(hits) != 1:
+        return ""
+    name = (hits[0].get("short_name") or "").strip()
+    if not name or client_squash(name) == client_squash(typed):
+        return ""
+    return name
+
+
 def client_note(typed, roster, opened_with="") -> str:
     """The caution under the Client box, or nothing.
 
@@ -1811,6 +1852,13 @@ def client_note(typed, roster, opened_with="") -> str:
         return ""
     if client_squash(typed) == client_squash(opened_with):
         return ""
+    # One candidate and the save will take it, so the box says so *before*
+    # the save rather than after. A correction somebody can see coming is a
+    # help; the same correction found afterwards is the software having
+    # changed what they wrote.
+    fixed = client_resolve(typed, roster, opened_with)
+    if fixed:
+        return f"will be saved as {fixed}"
     return "not a customer Jira knows \u2014 it will be typed as-is"
 
 
@@ -3194,25 +3242,59 @@ class Card(QFrame):
                 or self.f_work.added()
                 or (self.f_first and self.f_first.text().strip()))
         base = getattr(self, "_edit_base", None) or {}
-        if self.f_title.text().strip() != (base.get("title") or ""):
+        # `_title_to_send`, not the box, because this has to be exactly what
+        # save() would send -- a corrected client is part of that. It cannot
+        # make an untouched card dirty: `client_resolve` returns nothing for
+        # a name the editor opened with.
+        if self._title_to_send() != (base.get("title") or ""):
             return True
         if self._override() != (base.get("client_override") or ""):
             return True
         return bool(self.f_work.added() or self.f_work.removed()
                     or self.f_work.undone())
 
+    def _title_to_send(self) -> str:
+        """The title as it will be saved, with a mistyped client corrected.
+
+        The client box drives the title, so a name corrected here has to go
+        into the **title** -- that is what `save` sends and what the thread is
+        renamed to. Rewriting the box alone would change nothing, because
+        `_suggest_title` stops rebuilding the moment somebody types in the
+        title themselves.
+
+        Only the client segment moves, and only on a title that parses: a
+        title the fields cannot hold is the one thing the box is there to
+        repair, and rebuilding it from parts would throw away whatever the
+        person was in the middle of writing.
+        """
+        title = self.f_title.text().strip()
+        fixed = client_resolve(self.f_client.text(), self.board.roster,
+                               getattr(self, "_client_opened_with", ""))
+        if not fixed:
+            return title
+        t = ex.parse_title(title)
+        if t.confidence not in ("strict", "loose"):
+            return title
+        # Only if the title is still carrying the name that was corrected --
+        # somebody who typed a different client straight into the title meant
+        # that one, and the box is not what they were editing.
+        if ex.normalise_client(t.client_raw or "") != ex.normalise_client(
+                self.f_client.text().strip()):
+            return title
+        return f"{t.queue}: {fixed} - {title_stamp(t.date)} - {t.summary or ''}"
+
     def save(self) -> bool:
         """True if the write landed. Closing Bert waits on the answer."""
         if self.is_new:
             return self.board.create_ticket(self, {
-                "title": self.f_title.text().strip(),
+                "title": self._title_to_send(),
                 "priority": self.data["priority"],
                 "work_add": self.f_work.added(),
                 "first_message": (self.f_first.text().strip()
                                   if self.f_first else ""),
             })
         fields = {
-            "title": self.f_title.text().strip(),
+            "title": self._title_to_send(),
             "client_override": self._override(),
             # The bubbles travel as what changed, not as a list to diff: two
             # people adding different items then merge instead of colliding.
