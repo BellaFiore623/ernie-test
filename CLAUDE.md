@@ -56,7 +56,12 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   there so no code path can skip it. Never add a direct `http.post` or
   `http.patch` to Discord anywhere else.
 - `ALLOW_DISCORD_WRITES` must exactly equal `DISCORD_GUILD_ID` or nothing
-  posts. Production's env file does not contain the line at all.
+  posts. **Production went live 2026-09-15 and the installed env carries the
+  line**; the master at `C:/Users/Edge/ernie/ernie.env` deliberately does not,
+  so a copy handed to a second person arrives read-only and becomes a writer
+  only when somebody uncomments it on purpose. The same shape as
+  `CHANGELOG_CHANNEL_ID`: the one-machine decision expressed as a file rather
+  than as something to remember.
 - **Every endpoint closes its connection in a `finally`, without exception.**
   Seven did it only on the happy path -- `health`, `events`, `clients`,
   `client_roster`, `card_detail`, `card_messages`, `check_schema` -- so a
@@ -2282,10 +2287,14 @@ from source -- four processes, four logs, restart one without the others.
   nothing anybody did reached Discord. It raises now, the supervisor catches
   it and names the line that would fix it, and the startup banner says
   whether this board can post at all. Read-only is a legitimate way to run --
-  it is what production does today -- so this is reported, never refused.
-  **Production's env is the first configuration this will meet**: it holds
-  `DISCORD_TOKEN` and `DISCORD_GUILD_ID` and nothing else, and the absent
-  `ALLOW_DISCORD_WRITES` is exactly the case above.
+  it is what production did for its whole first day, and what every handed-out
+  copy of its env still does -- so this is reported, never refused.
+  **That was the first configuration this met**, and it went the other way on
+  2026-09-15. The switch was thrown last, after the mirror had been read back
+  into step, the audit log was readable and **Manage Threads** and **Pin
+  Messages** were granted -- the env line is the end of going live rather than
+  the start of it, because the three before it are the ones that fail
+  quietly.
 - **Config and the database live in `%LOCALAPPDATA%\Ernie`**, because
   beside the executable is either PyInstaller's temp extraction directory --
   wiped on exit -- or a Program Files path nobody can write.
