@@ -142,6 +142,7 @@ RAIL_ROW_CHROME = 26
 CARD_HEAD_SPACING = 8      # between the columns of a card's top row
 CARD_CLIENT_MIN_W = 44     # a client name never shrinks past this, it elides
 CARD_FOOT_SPACING = 16     # between the columns of a card's bottom row
+CLIENT_BOX_MIN_W = 190     # "Bravo Environmental (7)" without eliding it
 CARD_ISSUE_MIN_W = 124     # an issue chip that cannot show its first word
                            # says nothing: measured, 'equipment' and
                            # 'client cr' are each 124px, and those first
@@ -2455,6 +2456,74 @@ def equipment_counts(cards) -> dict:
             if types & set(wanted):
                 out[name] += 1
     return out
+
+
+CLIENT_ALL = ""            # the dropdown's first entry: no client filter
+CLIENT_NONE = "__no_client__"    # cards whose title names nobody
+
+
+def client_key(name, roster) -> str:
+    """The one label a client's many spellings should be counted under.
+
+    The board's open cards carry **35 distinct client names across 53
+    tickets**, and four of them are one customer: `bravon`, `bravo`, `Bravo`
+    and `Bravo Environmental`. Keyed on the string as typed, a filter would
+    offer four Bravos and never show all seven of their tickets together --
+    which is the whole mess the roster and the alias table exist to undo, so
+    it would be a poor place to start ignoring them.
+
+    An alias is an exact answer, not a resemblance: the table was written by
+    `reconcile_aliases`, which resolves through the ticket's Client CR key and
+    refuses to merge on similarity. Nothing here compares strings loosely.
+
+    A name that resolves to nobody is its own key, because a customer exists
+    before Jira hears about them and their tickets still have to be findable.
+    """
+    name = (name or "").strip()
+    if not name:
+        return CLIENT_NONE
+    q = client_squash(name)
+    for c in roster or []:
+        if q == client_squash(c.get("short_name")):
+            return c.get("short_name") or name
+        if any(q == client_squash(a) for a in (c.get("aliases") or [])):
+            return c.get("short_name") or name
+    return name
+
+
+def client_counts(cards, roster):
+    """Every client on the board and how many open tickets they have.
+
+    The whole board, always -- never the filtered view. `queue_counts` gives
+    the two reasons and they hold here: counted after the filtering, picking
+    one client changes the number beside every other; counted against the
+    search, it answers "how many did you find", which is what the board on
+    screen is already showing.
+
+    Alphabetical rather than by count. Thirty-five entries is a list somebody
+    scans for a name they already have in mind, and a list that reorders
+    itself as the board moves is one you cannot learn the shape of.
+    """
+    counts = {}
+    for c in cards or []:
+        if c.get("completed_at"):
+            continue
+        k = client_key(c.get("client_override") or c.get("client_raw"), roster)
+        counts[k] = counts.get(k, 0) + 1
+    named = sorted(((k, n) for k, n in counts.items() if k != CLIENT_NONE),
+                   key=lambda kv: kv[0].lower())
+    # Nobody's client last: it is a real answer and somebody may want to see
+    # exactly those, but it is not a customer and should not sort among them.
+    if CLIENT_NONE in counts:
+        named.append((CLIENT_NONE, counts[CLIENT_NONE]))
+    return named
+
+
+def client_filter_label(key, count) -> str:
+    """`Thrasher (8)`, the way the queue boxes and the chips already read."""
+    if key == CLIENT_NONE:
+        return f"No client ({count})"
+    return f"{key} ({count})"
 
 
 def queue_counts(cards):
@@ -4960,6 +5029,10 @@ class Bert(QMainWindow):
         # the opposite of `filters` above and is why they are not checkboxes:
         # turning one on narrows to it, rather than turning one off hiding it.
         self.equip: set[str] = set()
+        # "" is every client. One at a time, unlike the equipment chips:
+        # a ticket has several pieces of equipment and exactly one customer,
+        # so "any of these" is a question nobody asks here.
+        self.client_pick: str = CLIENT_ALL
         self.cards = []
         self.feed = []
         # Which rows are open, by event_id. The feed is rebuilt from
@@ -5241,7 +5314,70 @@ class Bert(QMainWindow):
         lay.addWidget(self.clear_equip)
 
         lay.addStretch()
+
+        # **A dropdown, where equipment gets chips.** Four kinds of equipment
+        # fit across a row; the open board carries **35 distinct client names
+        # over 53 tickets**, which is a list you scan rather than a set of
+        # buttons you read. It sits at the far end because it is the same
+        # kind of control doing the same job, and the row already reads
+        # left to right as "narrow by ...".
+        caption = QLabel("Client")
+        caption.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
+                              f" background:transparent;")
+        lay.addWidget(caption)
+        lay.addSpacing(4)
+
+        self.client_box = Combo()
+        self.client_box.setMinimumWidth(CLIENT_BOX_MIN_W)
+        self.client_box.setStyleSheet(btn_css())
+        self.client_box.setCursor(Qt.PointingHandCursor)
+        self.client_box.currentIndexChanged.connect(self._client_picked)
+        self._client_sig = None
+        lay.addWidget(self.client_box)
         return row
+
+    def _client_picked(self, _index):
+        pick = self.client_box.currentData()
+        if pick is None or pick == self.client_pick:
+            return
+        self.client_pick = pick
+        self.render()
+
+    def _fill_clients(self):
+        """Rebuild the list, but only when it would actually read differently.
+
+        `render()` runs on every poll and every drag, and a combo rebuilt
+        under somebody's pointer loses the popup they had open -- the same
+        reason the figures panel builds its window selector once and leaves
+        it outside the body it throws away. The signature is the entries and
+        their counts, so a ticket closing changes it and a redraw does not.
+        """
+        entries = client_counts(self.cards, self.board_roster())
+        sig = json.dumps([entries, self.client_pick], sort_keys=True)
+        if sig == getattr(self, "_client_sig", None):
+            return
+        self._client_sig = sig
+
+        box = self.client_box
+        box.blockSignals(True)
+        box.clear()
+        total = sum(n for _, n in entries)
+        box.addItem(f"All clients ({total})", CLIENT_ALL)
+        for key, n in entries:
+            box.addItem(client_filter_label(key, n), key)
+        # A client whose last open ticket just closed is gone from the list,
+        # and a filter pinned to nobody shows nothing with no way back. Fall
+        # to the whole board rather than leaving the board empty.
+        at = box.findData(self.client_pick)
+        if at < 0:
+            self.client_pick = CLIENT_ALL
+            at = 0
+        box.setCurrentIndex(at)
+        box.blockSignals(False)
+
+    def board_roster(self):
+        """The roster, or nothing. A board with no Jira still filters."""
+        return getattr(self, "roster", None) or []
 
     def _clear_equipment(self):
         """Back to the whole board, without four separate clicks."""
@@ -7309,6 +7445,7 @@ class Bert(QMainWindow):
             self.qboxes[q].set_count(n)
         for name, n in equipment_counts(self.cards).items():
             self.chips[name].set_count(n)
+        self._fill_clients()
         self.clear_equip.setVisible(bool(self.equip))
 
         wanted_types = equipment_types(self.equip)
@@ -7329,6 +7466,13 @@ class Bert(QMainWindow):
             if wanted_types:
                 mine = {e.get("eq_type") for e in (c.get("equipment") or [])}
                 if not (mine & wanted_types):
+                    return False
+            # One customer per ticket, so this is an equality rather than the
+            # any-of the chips above do. Keyed on the resolved client, which
+            # is what makes `bravon` and `Bravo Environmental` one answer.
+            if self.client_pick:
+                if client_key(c.get("client_override") or c.get("client_raw"),
+                              self.board_roster()) != self.client_pick:
                     return False
             if term:
                 hay = " ".join(str(c.get(k) or "") for k in

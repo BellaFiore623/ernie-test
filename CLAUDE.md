@@ -1449,6 +1449,33 @@ or worse, how long a ticket takes, or which ones have been open since April.
   shortened to pay for a neighbour with room to spare. `_shares` settles it
   by going round until nothing more fits, which for two chips is at most
   twice.
+- **The client filter is a dropdown, and it groups by the customer rather
+  than the spelling.** Four kinds of equipment fit across a row as chips; the
+  open board carries **35 distinct client names over 53 tickets**, which is a
+  list you scan rather than a set of buttons you read. It sits at the far end
+  of the same row, which already reads left to right as "narrow by ...".
+  **Keyed on the resolved client.** Four of those 35 names are one customer --
+  `bravon`, `bravo`, `Bravo` and `Bravo Environmental`, seven tickets between
+  them -- so a filter keyed on the string as typed would offer four Bravos
+  and never show those seven together. That is precisely the mess the roster
+  and `client_aliases` exist to undo, and a strange place to start ignoring
+  them. `client_key()` resolves through the alias table, which
+  `reconcile_aliases` wrote by way of each ticket's Client CR key: an exact
+  answer, never a resemblance. A name that resolves to nobody is its own
+  entry, because a customer exists before Jira hears about them and their
+  tickets still have to be findable, and a ticket naming nobody gets one too.
+  **One at a time**, unlike the chips: a ticket has several pieces of
+  equipment and exactly one customer, so "any of these" is a question nobody
+  asks here. Alphabetical, because 35 entries is a list somebody scans for a
+  name they already have in mind and one that reorders itself as the board
+  moves is one you cannot learn. Counted off the **whole** board for the two
+  reasons `queue_counts` gives. And the list is rebuilt only when it would
+  read differently -- `render()` runs on every poll and every drag, and a
+  combo rebuilt under somebody's pointer loses the popup they had open, which
+  is why the figures panel builds its window selector once and leaves it
+  outside the body it throws away. A client whose last open ticket closes
+  falls back to the whole board rather than leaving it pinned to nobody with
+  no way back.
 - **A filter says how many it holds.** `PROD (3)`, `OPS (4)`. The checkboxes
   said which tags exist and nothing about how much was behind each, so the
   answer to "how much OPS work is there" was to click three boxes off and

@@ -692,7 +692,67 @@ def check_every_band_is_drawn_however_narrow_the_board() -> bool:
     return c.report()
 
 
-CHECKS = (check_every_band_is_drawn_however_narrow_the_board,
+def check_a_clients_spellings_are_one_entry() -> bool:
+    """
+    Thirty-five names, fifty-three tickets, and four of them one customer.
+
+    Measured on the board this was asked for: `bravon`, `bravo`, `Bravo` and
+    `Bravo Environmental` are the same seven tickets. Keyed on the string as
+    typed, the filter would have offered four Bravos and never shown those
+    seven together -- which is the mess the roster and the alias table exist
+    to undo, so it would be a strange place to start ignoring them.
+
+    An alias is an exact answer rather than a resemblance. The table is
+    written by `reconcile_aliases`, which resolves through the ticket's
+    Client CR key and refuses to merge on similarity, so nothing here
+    compares strings loosely.
+
+    A name that resolves to nobody is its own entry: a customer exists before
+    Jira hears about them and their tickets still have to be findable.
+    """
+    c = Check("a client's spellings are one entry")
+
+    roster = [{"client_id": "PIP-2165", "short_name": "Bravo Environmental",
+               "aliases": ["Bravo", "bravon"]},
+              {"client_id": "PIP-4863", "short_name": "Thrasher",
+               "aliases": []}]
+    cards = ([{"client_raw": n, "completed_at": None}
+              for n in ("bravon", "bravon", "bravo", "Bravo",
+                        "Bravo Environmental")]
+             + [{"client_raw": "Thrasher", "completed_at": None}] * 3
+             + [{"client_raw": "", "completed_at": None}]
+             + [{"client_raw": "Nobody Ltd", "completed_at": None}]
+             # A closed ticket is not on the board and must not be counted.
+             + [{"client_raw": "Thrasher", "completed_at": "2026-01-01"}])
+
+    got = dict(bert.client_counts(cards, roster))
+    c.equal(got.get("Bravo Environmental"), 5,
+            "every spelling of one customer counts as that customer")
+    c.equal(got.get("Thrasher"), 3, "and a closed ticket is not on the board")
+    c.equal(got.get("Nobody Ltd"), 1,
+            "a name the roster never heard of is still its own entry")
+    c.equal(got.get(bert.CLIENT_NONE), 1, "and a ticket naming nobody is reachable")
+
+    order = [k for k, _ in bert.client_counts(cards, roster)]
+    c.equal(order[:3], ["Bravo Environmental", "Nobody Ltd", "Thrasher"],
+            "alphabetical: a list of 35 is scanned for a name already in mind")
+    c.equal(order[-1], bert.CLIENT_NONE,
+            "with nobody's client last, since it is not a customer")
+
+    c.equal(bert.client_filter_label("Thrasher", 8), "Thrasher (8)",
+            "and an entry reads the way the queue boxes and chips do")
+
+    # The counts are the whole board, never the filtered view -- the two ways
+    # queue_counts says this goes wrong hold here too.
+    fewer = [x for x in cards if x["client_raw"] == "Thrasher"]
+    c.equal(dict(bert.client_counts(fewer, roster)).get("Thrasher"), 3,
+            "counted off what it is given, which render() gives unfiltered")
+
+    return c.report()
+
+
+CHECKS = (check_a_clients_spellings_are_one_entry,
+          check_every_band_is_drawn_however_narrow_the_board,
           check_a_build_ticket_links_to_jira,
           check_only_build_tickets_are_shown,
 check_the_equipment_chips_narrow_to_what_was_clicked,
