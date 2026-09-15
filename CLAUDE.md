@@ -319,6 +319,21 @@ activity feed, undo, and the outbox.
   went anywhere is the feed reporting the dragging rather than the outcome.
 - Undo inside the window deletes nothing from Discord because nothing was
   ever sent. Undo after it posts a correction message instead.
+- **A rename is undoable, and Bert spent a long time not saying so.** `undo`
+  has handled one all along -- inside the window it cancels the event, which
+  is the whole job because nothing left the machine, and after it queues a
+  rename back -- but `renamed` was missing from the tuple in `_render_feed`
+  that decides which verbs get a button. So a title change was the single
+  thing on the feed that could not be taken back, and the two ends disagreed
+  in silence: the server could do something the client never offered.
+  Reported as there being no Undo beside a change still sending, which is
+  exactly the moment it is free. `tests/check_feed.py` now reads the verbs
+  off **both** ends, because one of them being right was never the problem.
+  **The tooltip says what it costs on the far side of the window**, and for
+  a rename that is more than the rest: putting a title back is another real
+  rename, at two per ten minutes on a budget shared between both machines.
+  The other verbs say "undoing posts a correction"; this one says which
+  allowance it spends.
 - Edits are **batched**: saving four fields writes one event and posts one
   message. Do not split this into per-field events. The feed still says which
   it was: `old_value` is the previous value of everything that moved plus a

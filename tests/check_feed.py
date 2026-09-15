@@ -15,6 +15,7 @@ one that says "edited".
 """
 
 import ast
+import pathlib
 import json
 import pathlib
 import re
@@ -22,6 +23,8 @@ import re
 from support import Check, iso
 
 import bert
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 THREAD = "PROD: Penn Hills - 02Sep26 - EReel-1220 fiber respool"
@@ -1192,7 +1195,52 @@ def check_a_feed_row_sits_on_one_line() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_timestamp_with_no_timezone_does_not_kill_the_card,
+def check_a_rename_can_be_taken_back() -> bool:
+    """
+    The one change on the feed that could not be undone, for no reason.
+
+    `undo` has handled a rename all along: inside the window it cancels the
+    event, which is the whole job because nothing left the machine; after it,
+    it queues a rename back. Bert simply never put the button on the row --
+    `renamed` was missing from the tuple that decides which verbs get one.
+
+    Reported as there being no Undo beside a change still sending, which is
+    exactly the moment it is free.
+
+    The verbs are read off both ends here, because the bug was the two
+    disagreeing: the server could do something the client never offered.
+    """
+    c = Check("a rename can be taken back")
+
+    src = _bert_src()
+    tree = ast.parse(src)
+    feed = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+                 and n.name == "_render_feed"), None)
+    c.ok(feed is not None, "the feed builds its rows")
+    body = ast.get_source_segment(src, feed) or ""
+    for verb in ("completed", "priority_changed", "edited", "work_done",
+                 "renamed"):
+        c.ok(f'"{verb}"' in body, f"{verb} gets an Undo button")
+
+    # And the server agrees, which is the half that was already true.
+    api = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+    undo = next(n for n in ast.walk(ast.parse(api))
+                if isinstance(n, ast.FunctionDef) and n.name == "undo")
+    usrc = ast.get_source_segment(api, undo) or ""
+    c.ok('e["verb"] == "renamed"' in usrc,
+         "and undo knows how to put a title back")
+    c.ok('post=True' in usrc,
+         "queueing the rename back when the first one has already gone")
+
+    # started is refused at the server, so it must not carry a button either.
+    c.ok('"started"' not in body,
+         "a thread opening in Discord is not something Bert can take back")
+
+    return c.report()
+
+
+CHECKS = (check_a_rename_can_be_taken_back,
+          check_a_timestamp_with_no_timezone_does_not_kill_the_card,
           check_a_cards_buttons_never_leave_the_card,
           check_the_age_gives_up_words_before_it_is_cut,
           check_a_work_item_added, check_a_work_item_removed,

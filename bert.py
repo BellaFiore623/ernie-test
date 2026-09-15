@@ -7761,16 +7761,33 @@ class Bert(QMainWindow):
             undo_col.setFixedWidth(FEED_UNDO_W)
             h.addWidget(undo_col, 0, Qt.AlignVCenter)
 
+            # **`renamed` belongs here and was simply missing.** The API has
+            # undone one all along -- it restores the old title, and once the
+            # rename has gone out it queues a rename back -- but Bert never
+            # offered the button, so a title change was the one thing on the
+            # feed that could not be taken back. Reported as there being no
+            # Undo beside a change still sending, which is exactly when it is
+            # free: inside the window nothing has left the machine.
             undoable = e["verb"] in ("completed", "priority_changed", "edited",
-                                     "work_done")
+                                     "work_done", "renamed")
             if undoable and not e["undone_at"]:
                 b = QPushButton("\u21b6  Undo")
                 # The same button does two different things either side of the
                 # undo window, and looked identical doing them.
-                b.setToolTip(
-                    "Already in the thread \u2014 undoing posts a correction."
-                    if e.get("posted_at") else
-                    "Nothing has been posted yet \u2014 undoing is silent.")
+                # The same button does two different things either side of
+                # the undo window, and a rename costs more than the rest on
+                # the far side of it: putting a title back is another real
+                # rename, at two per ten minutes on a budget shared between
+                # both machines.
+                if not e.get("posted_at"):
+                    tip = "Nothing has been posted yet \u2014 undoing is silent."
+                elif e["verb"] == "renamed":
+                    tip = ("Already renamed in Discord \u2014 undoing renames it "
+                           "back, which spends one of the two renames allowed "
+                           "every ten minutes.")
+                else:
+                    tip = "Already in the thread \u2014 undoing posts a correction."
+                b.setToolTip(tip)
                 b.setCursor(Qt.PointingHandCursor)
                 b.setStyleSheet(
                     f"QPushButton {{ {BTN_HIT}"
