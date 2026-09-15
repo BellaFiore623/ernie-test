@@ -35,7 +35,7 @@ from PySide6.QtCore import (QUrl,
     QStringListModel, Qt, QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (QDesktopServices, 
-    QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon, QPainter,
+    QBrush, QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon, QPainter,
     QPalette, QPen, QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import (
@@ -2517,6 +2517,41 @@ def client_counts(cards, roster):
     if CLIENT_NONE in counts:
         named.append((CLIENT_NONE, counts[CLIENT_NONE]))
     return named
+
+
+def client_typos(cards, roster):
+    """The spellings on the board that are provably wrong, and how many.
+
+    Grouping by the resolved customer is what makes `bravon` and `Bravo
+    Environmental` one answer -- and it also makes the mistake **disappear**,
+    which is the half worth keeping visible. A filter list that hides the
+    thing you would want to repair is a filter list that quietly protects it.
+
+    **Provably wrong, not merely unfamiliar.** A spelling counts here only if
+    the roster knows who it means, through the alias table, *and* it is not a
+    shortening somebody types on purpose -- `client_stands_for` is the same
+    line `client_resolve` draws, so `Bravo` stands for Bravo Environmental
+    and never goes red while `bravon` stands for nothing and does.
+
+    A name Jira has never heard of is left alone: it may be a customer who
+    exists before Jira hears about them, and marking that as an error would
+    be the board being wrong about the world rather than the other way round.
+    """
+    out = {}
+    for c in cards or []:
+        if c.get("completed_at"):
+            continue
+        raw = (c.get("client_override") or c.get("client_raw") or "").strip()
+        if not raw:
+            continue
+        key = client_key(raw, roster)
+        # Unknown to the roster: its own entry already, and not an error.
+        if key == raw:
+            continue
+        if client_stands_for(raw, key):
+            continue                       # a shortening, typed on purpose
+        out[raw] = out.get(raw, 0) + 1
+    return sorted(out.items(), key=lambda kv: kv[0].lower())
 
 
 def client_filter_label(key, count) -> str:
@@ -5032,7 +5067,11 @@ class Bert(QMainWindow):
         # "" is every client. One at a time, unlike the equipment chips:
         # a ticket has several pieces of equipment and exactly one customer,
         # so "any of these" is a question nobody asks here.
-        self.client_pick: str = CLIENT_ALL
+        # ("all", ""), ("client", key) or ("raw", spelling). A tuple because
+        # the last one filters on the exact string a card carries rather than
+        # the customer it resolves to -- which is the whole point of showing
+        # a misspelling separately.
+        self.client_pick = (CLIENT_ALL, "")
         self.cards = []
         self.feed = []
         # Which rows are open, by event_id. The feed is rebuilt from
@@ -5338,7 +5377,10 @@ class Bert(QMainWindow):
 
     def _client_picked(self, _index):
         pick = self.client_box.currentData()
-        if pick is None or pick == self.client_pick:
+        if pick is None:
+            return
+        pick = tuple(pick)
+        if pick == tuple(self.client_pick):
             return
         self.client_pick = pick
         self.render()
@@ -5353,7 +5395,9 @@ class Bert(QMainWindow):
         their counts, so a ticket closing changes it and a redraw does not.
         """
         entries = client_counts(self.cards, self.board_roster())
-        sig = json.dumps([entries, self.client_pick], sort_keys=True)
+        typos = client_typos(self.cards, self.board_roster())
+        sig = json.dumps([entries, typos, list(self.client_pick)],
+                         sort_keys=True)
         if sig == getattr(self, "_client_sig", None):
             return
         self._client_sig = sig
@@ -5362,18 +5406,51 @@ class Bert(QMainWindow):
         box.blockSignals(True)
         box.clear()
         total = sum(n for _, n in entries)
-        box.addItem(f"All clients ({total})", CLIENT_ALL)
-        for key, n in entries:
-            box.addItem(client_filter_label(key, n), key)
+        box.addItem(f"All clients ({total})", (CLIENT_ALL, ""))
+
+        # Customers and the misspellings of them, in one alphabetical list.
+        # Interleaved rather than gathered at the end, because a slip sorts
+        # beside the name it is a slip at -- `bravon` lands under Bravo
+        # Environmental, where somebody looking for Bravo will meet it.
+        merged = ([(k, n, "client") for k, n in entries]
+                  + [(raw, n, "raw") for raw, n in typos])
+        merged.sort(key=lambda t: (t[0] == CLIENT_NONE, t[0].lower()))
+        for name, n, kind in merged:
+            box.addItem(client_filter_label(name, n), (kind, name))
+            if kind != "raw":
+                continue
+            # **Red, and still pickable.** Excluding it would hide the one
+            # entry that is asking to be dealt with; colouring it says the
+            # board knows it is wrong without pretending it is not there.
+            i = box.count() - 1
+            box.setItemData(i, QBrush(QColor(T.RED_FG)), Qt.ForegroundRole)
+            box.setItemData(
+                i, f"{name} is a misspelling the roster resolves to "
+                   f"{client_key(name, self.board_roster())}.\n\n"
+                   f"Pick it to find the {n} ticket"
+                   f"{'' if n == 1 else 's'} still carrying it.",
+                Qt.ToolTipRole)
         # A client whose last open ticket just closed is gone from the list,
         # and a filter pinned to nobody shows nothing with no way back. Fall
         # to the whole board rather than leaving the board empty.
-        at = box.findData(self.client_pick)
+        at = self._client_index(self.client_pick)
         if at < 0:
-            self.client_pick = CLIENT_ALL
+            self.client_pick = (CLIENT_ALL, "")
             at = 0
         box.setCurrentIndex(at)
         box.blockSignals(False)
+
+    def _client_index(self, pick) -> int:
+        """Where this pick sits in the list, or -1.
+
+        Scanned rather than `findData`, which compares the QVariants Qt made
+        of these and does not match a Python tuple back against one.
+        """
+        want = tuple(pick or ())
+        for i in range(self.client_box.count()):
+            if tuple(self.client_box.itemData(i) or ()) == want:
+                return i
+        return -1
 
     def board_roster(self):
         """The roster, or nothing. A board with no Jira still filters."""
@@ -7470,9 +7547,16 @@ class Bert(QMainWindow):
             # One customer per ticket, so this is an equality rather than the
             # any-of the chips above do. Keyed on the resolved client, which
             # is what makes `bravon` and `Bravo Environmental` one answer.
-            if self.client_pick:
+            kind, want = tuple(self.client_pick) or (CLIENT_ALL, "")
+            if kind == "client":
                 if client_key(c.get("client_override") or c.get("client_raw"),
-                              self.board_roster()) != self.client_pick:
+                              self.board_roster()) != want:
+                    return False
+            elif kind == "raw":
+                # The exact spelling, not the customer: picking `bravon` is
+                # asking which tickets still say `bravon`.
+                if (c.get("client_override")
+                        or c.get("client_raw") or "").strip() != want:
                     return False
             if term:
                 hay = " ".join(str(c.get(k) or "") for k in

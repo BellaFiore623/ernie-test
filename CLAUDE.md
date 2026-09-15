@@ -1464,6 +1464,25 @@ or worse, how long a ticket takes, or which ones have been open since April.
   answer, never a resemblance. A name that resolves to nobody is its own
   entry, because a customer exists before Jira hears about them and their
   tickets still have to be findable, and a ticket naming nobody gets one too.
+  **A misspelling keeps its own entry, in red.** Grouping is what makes
+  `bravon` and `Bravo Environmental` one answer, and it is also what makes
+  the mistake *disappear* -- a filter list that hides the thing you would
+  want to repair quietly protects it. So a provably wrong spelling is listed
+  separately, drawn in `T.RED_FG`, and still pickable: choosing it shows the
+  four tickets that still carry it, which is how you find them to fix them.
+  Interleaved alphabetically rather than gathered at the end, so a slip sorts
+  beside the name it is a slip at.
+  **Provably wrong, not merely unfamiliar.** `client_typos()` flags a
+  spelling only when the roster knows who it means *and* it is not a
+  shortening -- `client_stands_for` is the same line `client_resolve` draws,
+  so `Bravo` never goes red and `bravon` does. A name Jira has never heard of
+  is left alone: it may be a customer who exists before Jira hears about
+  them, and marking that as an error would be the board being wrong about the
+  world rather than the other way round.
+  The counts deliberately do not add up -- `bravon (4)` is a subset of
+  `Bravo Environmental (7)` -- which is the equipment chips' rule, not the
+  figures panel's: a filter says how much is behind each way of narrowing,
+  and these two narrow differently on purpose.
   **One at a time**, unlike the chips: a ticket has several pieces of
   equipment and exactly one customer, so "any of these" is a question nobody
   asks here. Alphabetical, because 35 entries is a list somebody scans for a

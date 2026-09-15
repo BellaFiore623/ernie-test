@@ -742,6 +742,19 @@ def check_a_clients_spellings_are_one_entry() -> bool:
     c.equal(bert.client_filter_label("Thrasher", 8), "Thrasher (8)",
             "and an entry reads the way the queue boxes and chips do")
 
+    # **A misspelling keeps its own entry, and it is the one drawn in red.**
+    # Grouping is what makes `bravon` and `Bravo Environmental` one answer,
+    # and it is also what makes the mistake disappear -- a filter list that
+    # hides what you would want to repair quietly protects it.
+    typos = dict(bert.client_typos(cards, roster))
+    c.equal(typos.get("bravon"), 2, "a provable misspelling is counted on its own")
+    c.ok("Bravo" not in typos,
+         "a shortening people type on purpose is not a mistake")
+    c.ok("bravo" not in typos, "whatever its case")
+    c.ok("Nobody Ltd" not in typos,
+         "and a name Jira has never heard of is a customer, not an error")
+    c.ok("Bravo Environmental" not in typos, "nor is the name itself")
+
     # The counts are the whole board, never the filtered view -- the two ways
     # queue_counts says this goes wrong hold here too.
     fewer = [x for x in cards if x["client_raw"] == "Thrasher"]
