@@ -1195,19 +1195,33 @@ or worse, how long a ticket takes, or which ones have been open since April.
   Changing it clears `stats_at` and asks again straight away -- the figures
   ride the slow lane, and a dropdown that takes a minute to change the numbers
   under it reads as broken.
-- **Nothing is derived from `events`.** Production's is **empty**, and all 313
-  of its completions read `completed_by = "imported"` -- they were inferred
-  from archived threads, not recorded by anyone using Bert. So per-person and
-  per-action figures would show one fake name until production runs this
-  build. Everything here comes off `cards` and `threads`, which are mirrored
-  from Discord and true on any board.
+- **Nothing is derived from `events`**, and the reason has now half expired
+  rather than gone away. It was written when production's `events` was
+  **empty** and all 313 of its completions read `completed_by = "imported"` --
+  inferred from archived threads, recorded by nobody -- so a per-person figure
+  would have shown one fake name for the whole board.
+  Production ran this build on **2026-09-15** and that is no longer entirely
+  true: `events` holds real rows, and 25 of the 350 completions carry a real
+  person, recovered from the audit log. But **325 still read `imported`**, so
+  a per-person figure today would say one name did 93% of the work and would
+  be wrong about all of it -- which is worse than the empty table was, because
+  it looks like an answer.
+  The rule stands for the ordinary reason as well: everything here comes off
+  `cards` and `threads`, which are mirrored from Discord and true on **any**
+  board, while `events` is what this machine happened to witness. A second
+  stack replays the other's changes, but a board installed next year inherits
+  no history at all. Worth revisiting when the imported share is small enough
+  that a per-person figure would say something -- not before.
 - **The middle, not the mean.** Measured against production: average time to
-  close 13.1 days, median **7.9**. The mean is the one that reads as "this is
+  close 14.3 days, median **8.1** (2026-09-15, 350 completions; it was 13.1
+  and 7.9 at 313, so the shape holds as the board grows). The mean is the one
+  that reads as "this is
   how long a job takes" and it is the one a handful of very old tickets drag
   away. The panel quotes the median; the mean is in the tooltip for anyone who
   wants it, and the slowest is shown outright because the spread is the story.
 - **A trend, not a number.** "Completed this month" was the request; a single
-  figure throws away 27 → 61 → 63 → 67 → 95 across five months, which is the
+  figure throws away 27 → 61 → 63 → 67 → 100 → 32 across six months, which is
+  the
   news. The same query gives the shape for free.
 - **And it follows the window, because everything on the panel does.** It was
   pinned to six months while the tally beside it moved, and it is the biggest
@@ -1322,9 +1336,14 @@ or worse, how long a ticket takes, or which ones have been open since April.
   rows for 889 threads. `tools/backfill_message_types.py` fetched the type on
   every message (908 pages, 7m26s, **703 renames recovered**) and
   `tools/rebuild_title_history.py` wrote each rename as the title revision it
-  was: 694 of 696 written, and production's history now shows **61 PROD → OPS
-  and 7 back**, out of 73. It moves with the window -- 9 at four weeks, 41 at
-  three months, 73 at six.
+  was: 694 of 696 written, and production's history shows **68 PROD → OPS and
+  7 back**, out of 75 (2026-09-15; 61 and 7 of 73 when the reconstruction was
+  first run, the rest arriving through the sync since). It moves with the
+  window -- 13 at four weeks, 44 at three months, 75 at six, and 75 at a year
+  too, because the board is younger than that.
+  **Ten to one, one way.** That is the answer to the question this was built
+  for: tickets start as production work and become operations work, and
+  almost never go back.
   **The reconstruction may not change what the board shows today**, which is
   the rule that makes it safe on a live database: a rename is written only if
   it is strictly older than the thread's earliest existing row, so the newest
