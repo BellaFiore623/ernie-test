@@ -208,9 +208,17 @@ if ! python -c "import ernie_load, sys; ernie_load.connect(sys.argv[1]).close()"
   exit 1
 fi
 
-start sync   python ernie_sync.py --env "$ENVFILE" --db "$DB"
-[ "$OUTBOX" = yes ] && start outbox python ernie_outbox.py --env "$ENVFILE" --db "$DB"
-start api    python ernie_api.py --db "$DB" --port "$PORT" --host "$HOST" --env "$ENVFILE"
+# -u, because these write to a log rather than a terminal and Python
+# block-buffers stdout the moment it is not a tty. A loop that prints one
+# line a minute then fills a 8KB buffer in about a week, so the log is
+# always hours behind and is *empty* for a process that has only just
+# started -- which is exactly when somebody goes looking. Found chasing a
+# card stuck on "Pushing to Discord": the outbox had been up eighteen
+# minutes and `outbox.log` ended at the previous evening, so there was no
+# way to tell a silent failure from a quiet success without killing it.
+start sync   python -u ernie_sync.py --env "$ENVFILE" --db "$DB"
+[ "$OUTBOX" = yes ] && start outbox python -u ernie_outbox.py --env "$ENVFILE" --db "$DB"
+start api    python -u ernie_api.py --db "$DB" --port "$PORT" --host "$HOST" --env "$ENVFILE"
 
 sleep 2
 if curl -s "http://127.0.0.1:$PORT/health" > /dev/null 2>&1; then
