@@ -18,7 +18,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `seed_test_server.py` | Builds realistic test threads. Test guild only. `--limit N` for a short board while iterating. |
 | `wipe_test.py` | Deletes all threads in the test channel. Test guild only. |
 | `ernie_state.py` | Board state in Discord: one message per card in `#ernie-state`. |
-| `ernie_changelog.py` | Every change, appended to `#change-log`. Off unless configured. |
+| `ernie_changelog.py` | Every change, appended to the log channel -- `#change-log` in the sandbox, `#ernie-logs` in production. Off unless configured. |
 | `ernie_jira.py` | Customer list, Jira → SQLite. Read-only against Jira. Off unless configured. |
 | `jira_client.py` | A standalone Jira CLI -- `test`, `search "JQL"`, fetch an issue. Nothing imports it; it is for looking at Jira by hand while working out a query. |
 | `ernie_version.py` | The version number, and which build is answering. Imported by everything that says one. |
@@ -1694,6 +1694,22 @@ changes worth interrupting somebody for; this gets all of them.
 - **Inert unless `CHANGELOG_CHANNEL_ID` is set, and only one machine should
   set it.** Both boards hold the whole history -- their own changes and
   replays of the other's -- so two loggers write every line twice.
+  **The channel is not called the same thing on both servers**: `#change-log`
+  in the sandbox, **`#ernie-logs`** in production. The name is nowhere in the
+  code -- the env carries an id -- so the only cost of the difference is a
+  reader going to look for a channel that is not there.
+  **It is uncommented in the installed env and left commented in the copy
+  that gets handed out**, which is the one-machine rule expressed as a file:
+  the master at `C:/Users/Edge/ernie/ernie.env` is what a second person would
+  be given, and a line they never thought about is exactly how two loggers
+  happen.
+  **Switch it on before the writes, not after.** `catch_up()` marks
+  everything not yet sent as logged on the logger's *first* run, so whatever
+  has piled up by then is swallowed rather than posted -- which is right for
+  a back catalogue and wrong for the week somebody meant to record. Turned on
+  while production was still read-only, the swallow was 21 events: the 20
+  closures the first backfill found and one `started`, all of which happened
+  in Discord rather than on the board.
 - SQLite -> Discord, so it rides with the outbox like the state publish does.
 - Nothing is logged until it has **settled**: an event inside its undo window
   may still be cancelled, and a record that says things that never happened
