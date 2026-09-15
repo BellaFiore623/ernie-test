@@ -32,6 +32,15 @@ the guard can be forgotten.
   CLAUDE.md and this does not change it.
 - **Attachments.** 329 messages carry one and the files are not in the
   mirror; the message comes across without it.
+- **Buttons, and this one shifts a figure.** Content and embeds are replayed;
+  **components are not**. Python-Interface-Bot posts its Build and Return
+  embeds as a *confirm this* prompt with buttons attached -- all 50 proposals
+  on production's open cards carry them, and none in a clone does. So an
+  **unconfirmed prompt arrives looking like a raised ticket**: the sandbox
+  reads 51 proposals against production's 50, and gives one card an EReel its
+  real thread was only ever asked about. Left alone deliberately -- the only
+  way to carry `has_buttons` across is to post real components, and a button
+  that does nothing is worse on a test board than an offset of one.
 - **The original timestamps.** Discord stamps a message when it is posted, so
   a thread from April arrives dated today. The board's ordering comes from
   `rank`, not from dates, but the figures panel reads `created_at` and will
@@ -318,6 +327,90 @@ def prune_system(con, d, ledger, work, with_names: bool, dry: bool) -> dict:
     return counts
 
 
+def restore_pruned(con, d, ledger, work, with_names: bool, dry: bool) -> dict:
+    """Put back what `--prune-system` should never have taken.
+
+    That pass read `type != 0` as "Discord's own record" and deleted 388
+    messages from the open threads, of which **357 were conversation**: 288
+    replies, 51 slash-command answers, 18 context-menu answers. Only the 41
+    renames belonged in it. The embeds ride on the command answers, so all
+    fifty parsed ticket proposals on open cards went with them, taking the
+    equipment master, the client CR, the assignee and the amber issue chips.
+
+    **It works from what is missing, not from a record of what was deleted.**
+    Nothing wrote that record down, and a repair that trusted one would be
+    trusting the same reasoning that caused the damage. So it compares the
+    messages production holds -- every type except `SYSTEM_TYPES` -- against
+    what the thread holds now, and posts only the shortfall. Counted, like
+    the prune: a thread that legitimately says the same words twice keeps
+    both, and one already whole gets nothing.
+
+    That makes it safe to run twice, and safe to run on threads it never
+    touched. **Archived threads are skipped for the same reason as before**:
+    Discord refuses a write in one, and they were never pruned.
+
+    What it cannot restore is position. The messages arrive at the end of
+    the thread rather than where they were said, in their original order
+    among themselves. Extraction does not care; a reader does. That was the
+    trade taken against a ninety-minute reseed.
+    """
+    counts = {"looked": 0, "posted": 0, "whole": 0, "archived": 0}
+    for t, msgs in work:
+        src = t["thread_id"]
+        tid = ledger.thread_for(src)
+        if not tid:
+            continue
+        if t["completed_at"]:
+            counts["archived"] += 1
+            continue
+
+        want = {}
+        order = []
+        for m in msgs:
+            if m["type"] in SYSTEM_TYPES:
+                continue
+            body = body_of(m, with_names)
+            key = body.get("content", "")
+            want[key] = want.get(key, 0) + 1
+            order.append((key, body))
+        counts["looked"] += len(order)
+
+        have, before = {}, None
+        while True:
+            page = d.get(f"/channels/{tid}/messages", limit=100,
+                         **({"before": before} if before else {}))
+            if not page:
+                break
+            for m in page:
+                k = m.get("content") or ""
+                have[k] = have.get(k, 0) + 1
+            if len(page) < 100:
+                break
+            before = page[-1]["id"]
+
+        missing = [(k, b) for k, b in order]
+        short = []
+        for k, b in missing:
+            if have.get(k, 0) > 0:
+                have[k] -= 1          # already there, account for it
+            else:
+                short.append(b)
+        if not short:
+            counts["whole"] += 1
+            continue
+        counts["posted"] += len(short)
+        if dry:
+            continue
+        for body in short:
+            # No retry_5xx: a 503 does not say whether the message landed,
+            # and this pass exists because something was posted or deleted
+            # on an assumption. A failure here leaves the rest for the next
+            # run, which works from what is missing and will see it.
+            d.write("POST", f"/channels/{tid}/messages", **body)
+            time.sleep(PACING)
+    return counts
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--source", default="prod-snapshot-20260910.db",
@@ -332,6 +425,9 @@ def main() -> None:
                     help="post message text verbatim, without the speaker")
     ap.add_argument("--dry-run", action="store_true",
                     help="say what would be written and write nothing")
+    ap.add_argument("--restore-pruned", action="store_true",
+                    help="re-post conversation an over-broad --prune-system "
+                         "removed, rather than cloning anything")
     ap.add_argument("--prune-system", action="store_true",
                     help="delete system messages an earlier run replayed as "
                          "chat, rather than cloning anything")
@@ -353,7 +449,7 @@ def main() -> None:
 
     # The preview is about cloning. --prune-system is a different job and
     # needs the connection, so its dry run happens further down.
-    if a.dry_run and not a.prune_system:
+    if a.dry_run and not (a.prune_system or a.restore_pruned):
         for t, msgs in work[:8]:
             mark = " [closed]" if t["completed_at"] else ""
             print(f"  {t['name'][:68]}{mark}")
@@ -388,6 +484,15 @@ def main() -> None:
     print(f"writing into #{ch.get('name')} in guild {guild}")
 
     ledger = Ledger(a.ledger)
+
+    if a.restore_pruned:
+        got = restore_pruned(con, d, ledger, work, not a.no_names, a.dry_run)
+        verb = "would post" if a.dry_run else "posted"
+        print(f"  conversation production holds in the open threads: {got['looked']}")
+        print(f"  {verb}: {got['posted']}")
+        print(f"  threads already whole: {got['whole']}")
+        print(f"  archived, never pruned: {got['archived']}")
+        return
 
     if a.prune_system:
         got = prune_system(con, d, ledger, work, not a.no_names, a.dry_run)
