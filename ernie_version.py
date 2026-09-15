@@ -27,7 +27,7 @@ import pathlib
 # README and TESTING guides get rewritten for, so the nines are the road to
 # it and the packaging work is 0.9.x. Bump it here and nowhere else: every
 # other place that names a version imports this one.
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 
 # The oldest Bert this Ernie will work with. **Raised by hand, on a release
 # that actually breaks something** -- not automatically, and not to match
