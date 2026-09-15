@@ -19,6 +19,76 @@ stacks.** That is the rest of this page.
 
 ---
 
+# Installed build, or from source?
+
+That is a different question from the one above, and you answer it first.
+
+**The installed build is the normal way.** `Ernie-<version>-setup.exe` in the
+shared Drive folder is one download and one double-click: no Python, no
+clone, no command line. It runs the sync, the outbox, the API and Bert as one
+program. Take this unless you are changing the code.
+
+**From source is for working on it** — four processes you can restart
+separately, which is what the rest of this page describes. You need Python
+and a clone.
+
+Either way you still pick two stacks or one stack above; how you installed
+and how you share are not related.
+
+## The env file, and which one
+
+**The installer carries no token on purpose.** A secret baked into a setup
+file in a shared folder is a secret shared with everyone who can reach that
+folder. So it is handed over separately and it goes here, exactly:
+
+```
+%LOCALAPPDATA%\Ernie\ernie.env
+```
+
+Paste that into the Explorer address bar to get to the folder. If the file
+isn't there, the first run says so on screen and names that path — it does
+not open an empty board and leave the reason in a log.
+
+**There are two of these files and they are not interchangeable.**
+
+- **The sandbox env** is in the Drive folder beside the installer. It points
+  at the test server — invented tickets, nothing anybody is working on. This
+  is the one a new tester wants, and the one "download the env file" means.
+- **The production env is handed to you directly, never from the shared
+  folder.** Its token posts into real customer threads. If you have been sent
+  one of these, you have been sent it for a reason and it does not go
+  anywhere else.
+
+A production env arrives **read-only**: it has no `ALLOW_DISCORD_WRITES`
+line, so your board mirrors and reads and cannot post a thing. That is a
+legitimate way to run and it is how a second machine should start. Turning it
+into a writer is a deliberate act — uncommenting one line — and worth
+agreeing with whoever sent it first.
+
+## Upgrading
+
+Run the new setup file. **Do not uninstall first**, and do not re-place your
+env.
+
+The program and the board live in two different directories, which is what
+makes that safe:
+
+```
+%LOCALAPPDATA%\Programs\Ernie    the program — wiped and rewritten whole
+%LOCALAPPDATA%\Ernie             env, database, logs — never touched
+```
+
+The program directory is replaced rather than written over, because its
+internals change shape between builds and leaving old files beside new ones
+is how you get a version that works until it doesn't. Nothing you care about
+is in there.
+
+Close Ernie before you upgrade. If it's open, the installer notices and
+offers **Retry** rather than failing halfway and leaving you with half of one
+build and half of another — close the window and click Retry.
+
+---
+
 # Two stacks
 
 You each run your own copy of everything: your own database, your own sync,
