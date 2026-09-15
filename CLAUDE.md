@@ -2419,9 +2419,27 @@ thing nobody notices for a week.
   `ernie_jira.py` only ever calls the search endpoint -- but an Atlassian
   token carries the account's permissions, so that one can write to real Jira
   from anywhere; rotating it is `id.atlassian.com` and re-issuing the file.
-  And **production's env is a different question entirely**: its Discord
-  token posts into customer threads people are working in, so when it comes
-  time to hand that one out, this is not the precedent to follow.
+  And **production's env was a different question, asked and answered
+  2026-09-15: it is in the Drive folder too.** Raised as a hazard here and
+  decided the other way by the people whose call it is -- the folder is
+  shared `type: domain, role: reader` with `edgeaisolutions.com`, so this is
+  the production Discord token readable by anyone with a company account,
+  and that was accepted knowingly rather than overlooked. Written down for
+  the same reason the sandbox one is: so nobody reading the folder later
+  mistakes it for a slip and "fixes" it.
+  **What that trades away, stated plainly so a later reader can re-decide
+  with the facts.** `ALLOW_DISCORD_WRITES` is commented out in the copy up
+  there, so anybody who installs it comes up read-only -- but that guard
+  lives in *this code* and constrains Ernie, not the token. A person holding
+  the token has whatever the bot has, which now includes Manage Threads and
+  Pin Messages on a server of real customer threads, and no env file limits
+  that. Rotating it is the Discord developer portal plus re-issuing every
+  copy.
+  **The operational catch is the one that bites a stranger**: the upload
+  replaced the sandbox env in place rather than sitting beside it, and
+  `install-instructions.txt` in that folder says "obtain ernie.env from the
+  google drive folder". So the default download stopped being a sandbox and
+  became production's 923 real threads, one uncommented line from posting.
 - **No secret is in the installer.** The env file is not installed, generated
   or prompted for: a token baked into a setup.exe in a shared folder is a
   token shared with everyone who can reach that folder, and it would be the

@@ -49,21 +49,29 @@ Paste that into the Explorer address bar to get to the folder. If the file
 isn't there, the first run says so on screen and names that path — it does
 not open an empty board and leave the reason in a log.
 
-**There are two of these files and they are not interchangeable.**
+**The one in the Drive folder is production's.** It points at the real
+server — hundreds of threads of live customer work — and it is what "obtain
+ernie.env from the google drive folder" gets you. That is the right file if
+you are joining the production board, which is what most people are doing.
 
-- **The sandbox env** is in the Drive folder beside the installer. It points
-  at the test server — invented tickets, nothing anybody is working on. This
-  is the one a new tester wants, and the one "download the env file" means.
-- **The production env is handed to you directly, never from the shared
-  folder.** Its token posts into real customer threads. If you have been sent
-  one of these, you have been sent it for a reason and it does not go
-  anywhere else.
+**A sandbox env exists too and is not in that folder.** Ask for it. It points
+at the test server — invented tickets, nothing anybody is working on — and it
+is what you want if you are trying things out rather than joining the real
+board.
 
-A production env arrives **read-only**: it has no `ALLOW_DISCORD_WRITES`
-line, so your board mirrors and reads and cannot post a thing. That is a
-legitimate way to run and it is how a second machine should start. Turning it
-into a writer is a deliberate act — uncommenting one line — and worth
-agreeing with whoever sent it first.
+**Production's copy arrives read-only.** There is no `ALLOW_DISCORD_WRITES`
+line in it, so your board mirrors and reads and cannot post a thing. That is
+a legitimate way to run and it is how a second machine should start — read
+the board, check it agrees with everyone else's, and only then post into
+threads people are working in. Turning it into a writer is uncommenting one
+line, and worth agreeing with whoever sent you the file first.
+
+The sandbox env is the other way round: writes are already on, because a test
+server is for testing and there is nothing there to damage.
+
+**The token in either file is a password for the bot.** The production one
+can post into customer threads as Ernie, and no env setting changes that —
+`ALLOW_DISCORD_WRITES` restrains this program, not the token.
 
 ## Upgrading
 
