@@ -1779,6 +1779,26 @@ so the name is *picked* in Bert instead of typed.
   an unknown client is not a mistake anybody is making now -- the same guard
   `client_note` uses, and what keeps `is_dirty` honest, since opening a card
   must never make it dirty.
+  **A typo that became an alias is still a typo**, and that took finding.
+  Saving `bravon` once put it on a thread carrying Client CR `PIP-2165`, so
+  `reconcile_aliases` resolved the spelling **through the key** -- no strings
+  compared, confidence 1.0 -- and `bravon` became a recorded alias of Bravo
+  Environmental. `client_known` counts aliases, which is right for the
+  caution and exactly wrong here, so every later `bravon` was left alone for
+  being known: **the slip had taught the board that the slip was a
+  spelling.** So this asks `client_stands_for()` instead, which is about the
+  customer's own name rather than every string that resolves to them.
+  Correcting *through* an alias is in fact the safest case there is -- an
+  alias names one client outright, with nothing to guess.
+  **But a shortening people type on purpose is not a slip.** 24 of the 65
+  offered clients are typed shorter in titles than their Jira name -- `Trekk`
+  for *Trekk Design Group* on 18 threads, `SCI` for *SCI Infrastructure LLC.*
+  on 15 -- and expanding those would make every new title disagree with the
+  ones already there, which is the reasoning that chose the short names in
+  the first place. `client_stands_for` takes the name itself punctuation
+  aside, a prefix, or a run of whole words in order: `Bravo` stands for Bravo
+  Environmental and `bravon` stands for nothing, which is what makes one a
+  shortening and the other a typo.
   **It is announced before it happens.** The note under the box reads *will
   be saved as Bravo Environmental* while somebody is still typing. A
   correction you can see coming is a help; the same correction found

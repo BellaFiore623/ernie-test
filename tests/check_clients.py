@@ -918,6 +918,30 @@ def check_one_candidate_is_taken_and_two_are_not() -> bool:
 
     c.equal(bert.client_resolve("", r), "", "an empty box resolves to nothing")
 
+    # **A typo that became an alias is still a typo.** Saving `bravon` once
+    # put it on a thread carrying a Client CR, so reconcile_aliases resolved
+    # it through the *key* -- no strings compared, confidence 1.0 -- and it
+    # became a recorded alias. `client_known` counts aliases, which is right
+    # for the caution and exactly wrong here: the slip had taught the board
+    # that the slip was a spelling, and every later one was left alone.
+    typo = dict(r[5])                       # Trekk Design Group, short "Trekk"
+    typo["aliases"] = list(typo.get("aliases") or []) + ["trekkk"]
+    rr = r[:5] + [typo] + r[6:]
+    c.equal(bert.client_resolve("trekkk", rr), "Trekk",
+            "a typo the alias table has learned is still corrected")
+
+    # But a shortening people type on purpose is not a slip. 24 of the 65
+    # offered clients are typed shorter than their Jira name; expanding those
+    # would make every new title disagree with the ones already there.
+    c.ok(bert.client_stands_for("Trekk", "Trekk Design Group"),
+         "a prefix stands for the name")
+    c.ok(bert.client_stands_for("Trekk Group", "Trekk Design Group"),
+         "and so does a run of whole words in order")
+    c.ok(bert.client_stands_for("Dukes Root Control", "Duke's Root Control"),
+         "punctuation left out is the same name")
+    c.ok(not bert.client_stands_for("trekkk", "Trekk Design Group"),
+         "but a slip stands for nothing, which is what makes it a slip")
+
     return c.report()
 
 

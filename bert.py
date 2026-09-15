@@ -1793,6 +1793,37 @@ def client_known(typed, roster) -> bool:
     return False
 
 
+def client_stands_for(typed, short) -> bool:
+    """Whether what was typed is this customer's name rather than a slip at it.
+
+    The name itself, punctuation aside -- `Dukes Root Control` is
+    `Duke's Root Control` with the apostrophe left out, not a different
+    answer. And a **deliberate shortening**, which this board is full of:
+    measured against production, 24 of the 65 offered clients are typed
+    shorter in titles than their Jira name, `Trekk` for *Trekk Design Group*
+    on 18 threads and `SCI` for *SCI Infrastructure LLC.* on 15. Expanding
+    those would make every new title disagree with the ones already there,
+    which is the reasoning that chose the short names in the first place.
+
+    So a prefix counts, and so does a run of whole words in order. `Bravo`
+    stands for *Bravo Environmental*; `bravon` does not stand for anything,
+    which is what makes it a typo rather than a shortening.
+    """
+    a, b = client_squash(typed), client_squash(short)
+    if not a or not b:
+        return False
+    if a == b or b.startswith(a):
+        return True
+    # Whole words, in order: "trekk design" for "Trekk Design Group".
+    want = [w for w in re.split(r"[^a-z0-9]+", (typed or "").lower()) if w]
+    have = [w for w in re.split(r"[^a-z0-9]+", (short or "").lower()) if w]
+    i = 0
+    for w in have:
+        if i < len(want) and want[i] == w:
+            i += 1
+    return i == len(want) and bool(want)
+
+
 def client_resolve(typed, roster, opened_with="") -> str:
     """The name to save instead of what was typed, or "" to keep it as typed.
 
@@ -1820,9 +1851,27 @@ def client_resolve(typed, roster, opened_with="") -> str:
     Pure, so the decision can be exercised without a QApplication.
     """
     typed = (typed or "").strip()
-    if not typed or client_known(typed, roster):
+    if not typed:
         return ""
     if client_squash(typed) == client_squash(opened_with):
+        return ""
+    # **The customer's own name stands; an alias does not.** `client_known`
+    # counts aliases, and that is right for the caution -- a spelling the
+    # board has used nine times is a name that resolves, and nagging about it
+    # every time is noise. It is exactly wrong here: **an alias is a wrong
+    # spelling that happens to resolve**, which is the thing this exists to
+    # correct.
+    #
+    # Found the hard way. Saving `bravon` once put it on a thread carrying
+    # Client CR PIP-2165, so `reconcile_aliases` resolved it **through the
+    # key** -- no strings compared, confidence 1.0 -- and `bravon` became a
+    # recorded alias of Bravo Environmental. The typo had taught the board
+    # that the typo was a spelling, and every later `bravon` was then left
+    # alone for being known. A feedback loop that makes a slip permanent.
+    #
+    # Correcting through an alias is also the *safest* case there is: an
+    # alias names one client outright, so there is nothing to guess.
+    if any(client_stands_for(typed, c.get("short_name")) for c in roster or []):
         return ""
     # Two, so "exactly one" can be told apart from "more than one".
     hits = client_matches(typed, roster, limit=2)
@@ -1848,17 +1897,20 @@ def client_note(typed, roster, opened_with="") -> str:
     rather than at the moment somebody reads the board.
     """
     typed = (typed or "").strip()
-    if not typed or client_known(typed, roster):
+    if not typed:
         return ""
     if client_squash(typed) == client_squash(opened_with):
         return ""
     # One candidate and the save will take it, so the box says so *before*
     # the save rather than after. A correction somebody can see coming is a
     # help; the same correction found afterwards is the software having
-    # changed what they wrote.
+    # changed what they wrote. Asked before `client_known`, because an alias
+    # is known *and* correctable -- it is a wrong spelling that resolves.
     fixed = client_resolve(typed, roster, opened_with)
     if fixed:
         return f"will be saved as {fixed}"
+    if client_known(typed, roster):
+        return ""
     return "not a customer Jira knows \u2014 it will be typed as-is"
 
 
