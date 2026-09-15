@@ -85,6 +85,7 @@ fi
 
 mkdir -p logs
 PIDS=()
+LOGS=()                         # the logs this run started, for the tail at the end
 PIDFILE=logs/stack.pids
 
 # Windows pids, not bash job numbers. Ctrl+C reaches the children through the
@@ -186,6 +187,7 @@ start() {                       # start <name> <command...>
   echo "  $name"
   "$@" >> "logs/$name.log" 2>&1 &
   PIDS+=($!)
+  LOGS+=("logs/$name.log")
   # /proc/<job>/winpid is Git Bash's map from its own pid to the Windows one,
   # and the Windows one is what outlives this script.
   local wpid
@@ -261,4 +263,19 @@ fi
 echo ""
 echo "tailing logs, Ctrl+C to stop everything"
 echo "---"
-tail -f logs/*.log
+# The logs this run started, by name, and never `logs/*.log`.
+#
+# The glob is a loop waiting to happen. Redirect this script's own output to
+# a file in logs/ -- `./run.sh test bert > logs/start.log`, which is the
+# obvious thing to do when you want the startup banner kept -- and the glob
+# includes that file, so tail reads what tail just wrote and writes it again.
+# It grows without bound and stops only when the disk is full.
+#
+# It did: 392 GB of mostly nul bytes, ending in `tail: error writing
+# 'standard output': No space left on device`, and a C: drive down to 7.6 GB
+# free with production's SQLite living on it. The tail was still running
+# afterwards, so it would have started again the moment anything freed space.
+#
+# The glob was also wrong in a quieter way -- it tails clone.log, prune.log
+# and every other one-off left in the folder, none of which this run wrote.
+tail -f "${LOGS[@]}"

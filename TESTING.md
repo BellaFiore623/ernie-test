@@ -19,6 +19,84 @@ stacks.** That is the rest of this page.
 
 ---
 
+# Installed build, or from source?
+
+That is a different question from the one above, and you answer it first.
+
+**The installed build is the normal way.** `Ernie-<version>-setup.exe` in the
+shared Drive folder is one download and one double-click: no Python, no
+clone, no command line. It runs the sync, the outbox, the API and Bert as one
+program. Take this unless you are changing the code.
+
+**From source is for working on it** — four processes you can restart
+separately, which is what the rest of this page describes. You need Python
+and a clone.
+
+Either way you still pick two stacks or one stack above; how you installed
+and how you share are not related.
+
+## The env file, and which one
+
+**The installer carries no token on purpose.** A secret baked into a setup
+file in a shared folder is a secret shared with everyone who can reach that
+folder. So it is handed over separately and it goes here, exactly:
+
+```
+%LOCALAPPDATA%\Ernie\ernie.env
+```
+
+Paste that into the Explorer address bar to get to the folder. If the file
+isn't there, the first run says so on screen and names that path — it does
+not open an empty board and leave the reason in a log.
+
+**The one in the Drive folder is production's.** It points at the real
+server — hundreds of threads of live customer work — and it is what "obtain
+ernie.env from the google drive folder" gets you. That is the right file if
+you are joining the production board, which is what most people are doing.
+
+**A sandbox env exists too and is not in that folder.** Ask for it. It points
+at the test server — invented tickets, nothing anybody is working on — and it
+is what you want if you are trying things out rather than joining the real
+board.
+
+**Production's copy arrives read-only.** There is no `ALLOW_DISCORD_WRITES`
+line in it, so your board mirrors and reads and cannot post a thing. That is
+a legitimate way to run and it is how a second machine should start — read
+the board, check it agrees with everyone else's, and only then post into
+threads people are working in. Turning it into a writer is uncommenting one
+line, and worth agreeing with whoever sent you the file first.
+
+The sandbox env is the other way round: writes are already on, because a test
+server is for testing and there is nothing there to damage.
+
+**The token in either file is a password for the bot.** The production one
+can post into customer threads as Ernie, and no env setting changes that —
+`ALLOW_DISCORD_WRITES` restrains this program, not the token.
+
+## Upgrading
+
+Run the new setup file. **Do not uninstall first**, and do not re-place your
+env.
+
+The program and the board live in two different directories, which is what
+makes that safe:
+
+```
+%LOCALAPPDATA%\Programs\Ernie    the program — wiped and rewritten whole
+%LOCALAPPDATA%\Ernie             env, database, logs — never touched
+```
+
+The program directory is replaced rather than written over, because its
+internals change shape between builds and leaving old files beside new ones
+is how you get a version that works until it doesn't. Nothing you care about
+is in there.
+
+Close Ernie before you upgrade. If it's open, the installer notices and
+offers **Retry** rather than failing halfway and leaving you with half of one
+build and half of another — close the window and click Retry.
+
+---
+
 # Two stacks
 
 You each run your own copy of everything: your own database, your own sync,

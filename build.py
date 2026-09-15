@@ -60,7 +60,7 @@ def version() -> str:
 
 
 def build_installer(v: str) -> pathlib.Path | None:
-    """Wrap dist/Ernie in a single setup.exe. Answers the path, or None.
+    """Wrap dist/Bert in a single setup.exe. Answers the path, or None.
 
     The whole reason it exists: the build is 87 files, and "grab the new one
     and delete the old one" cannot be done with 87 files -- nor by hand at
@@ -82,7 +82,7 @@ def build_installer(v: str) -> pathlib.Path | None:
             print(f"    {out.stderr.strip()}")
         print("  NSIS failed, so no installer was built")
         return None
-    setup = HERE / "dist" / f"Ernie-{v}-setup.exe"
+    setup = HERE / "dist" / f"Bert-{v}-setup.exe"
     return setup if setup.exists() else None
 
 
@@ -126,7 +126,7 @@ def main() -> None:
     ap.add_argument("--clean", action="store_true",
                     help="throw away build/ and dist/ first")
     ap.add_argument("--installer", action="store_true",
-                    help="also wrap dist/Ernie in a single setup.exe")
+                    help="also wrap dist/Bert in a single setup.exe")
     a = ap.parse_args()
 
     if a.version:
@@ -158,7 +158,7 @@ def main() -> None:
     if r.returncode != 0:
         sys.exit(r.returncode)
 
-    out = HERE / "dist" / "Ernie"
+    out = HERE / "dist" / "Bert"
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     print(f"\n  built in {time.time() - t0:.0f}s")
     print(f"  {out}")

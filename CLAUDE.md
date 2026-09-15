@@ -2388,6 +2388,36 @@ the folder sends everybody to an empty page; a build in the folder with no
 note is one nobody hears about. Neither is broken, and both are the kind of
 thing nobody notices for a week.
 
+- **The installed application is called Bert, and only the label moved.**
+  The window has always said Bert -- it is the board, the thing with tickets
+  in it, the half a person actually uses. Ernie is the half that talks to
+  Discord and has no window at all, so the Start menu, the Add/Remove entry
+  and the setup file were naming the product after its plumbing.
+  **`AppName` was doing four jobs**, which is why this needed care rather
+  than a find-and-replace: the display name, the program directory, the
+  registry key, and `RMDir /r "$LOCALAPPDATA\${AppName}"` -- **the path to
+  somebody's board**. Renamed naively, the uninstall's "also delete my data"
+  would have gone looking in `%LOCALAPPDATA%\Bert`, found nothing, deleted
+  nothing, and left the database and the env file with the Discord token in
+  it sitting on disk. No error, at any point.
+  So `AppName` is the label and **`AppDir` is the identity**: the program
+  directory, the registry key and the board all key off `AppDir`, which stays
+  `Ernie` for ever unless somebody deliberately migrates it. Moving the
+  program directory would mean a new installer no longer *replaces* the old
+  one -- two copies, two Add/Remove entries, and two programs holding
+  different mutexes, so neither can tell the other is running, which is the
+  one failure the mutex exists to prevent. Moving the board directory orphans
+  every database in the field, production's included.
+  `${OldShortcut}` clears the Start menu entry the previous name left, which
+  otherwise points at an exe the upgrade has just deleted.
+  **The check that should have caught it was assuming its own answer.**
+  `check_app.py` resolved `${AppName}` by substituting the string `"Ernie"`
+  into the script before looking, so every assertion about the board
+  directory would have gone on passing through exactly the rename that broke
+  it -- while the mutex beside it had a paragraph explaining why *it* was
+  held together. It compares `AppDir` against `ernie_sync.CONFIG_DIR.name`
+  now, and the failure was confirmed by making it: `got 'Bert', want
+  'Ernie'`.
 - **Per-user, and no admin.** `%LOCALAPPDATA%\Programs\Ernie`, HKCU for the
   Add/Remove Programs entry. Asking for admin would cost a UAC prompt on an
   unsigned binary -- the prompt people are right to refuse -- and put the
@@ -2419,9 +2449,27 @@ thing nobody notices for a week.
   `ernie_jira.py` only ever calls the search endpoint -- but an Atlassian
   token carries the account's permissions, so that one can write to real Jira
   from anywhere; rotating it is `id.atlassian.com` and re-issuing the file.
-  And **production's env is a different question entirely**: its Discord
-  token posts into customer threads people are working in, so when it comes
-  time to hand that one out, this is not the precedent to follow.
+  And **production's env was a different question, asked and answered
+  2026-09-15: it is in the Drive folder too.** Raised as a hazard here and
+  decided the other way by the people whose call it is -- the folder is
+  shared `type: domain, role: reader` with `edgeaisolutions.com`, so this is
+  the production Discord token readable by anyone with a company account,
+  and that was accepted knowingly rather than overlooked. Written down for
+  the same reason the sandbox one is: so nobody reading the folder later
+  mistakes it for a slip and "fixes" it.
+  **What that trades away, stated plainly so a later reader can re-decide
+  with the facts.** `ALLOW_DISCORD_WRITES` is commented out in the copy up
+  there, so anybody who installs it comes up read-only -- but that guard
+  lives in *this code* and constrains Ernie, not the token. A person holding
+  the token has whatever the bot has, which now includes Manage Threads and
+  Pin Messages on a server of real customer threads, and no env file limits
+  that. Rotating it is the Discord developer portal plus re-issuing every
+  copy.
+  **The operational catch is the one that bites a stranger**: the upload
+  replaced the sandbox env in place rather than sitting beside it, and
+  `install-instructions.txt` in that folder says "obtain ernie.env from the
+  google drive folder". So the default download stopped being a sandbox and
+  became production's 923 real threads, one uncommented line from posting.
 - **No secret is in the installer.** The env file is not installed, generated
   or prompted for: a token baked into a setup.exe in a shared folder is a
   token shared with everyone who can reach that folder, and it would be the
@@ -2438,6 +2486,22 @@ thing nobody notices for a week.
 ./run.sh stop               # stop a stack this script started
 python ernie_sync.py --once --env ernie-test.env --db ernie-test.db
 ```
+
+**`run.sh` tails the logs it started, by name, never `logs/*.log`.** The
+glob is a loop with a fuse in it. Redirect the script's own output into the
+folder it is tailing -- `./run.sh test bert > logs/start.log`, which is the
+obvious way to keep the startup banner -- and the glob picks that file up, so
+`tail` reads what `tail` just wrote and writes it again. Nothing bounds it.
+It ran: **392 GB** of a banner followed by nul bytes, ending in `tail: error
+writing 'standard output': No space left on device`, and **C: down to 7.6 GB
+free** with production's SQLite living on that drive. The stack itself was
+fine throughout and said nothing, because nothing had failed -- the loop is
+between two programs neither of which was doing anything wrong. It stopped
+growing only because the disk filled, and the `tail` was **still running**
+eight hours later, so it would have resumed the moment anything freed space.
+`start()` appends each log to `LOGS` and the tail takes that array, which
+also drops the one-off logs -- `clone.log`, `prodsync.log`, `prune.log` --
+that the glob was following and this run never wrote.
 
 **Closing the terminal window leaves the stack running.** Ctrl+C reaches the
 children through the process group and they stop tidily; closing the window
