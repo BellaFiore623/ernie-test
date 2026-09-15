@@ -2439,6 +2439,22 @@ thing nobody notices for a week.
 python ernie_sync.py --once --env ernie-test.env --db ernie-test.db
 ```
 
+**`run.sh` tails the logs it started, by name, never `logs/*.log`.** The
+glob is a loop with a fuse in it. Redirect the script's own output into the
+folder it is tailing -- `./run.sh test bert > logs/start.log`, which is the
+obvious way to keep the startup banner -- and the glob picks that file up, so
+`tail` reads what `tail` just wrote and writes it again. Nothing bounds it.
+It ran: **392 GB** of a banner followed by nul bytes, ending in `tail: error
+writing 'standard output': No space left on device`, and **C: down to 7.6 GB
+free** with production's SQLite living on that drive. The stack itself was
+fine throughout and said nothing, because nothing had failed -- the loop is
+between two programs neither of which was doing anything wrong. It stopped
+growing only because the disk filled, and the `tail` was **still running**
+eight hours later, so it would have resumed the moment anything freed space.
+`start()` appends each log to `LOGS` and the tail takes that array, which
+also drops the one-off logs -- `clone.log`, `prodsync.log`, `prune.log` --
+that the glob was following and this run never wrote.
+
 **Closing the terminal window leaves the stack running.** Ctrl+C reaches the
 children through the process group and they stop tidily; closing the window
 runs no trap at all, and sync and outbox go on with nothing on screen to say
