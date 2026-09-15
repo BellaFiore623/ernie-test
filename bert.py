@@ -5342,24 +5342,17 @@ class Bert(QMainWindow):
             lay.addWidget(chip)
             self.chips[name] = chip
 
-        # Only when something is on, because a control that does nothing is
-        # noise -- and this one says, in a word, what state the row is in.
-        self.clear_equip = QPushButton("Show all")
-        self.clear_equip.setStyleSheet(btn_css())
-        self.clear_equip.setCursor(Qt.PointingHandCursor)
-        self.clear_equip.clicked.connect(self._clear_equipment)
-        self.clear_equip.hide()
-        lay.addSpacing(6)
-        lay.addWidget(self.clear_equip)
-
-        lay.addStretch()
+        lay.addSpacing(14)
 
         # **A dropdown, where equipment gets chips.** Four kinds of equipment
         # fit across a row; the open board carries **35 distinct client names
         # over 53 tickets**, which is a list you scan rather than a set of
-        # buttons you read. It sits at the far end because it is the same
-        # kind of control doing the same job, and the row already reads
-        # left to right as "narrow by ...".
+        # buttons you read.
+        #
+        # Beside the chips rather than out at the far edge: the two narrow
+        # the same board in the same way, and a control that does the same
+        # job belongs where the eye already is. It was across the row first,
+        # which put a gap between two halves of one idea.
         caption = QLabel("Client")
         caption.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                               f" background:transparent;")
@@ -5373,6 +5366,25 @@ class Bert(QMainWindow):
         self.client_box.currentIndexChanged.connect(self._client_picked)
         self._client_sig = None
         lay.addWidget(self.client_box)
+
+        # **After both, and it clears both.** Only when something is on,
+        # because a control that does nothing is noise -- and this one says,
+        # in a word, what state the row is in.
+        #
+        # It used to sit between the chips and the client box, which meant
+        # turning a chip on **pushed the dropdown 124px to the right**, under
+        # the pointer of somebody about to use it. Last in the row it moves
+        # nothing, and reading "stop narrowing" over the whole row is truer
+        # than having it speak for the chips alone.
+        self.clear_equip = QPushButton("Show all")
+        self.clear_equip.setStyleSheet(btn_css())
+        self.clear_equip.setCursor(Qt.PointingHandCursor)
+        self.clear_equip.clicked.connect(self._clear_filters)
+        self.clear_equip.hide()
+        lay.addSpacing(10)
+        lay.addWidget(self.clear_equip)
+
+        lay.addStretch()
         return row
 
     def _client_picked(self, _index):
@@ -5456,13 +5468,14 @@ class Bert(QMainWindow):
         """The roster, or nothing. A board with no Jira still filters."""
         return getattr(self, "roster", None) or []
 
-    def _clear_equipment(self):
-        """Back to the whole board, without four separate clicks."""
+    def _clear_filters(self):
+        """Back to the whole board, without five separate clicks."""
         for chip in self.chips.values():
             chip.blockSignals(True)
             chip.setChecked(False)
             chip.blockSignals(False)
         self.equip.clear()
+        self.client_pick = (CLIENT_ALL, "")
         self.render()
 
     def _toolbar(self):
@@ -7523,7 +7536,9 @@ class Bert(QMainWindow):
         for name, n in equipment_counts(self.cards).items():
             self.chips[name].set_count(n)
         self._fill_clients()
-        self.clear_equip.setVisible(bool(self.equip))
+        # Either half narrowing is enough to offer the way back.
+        self.clear_equip.setVisible(
+            bool(self.equip) or tuple(self.client_pick)[0] != CLIENT_ALL)
 
         wanted_types = equipment_types(self.equip)
 

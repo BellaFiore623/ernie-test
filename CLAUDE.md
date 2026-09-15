@@ -1483,6 +1483,15 @@ or worse, how long a ticket takes, or which ones have been open since April.
   `Bravo Environmental (7)` -- which is the equipment chips' rule, not the
   figures panel's: a filter says how much is behind each way of narrowing,
   and these two narrow differently on purpose.
+  **It sits beside the chips, and `Show all` sits after both.** The two
+  narrow the same board in the same way, so the control doing the same job
+  belongs where the eye already is rather than across the row. `Show all`
+  went last and now clears **both**: between the chips and the dropdown it
+  pushed that dropdown **124px to the right** the moment a chip went on,
+  under the pointer of somebody about to use it. Last in the row it moves
+  nothing, and "stop narrowing" reading over the whole row is truer than
+  having it speak for the chips alone. It appears when either half is
+  narrowing.
   **One at a time**, unlike the chips: a ticket has several pieces of
   equipment and exactly one customer, so "any of these" is a question nobody
   asks here. Alphabetical, because 35 entries is a list somebody scans for a
