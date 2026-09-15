@@ -1229,6 +1229,38 @@ or worse, how long a ticket takes, or which ones have been open since April.
   rows that came back, so a quiet week is a nought in the trend rather than a
   bar that is simply absent. Missing reads as "no data"; nought reads as
   "nothing closed", and they are not the same news.
+- **The longest window is a year, and what falls off the end of it is kept.**
+  Asked 2026-09-15: should tickets over a year old stay for the record, or
+  does holding them slow the panel down? Neither half turned out to be the
+  question.
+  **Nothing is ever deleted**, so keeping them is not a decision anybody has
+  to take -- it is the append-only rule, and there is no path in this
+  codebase that drops an old ticket.
+  **And there is nothing over a year old on the board to lose.** Measured
+  against production: 923 threads, 3 opened in 2023, 4 in 2024, 316 in 2025
+  and 600 in 2026 -- but **every one of the 345 completed cards belongs to a
+  thread opened in 2026**, and the oldest completion of any kind is
+  2026-04-13. The 323 older threads are all `#customer-support`, which is
+  `generate_cards = 0`: mirrored for history, never tickets, never on this
+  panel. `#customer-threads` is about five months old, so the year window
+  currently reaches everything there is.
+  **Looking further back costs 9ms.** The whole endpoint is 12.8ms at seven
+  days, 14.2 at a year and 21.7 at ten -- on the slow lane, not the poll the
+  board depends on. Volume is not the constraint here and will not be for
+  years at ~65 completions a month.
+  So the gap is the **dropdown**, not the data, and it opens around **April
+  2027**: `STATS_WINDOWS` stops at 365, and the first completion older than
+  that is history sitting in the database with no way to reach it from the
+  panel. That is the worst of the three states, because nothing looks broken.
+  **The catch, for whoever adds `All time`:** it collides with the bucket
+  rule directly above. Three years of monthly buckets is 36 bars in a 244px
+  panel, which is not a trend any more -- so an all-time window needs a
+  quarterly or yearly bucket to go with it, or it is the two-bar failure at
+  the other end of the same scale.
+  Left alone deliberately until there is a year of tickets to read. Whether
+  year-plus figures are worth looking at is a question for the people using
+  the panel, and it cannot be answered before the data exists; what could
+  have gone wrong quietly was the cost of keeping them, and it does not.
 - **Sized and folded exactly like the running order**, which is the point of
   putting it there: a range rather than a fixed width so the handle has
   something to move, `setFixedWidth` only while folded because folding is the
