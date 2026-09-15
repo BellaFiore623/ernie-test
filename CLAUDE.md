@@ -33,6 +33,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `tools/q.py` | Ad-hoc SQL helper. `python tools/q.py "SELECT ..." ernie-test.db` |
 | `tools/backfill_message_types.py` | Fetches Discord's message `type` for rows written before the column existed. Read-only against Discord, writes one column, resumable. |
 | `tools/rebuild_title_history.py` | Writes each recovered rename as the title revision it was. No network. Cannot change what the board shows today. |
+| `tools/backfill_closers.py` | Puts names on closures recorded before **View Audit Log** was granted. Read-only against Discord, fills two NULLs, `--dry-run`. |
 | `tools/fake_stats_data.py` | Invents a past for the sandbox so the figures panel can be looked at. Refuses production; `--clear` undoes it. |
 | `tools/ernie_backup.py` | Online SQLite backup with rotation. |
 | `tools/dump_threads.py` | Raw API JSON to disk. Read-only, for seeing what Discord actually sent. |
@@ -269,6 +270,18 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   is recorded unattributed. Naming somebody is a nicety; closing the ticket
   is the feature, and a revoked permission or a guild busy enough to push the
   archive past `AUDIT_LOOKBACK` must never hold it up.
+  **Unattributed is not permanent, which the wording above once implied.**
+  Discord keeps audit log entries for **45 days**, so a closure recorded
+  before the permission existed can still be given its name afterwards --
+  `tools/backfill_closers.py` pages the log and fills `events.actor_name` and
+  `cards.completed_by`, only ever onto a NULL, leaving `new_value` alone
+  because `CLOSED_IN_DISCORD` says *where* it happened and that was never in
+  doubt. Production's first sync is what it was written for: the pass closed
+  **20 cards** in one go, every one of them before the toggle was found, and
+  all 20 came back two pages in -- 19 JulianD, 1 adubeau. The window is the
+  catch. Grant the permission and the backfill on the same day and nothing is
+  lost; leave it six weeks and the entries have aged out, with nothing
+  anywhere to say what was missed.
 - **One audit call per pass, and only when something closed.** It is a
   guild-wide read, so it rides on there being something to attribute -- the
   closures are collected first and the log is asked once for all of them.
