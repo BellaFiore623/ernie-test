@@ -1299,19 +1299,26 @@ or worse, how long a ticket takes, or which ones have been open since April.
   rows it had put there itself. Same outcome, different account of it.
   `--dry-run` writes, measures and rolls back, so the preview is the real
   figure rather than a count of intentions.
-  **Only PROD ↔ OPS is counted.** Four tags make twelve possible pairs and
-  the question was about two, so the two that answered it shared a 244px
-  panel with `ENG → PROD` and `CS → OPS` -- a handful of rows each about
-  something nobody asked. Measured on the sandbox: eight pairs, two carrying
-  the question and six noise, and enough noise to push a real row into the
-  summed tail. `ernie_api.TAG_MOVES_COUNTED` is the list.
-  **Filtered in the query, never in the drawing.** Counting everything and
-  showing two would leave a block whose rows do not make its own total, and a
-  figure that does not add up is the first one somebody stops believing --
-  the rule `Other` exists for in the tally. There is no `Other` here, because
-  what nobody asked about is not counted at all. Nothing is lost either way:
-  `thread_titles` is append-only and still holds every rename, so widening
-  the list again is one line and no backfill.
+  **Every retag is counted, and the drawing decides how many to show.** Only
+  `PROD` to `OPS` and back were counted at first: that was the question
+  asked, and four tags make twelve pairs, so the two that answered it shared
+  a 244px panel with rows nobody asked about -- a handful each, and enough to
+  push a real row into the summed tail.
+  **Dropping them cost more than the crowding did.** A retag that is not
+  PROD/OPS moves the ticket, changes the board and leaves no trace anywhere a
+  person looks: three tag changes in an afternoon showed as one, and the two
+  that vanished were reported as the figures being broken. Somebody went
+  hunting a bug because a number quietly ignored two thirds of what they had
+  done, which is worse than a row they skim past.
+  So `ernie_api.TAG_MOVES_COUNTED` is every ordered pair of `QUEUES_OFFERED`,
+  **built from it rather than written out**, so a tag retired from the editor
+  stops being counted without anybody remembering this line. And
+  `STATS_MOVES_SHOWN` keeps the busiest rows and **sums the tail into one
+  line rather than dropping it**, which is what keeps the rows adding up to
+  the block's own total -- the rule `Other` exists for in the tally. Counting
+  everything and showing six was never the thing rejected; counting
+  everything and showing *two* was. Nothing needed a backfill either way:
+  `thread_titles` is append-only and has held every rename all along.
   On the panel the block draws `PROD → OPS  21` with a bar in the
   *destination's* colour: the arrow already says which way it went, and the
   tag it became is what a reader is counting. Four tags make twelve possible
