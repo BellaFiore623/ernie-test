@@ -760,6 +760,24 @@ activity feed, undo, and the outbox.
   something, which is the same rule the band bars in the running order follow.
   Amber is kept for the given-up one alone, because a caution is the one thing
   on the card that is genuinely a warning.
+- **An outage is not the card's fault, and `attempts` must not say it is.**
+  A connection failure used to increment it, so five passes against an
+  unreachable Discord abandoned the change for good and `/health` reported
+  `stuck` -- which reads as something wrong with *that ticket* rather than
+  with Discord. **The drain beat made it sharp**: five passes at 30 seconds
+  was two and a half minutes, and at `FAST_SECONDS` it is **twenty-five
+  seconds** of Discord being unreachable to strand every queued change on the
+  board. The beat split is what turned a hazard into one worth fixing.
+  Giving up is a statement about the *change* -- a message Discord will not
+  accept, a thread that no longer exists -- and an outage says nothing about
+  any particular row and the same thing about all of them. So an
+  `httpx.TransportError`, which is exactly "no HTTP response happened",
+  releases the claim and records `last_error` without counting: the row stays
+  due and goes the moment Discord answers. Anything that *got* an answer
+  still counts, a 4xx included, because Discord replied about this request.
+  Measured against a copy with a client pointed at a dead port -- the way a
+  guard is tested here, never by waiting for the real thing. Eight passes,
+  `attempts` still 0, still due, nothing stuck; then a 200 and it posted.
 - **`/health` counts as owed only what the outbox will still try.**
   `OUTBOX_MAX_ATTEMPTS` matches `ernie_outbox.MAX_ATTEMPTS` and the
   `attempts < 5` in `v_outbox_due`; without it a row nothing would ever pick up

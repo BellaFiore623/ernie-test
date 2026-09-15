@@ -24,6 +24,8 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
+
 import ernie_changelog
 import ernie_load as load
 import ernie_state
@@ -271,6 +273,30 @@ def post_one(con, d: Discord, event) -> str:
 
     except GuildMismatch:
         raise                                  # config problem, not a bad row
+    except httpx.TransportError as e:
+        # **Discord was never reached, so nothing about this row was tried.**
+        # `attempts` is what decides a row has been given up on, and giving up
+        # is a statement about the *change* -- a message Discord will not
+        # accept, a thread that no longer exists. An outage says nothing about
+        # any particular row and the same thing about all of them.
+        #
+        # Measured before this: a client pointed at a dead host burned all
+        # five attempts in five passes and the row left `v_outbox_due` for
+        # good, reported as `stuck`. On the 5s drain beat that is **25
+        # seconds** of Discord being unreachable to strand every queued
+        # change permanently, with the board blaming the card. The beat split
+        # made this sharper -- it used to take two and a half minutes -- which
+        # is what turned a hazard into one worth fixing now.
+        #
+        # A TransportError is precisely "no HTTP response happened". Anything
+        # that got an answer, including a 4xx, still counts: Discord replied
+        # about this request, so the attempt was real. The error is still
+        # recorded, so `last_error` says what is wrong while it is wrong.
+        con.execute(
+            """UPDATE events SET claimed_at=NULL, last_error=?
+                WHERE event_id=?""",
+            (str(e)[:300] or "could not reach Discord", event["event_id"]))
+        return "failed"
     except Exception as e:
         # Release the claim so the row is eligible again on the next pass.
         con.execute(

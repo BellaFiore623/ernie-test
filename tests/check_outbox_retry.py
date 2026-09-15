@@ -457,7 +457,84 @@ def check_a_half_written_thread_resumes_where_it_stopped() -> bool:
     return c.report()
 
 
-CHECKS = (check_only_harmless_writes_ride_out_a_blip,
+def check_an_outage_is_not_the_cards_fault() -> bool:
+    """
+    Giving up is a statement about the change, not about the network.
+
+    `attempts` is what takes a row out of `v_outbox_due` for good, and
+    `MAX_ATTEMPTS` is 5. A connection failure used to count, so five passes
+    against an unreachable Discord abandoned the change permanently and
+    `/health` reported it as `stuck` -- which reads as something wrong with
+    that card rather than with Discord.
+
+    **The drain beat made it sharp.** Five passes at 30 seconds was two and a
+    half minutes; at `FAST_SECONDS` it is **twenty-five seconds** of Discord
+    being unreachable to strand every queued change on the board. Measured
+    against a copy with a client pointed at a dead port, which is how a guard
+    is tested here -- never by waiting for the real thing.
+
+    A `TransportError` is exactly "no HTTP response happened". Anything that
+    got an answer still counts, including a 4xx: Discord replied about this
+    request, so the attempt was real and a row that keeps being refused
+    should still be given up on.
+    """
+    c = Check("an outage is not the card's fault")
+
+    import httpx
+    import ernie_sync
+    import ernie_outbox as ob
+
+    guild = "999"
+
+    # 1. Discord unreachable: nothing is ever given up on.
+    with Board() as b:
+        tid = b.card("PROD: Outage - 01Jan26 - x", "medium")
+        eid = b.event(tid, verb="completed", old=None, new=None,
+                      dispatch_after=iso(-120))
+        b.con.commit()
+        d = ernie_sync.Discord("t", guild, allow_writes_for=guild)
+        d.http = httpx.Client(base_url="http://127.0.0.1:9", timeout=1.0)
+        for _ in range(ob.MAX_ATTEMPTS + 3):
+            ob.drain(b.con, d)
+        row = b.con.execute("SELECT attempts, last_error FROM events "
+                            "WHERE event_id=?", (eid,)).fetchone()
+        c.equal(row["attempts"], 0,
+                f"{ob.MAX_ATTEMPTS + 3} passes against a dead host cost no attempts")
+        c.ok(row["last_error"], "but the error is recorded while it is true")
+        c.equal(b.con.execute("SELECT COUNT(*) FROM v_outbox_due").fetchone()[0], 1,
+                "and the change is still due to go")
+        c.equal(len(ob.stuck(b.con)), 0, "nothing is reported as given up on")
+
+        # And it goes the moment Discord answers.
+        d.http = httpx.Client(base_url="http://x", transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"id": "m1"})))
+        got = ob.drain(b.con, d)
+        c.equal(got["sent"], 1, "and it posts as soon as Discord is back")
+
+    # 2. Discord answering, and refusing: this row really is the problem.
+    with Board() as b:
+        tid = b.card("PROD: Refused - 01Jan26 - x", "medium")
+        eid = b.event(tid, verb="completed", old=None, new=None,
+                      dispatch_after=iso(-120))
+        b.con.commit()
+        d = ernie_sync.Discord("t", guild, allow_writes_for=guild)
+        d.http = httpx.Client(base_url="http://x", transport=httpx.MockTransport(
+            lambda r: httpx.Response(400, json={"message": "no"})))
+        for _ in range(ob.MAX_ATTEMPTS + 2):
+            ob.drain(b.con, d)
+        row = b.con.execute("SELECT attempts FROM events WHERE event_id=?",
+                            (eid,)).fetchone()
+        c.equal(row["attempts"], ob.MAX_ATTEMPTS,
+                "a refusal counts, and stops at the ceiling")
+        c.equal(b.con.execute("SELECT COUNT(*) FROM v_outbox_due").fetchone()[0], 0,
+                "the row is no longer picked up")
+        c.equal(len(ob.stuck(b.con)), 1, "and it is reported as given up on")
+
+    return c.report()
+
+
+CHECKS = (check_an_outage_is_not_the_cards_fault,
+          check_only_harmless_writes_ride_out_a_blip,
           check_a_half_written_thread_resumes_where_it_stopped,
           check_the_loop_stops_when_asked,
           check_a_message_is_posted_once_however_often_the_rest_fails,
