@@ -56,6 +56,22 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   `http.patch` to Discord anywhere else.
 - `ALLOW_DISCORD_WRITES` must exactly equal `DISCORD_GUILD_ID` or nothing
   posts. Production's env file does not contain the line at all.
+- **Every endpoint closes its connection in a `finally`, without exception.**
+  Seven did it only on the happy path -- `health`, `events`, `clients`,
+  `client_roster`, `card_detail`, `card_messages`, `check_schema` -- so a
+  request that raised part-way leaked one, and Bert polls `/health` and
+  `/events` **twelve times a minute**. The consequence is not a slow leak, it
+  is the board stopping: **a reader holds a WAL snapshot, the snapshot blocks
+  checkpointing, the WAL grows past the database, and writers start timing
+  out.** Seen live as `drain failed: database is locked` every five seconds
+  against a **6.59 MB WAL on a 4.58 MB database**, with five renames sitting
+  unposted behind it and a card stuck saying *Pushing to Discord…*.
+  The hazard was already written down one function along -- "without it a
+  request that raised part-way left its connection open, and on Windows that
+  is a file handle nothing gives back" -- and `cards` and `stats` were fixed
+  when it was found. The other seven were not, which is the ordinary way a
+  rule kept by hand is kept: once. `tests/check_app.py` walks every function
+  that opens a connection and fails on any that can return without closing.
 - **`if __name__ == "__main__":` stays at the very end of every file.**
   `uvicorn.run()` blocks, so anything appended below it never registers.
   This has already caused a "route not found" bug once.

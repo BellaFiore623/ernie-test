@@ -320,29 +320,35 @@ def check_schema() -> None:
     exactly the database the first real run there will meet.
     """
     con = db()
-    absent, missing = [], []
-    for table, cols in REQUIRED_COLUMNS.items():
-        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
-        if not have:
-            absent.append(table)            # no such table, not a stale one
-            continue
-        missing += [f"{table}.{c}" for c in cols if c not in have]
-    con.close()
-    if not (absent or missing):
-        return
+    try:
+        absent, missing = [], []
+        for table, cols in REQUIRED_COLUMNS.items():
+            have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+            if not have:
+                absent.append(table)            # no such table, not a stale one
+                continue
+            missing += [f"{table}.{c}" for c in cols if c not in have]
+        con.close()
+        if not (absent or missing):
+            return
 
-    why, fix = [], []
-    if absent:
-        why.append("no " + ", ".join(sorted(absent)))
-        # The API is a reader and deliberately never applies schema.sql
-        # itself, so this names the thing that does.
-        fix.append(f"python -c \"import ernie_load; "
-                   f"ernie_load.connect('{DB}').close()\"")
-    if missing:
-        why.append("missing " + ", ".join(missing))
-        fix.append("run the matching migrations/migrate_*.py against it")
-    sys.exit(f"{DB} is behind this build -- {'; '.join(why)}.\n"
-             + "\n".join(f"  {i}. {f}" for i, f in enumerate(fix, 1)))
+        why, fix = [], []
+        if absent:
+            why.append("no " + ", ".join(sorted(absent)))
+            # The API is a reader and deliberately never applies schema.sql
+            # itself, so this names the thing that does.
+            fix.append(f"python -c \"import ernie_load; "
+                       f"ernie_load.connect('{DB}').close()\"")
+        if missing:
+            why.append("missing " + ", ".join(missing))
+            fix.append("run the matching migrations/migrate_*.py against it")
+        sys.exit(f"{DB} is behind this build -- {'; '.join(why)}.\n"
+                 + "\n".join(f"  {i}. {f}" for i, f in enumerate(fix, 1)))
+    finally:
+        # try/finally like its neighbours: a request that raises
+        # part-way otherwise leaves this open, and a reader left open
+        # pins the WAL so it can never checkpoint.
+        con.close()
 
 
 def conflict(code: str, message: str, **extra):
@@ -515,170 +521,176 @@ def root():
 def health():
     """Is Ernie alive, and how stale is the mirror?"""
     con = db()
-    last = con.execute(
-        """SELECT started_at, finished_at, threads_seen, messages_new, error
-           FROM sync_runs ORDER BY run_id DESC LIMIT 1""").fetchone()
-    # The newest row is the running cycle for the few seconds one takes, and
-    # its finished_at is NULL until it lands. Staleness is about the last run
-    # that actually finished: reading it off the newest row reported nothing
-    # at all once a minute, for as long as each cycle took, which Bert drew as
-    # "never synced".
-    done = con.execute(
-        """SELECT finished_at FROM sync_runs WHERE finished_at IS NOT NULL
-           ORDER BY run_id DESC LIMIT 1""").fetchone()
-    board = con.execute(
-        "SELECT COUNT(*) FROM cards WHERE completed_at IS NULL").fetchone()[0]
+    try:
+        last = con.execute(
+            """SELECT started_at, finished_at, threads_seen, messages_new, error
+               FROM sync_runs ORDER BY run_id DESC LIMIT 1""").fetchone()
+        # The newest row is the running cycle for the few seconds one takes, and
+        # its finished_at is NULL until it lands. Staleness is about the last run
+        # that actually finished: reading it off the newest row reported nothing
+        # at all once a minute, for as long as each cycle took, which Bert drew as
+        # "never synced".
+        done = con.execute(
+            """SELECT finished_at FROM sync_runs WHERE finished_at IS NOT NULL
+               ORDER BY run_id DESC LIMIT 1""").fetchone()
+        board = con.execute(
+            "SELECT COUNT(*) FROM cards WHERE completed_at IS NULL").fetchone()[0]
 
-    # Only when this machine is actually sharing a board. A solo setup has no
-    # state_sync rows -- and an older database has no such table at all, so
-    # ask before selecting from it rather than 500ing on /health.
-    sharing = None
-    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                   "AND name='state_sync'").fetchone():
-        # agreed_at arrived after the table did, so ask for it the same way --
-        # a database that has not had migrate_state_agreed_at.py run against
-        # it should report no contact yet, not 500.
-        cols = {r["name"] for r in con.execute("PRAGMA table_info(state_sync)")}
-        # The pull writes agreed_at; the publish writes synced_at. Contact is
-        # the pull: their changes only reach this board down that direction,
-        # and synced_at keeps advancing on a machine whose sync has stopped,
-        # which is exactly the case worth reporting.
-        col = "agreed_at" if "agreed_at" in cols else "NULL"
-        agreed = con.execute(
-            f"SELECT COUNT(*) AS n, MAX({col}) AS last FROM state_sync").fetchone()
-        if agreed["n"]:
-            # datetime() on both sides, and both written by this machine, so
-            # the other person's clock has no say in it.
-            waiting = con.execute(
-                """SELECT COUNT(*) FROM cards c JOIN state_sync s USING (thread_id)
-                   WHERE datetime(c.updated_at) > datetime(s.synced_at)""").fetchone()[0]
+        # Only when this machine is actually sharing a board. A solo setup has no
+        # state_sync rows -- and an older database has no such table at all, so
+        # ask before selecting from it rather than 500ing on /health.
+        sharing = None
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='state_sync'").fetchone():
+            # agreed_at arrived after the table did, so ask for it the same way --
+            # a database that has not had migrate_state_agreed_at.py run against
+            # it should report no contact yet, not 500.
+            cols = {r["name"] for r in con.execute("PRAGMA table_info(state_sync)")}
+            # The pull writes agreed_at; the publish writes synced_at. Contact is
+            # the pull: their changes only reach this board down that direction,
+            # and synced_at keeps advancing on a machine whose sync has stopped,
+            # which is exactly the case worth reporting.
+            col = "agreed_at" if "agreed_at" in cols else "NULL"
+            agreed = con.execute(
+                f"SELECT COUNT(*) AS n, MAX({col}) AS last FROM state_sync").fetchone()
+            if agreed["n"]:
+                # datetime() on both sides, and both written by this machine, so
+                # the other person's clock has no say in it.
+                waiting = con.execute(
+                    """SELECT COUNT(*) FROM cards c JOIN state_sync s USING (thread_id)
+                       WHERE datetime(c.updated_at) > datetime(s.synced_at)""").fetchone()[0]
+                since = None
+                if agreed["last"]:
+                    since = int((datetime.now(timezone.utc)
+                                 - datetime.fromisoformat(agreed["last"])).total_seconds())
+                sharing = {"cards": agreed["n"], "seconds_since_agreed": since,
+                           "waiting_to_send": waiting}
+        # The channel holding cards in a wire format this build cannot read.
+        # Its own block rather than folded into sharing: sharing answers whether
+        # contact is happening, and this is contact happening and being useless.
+        # Asked for the same way state_sync is -- a database that has not had the
+        # migration run should report nothing here rather than 500 on /health.
+        format_skew = None
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='state_format_skew'").fetchone():
+            sk = con.execute("SELECT * FROM state_format_skew WHERE id=1").fetchone()
+            if sk:
+                format_skew = {
+                    "their_v": sk["their_v"], "our_v": sk["our_v"],
+                    "cards": sk["cards"],
+                    "seconds_since_seen": int(
+                        (datetime.now(timezone.utc)
+                         - datetime.fromisoformat(sk["seen_at"])).total_seconds()),
+                }
+
+        # Still owed to Discord: queued behind the undo window, or being retried.
+        # Bert asks so it can say so before somebody shuts the stack down on top
+        # of a change that hasn't gone out.
+        #
+        # attempts < OUTBOX_MAX_ATTEMPTS, matching v_outbox_due. Without it a row
+        # the outbox has given up on was counted here for ever, so Bert warned
+        # about unsent changes on a board nobody had touched for ten minutes and
+        # waiting made no difference -- which is the one thing the warning is
+        # supposed to tell you to do.
+        owed = con.execute(
+            """SELECT COUNT(*) AS n, MIN(dispatch_after) AS soonest FROM events
+               WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+                 AND undone_at IS NULL AND attempts < ?""",
+            (OUTBOX_MAX_ATTEMPTS,)).fetchone()
+        # Given up on, and reported separately: leaving the stack running will not
+        # send these, so a warning that says "wait a minute" would be wrong about
+        # them -- but they must not be silently dropped either.
+        # The customer roster's age. None on a machine with no Jira configured --
+        # the table is empty there, and an indicator for something switched off is
+        # noise. The list changes rarely, so what matters is not how old it is but
+        # whether the pull has stopped: hours, not minutes.
+        roster = None
+        rr = con.execute("SELECT COUNT(*) AS n, SUM(offered) AS offered, "
+                         "MAX(synced_at) AS at FROM clients").fetchone()
+        if rr and rr["n"]:
             since = None
-            if agreed["last"]:
+            if rr["at"]:
                 since = int((datetime.now(timezone.utc)
-                             - datetime.fromisoformat(agreed["last"])).total_seconds())
-            sharing = {"cards": agreed["n"], "seconds_since_agreed": since,
-                       "waiting_to_send": waiting}
-    # The channel holding cards in a wire format this build cannot read.
-    # Its own block rather than folded into sharing: sharing answers whether
-    # contact is happening, and this is contact happening and being useless.
-    # Asked for the same way state_sync is -- a database that has not had the
-    # migration run should report nothing here rather than 500 on /health.
-    format_skew = None
-    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                   "AND name='state_format_skew'").fetchone():
-        sk = con.execute("SELECT * FROM state_format_skew WHERE id=1").fetchone()
-        if sk:
-            format_skew = {
-                "their_v": sk["their_v"], "our_v": sk["our_v"],
-                "cards": sk["cards"],
-                "seconds_since_seen": int(
-                    (datetime.now(timezone.utc)
-                     - datetime.fromisoformat(sk["seen_at"])).total_seconds()),
-            }
+                             - datetime.fromisoformat(rr["at"])).total_seconds())
+            roster = {"count": rr["n"], "offered": rr["offered"] or 0,
+                      "synced_at": rr["at"], "seconds_since_sync": since}
 
-    # Still owed to Discord: queued behind the undo window, or being retried.
-    # Bert asks so it can say so before somebody shuts the stack down on top
-    # of a change that hasn't gone out.
-    #
-    # attempts < OUTBOX_MAX_ATTEMPTS, matching v_outbox_due. Without it a row
-    # the outbox has given up on was counted here for ever, so Bert warned
-    # about unsent changes on a board nobody had touched for ten minutes and
-    # waiting made no difference -- which is the one thing the warning is
-    # supposed to tell you to do.
-    owed = con.execute(
-        """SELECT COUNT(*) AS n, MIN(dispatch_after) AS soonest FROM events
-           WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
-             AND undone_at IS NULL AND attempts < ?""",
-        (OUTBOX_MAX_ATTEMPTS,)).fetchone()
-    # Given up on, and reported separately: leaving the stack running will not
-    # send these, so a warning that says "wait a minute" would be wrong about
-    # them -- but they must not be silently dropped either.
-    # The customer roster's age. None on a machine with no Jira configured --
-    # the table is empty there, and an indicator for something switched off is
-    # noise. The list changes rarely, so what matters is not how old it is but
-    # whether the pull has stopped: hours, not minutes.
-    roster = None
-    rr = con.execute("SELECT COUNT(*) AS n, SUM(offered) AS offered, "
-                     "MAX(synced_at) AS at FROM clients").fetchone()
-    if rr and rr["n"]:
-        since = None
-        if rr["at"]:
-            since = int((datetime.now(timezone.utc)
-                         - datetime.fromisoformat(rr["at"])).total_seconds())
-        roster = {"count": rr["n"], "offered": rr["offered"] or 0,
-                  "synced_at": rr["at"], "seconds_since_sync": since}
+        # The build the state channel says is current. Ernie's own VERSION cannot
+        # answer this in the exe: Bert and Ernie are one process importing one
+        # module there, so the two numbers are always equal and the update check
+        # can never fire. This is the number that makes it fire.
+        newest = con.execute(
+            "SELECT version, minimum FROM release_seen WHERE id=1").fetchone()
 
-    # The build the state channel says is current. Ernie's own VERSION cannot
-    # answer this in the exe: Bert and Ernie are one process importing one
-    # module there, so the two numbers are always equal and the update check
-    # can never fire. This is the number that makes it fire.
-    newest = con.execute(
-        "SELECT version, minimum FROM release_seen WHERE id=1").fetchone()
+        # Invented history, if anybody has run the tool against this database.
+        # Counted off `cards` rather than `threads` because cards are what the
+        # board and the figures are built from, and a card is the thing somebody
+        # would be looking at when they believed it.
+        invented = con.execute(
+            "SELECT COUNT(*) AS n FROM cards WHERE thread_id LIKE ?",
+            (INVENTED_PREFIX + "%",)).fetchone()["n"]
 
-    # Invented history, if anybody has run the tool against this database.
-    # Counted off `cards` rather than `threads` because cards are what the
-    # board and the figures are built from, and a card is the thing somebody
-    # would be looking at when they believed it.
-    invented = con.execute(
-        "SELECT COUNT(*) AS n FROM cards WHERE thread_id LIKE ?",
-        (INVENTED_PREFIX + "%",)).fetchone()["n"]
+        stuck = con.execute(
+            """SELECT COUNT(*) AS n FROM events
+               WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
+                 AND undone_at IS NULL AND attempts >= ?""",
+            (OUTBOX_MAX_ATTEMPTS,)).fetchone()
+        con.close()
 
-    stuck = con.execute(
-        """SELECT COUNT(*) AS n FROM events
-           WHERE dispatch_after IS NOT NULL AND posted_at IS NULL
-             AND undone_at IS NULL AND attempts >= ?""",
-        (OUTBOX_MAX_ATTEMPTS,)).fetchone()
-    con.close()
+        stale = None
+        if done:
+            delta = datetime.now(timezone.utc) - datetime.fromisoformat(done["finished_at"])
+            stale = int(delta.total_seconds())
 
-    stale = None
-    if done:
-        delta = datetime.now(timezone.utc) - datetime.fromisoformat(done["finished_at"])
-        stale = int(delta.total_seconds())
-
-    return {
-        "ok": bool(last and not last["error"]),
-        # Which build is answering. Bert shows it, and the machine on the
-        # other end of #ernie-state has no other way to ask.
-        # The build, plus where a newer Bert comes from. **Published rather
-        # than built in**, so moving from GitHub to Bitbucket or anywhere
-        # else is one line in an env file and a restart of Ernie -- no new
-        # Bert, and nothing to re-distribute to somebody holding an exe.
-        # `newest` is what anybody should be on; `version` is what this Ernie
-        # happens to be. They are the same thing only from source, where a
-        # git pull is the update and the other end of the API is a second
-        # checkout. Absent when nothing has published one, and Bert fails
-        # open on that the way it does on every other field here.
-        # `newest` is what anybody should be on; `required` is the floor the
-        # release note set, when it set one, and is what sends an older board
-        # read-only rather than merely telling it to update. Both are absent
-        # when nothing has published them, and Bert fails open on that.
-        "build": {**ernie_version.payload(), "update_url": UPDATE_URL,
-                  "newest": newest["version"] if newest else None,
-                  "required": (newest["minimum"] or None) if newest else None},
-        "last_sync": dict(last) if last else None,
-        "seconds_since_sync": stale,
-        # Which read of Discord that age belongs to, so Bert can tell a new
-        # one landing from the same one ageing, and whether one is running now.
-        "synced_at": done["finished_at"] if done else None,
-        "syncing": bool(last and not last["finished_at"]),
-        "board_size": board,
-        "sharing": sharing,
-        # Reported even when sharing is None: a machine that could read none
-        # of the channel has applied nothing, so it has no state_sync rows to
-        # be "sharing" by -- which is exactly the machine that needs telling.
-        "format_skew": format_skew,
-        "clients": roster,
-        # Where a ticket key links to. One string for the whole board rather
-        # than repeated on every card, and absent when no Jira is configured
-        # -- which is what makes the chip vanish rather than link nowhere.
-        "jira_url": JIRA_URL or None,
-        # None rather than a zero, like every other block here: absent is the
-        # ordinary state and a board with nothing invented in it should have
-        # nothing to say about invented data.
-        "invented": {"cards": invented} if invented else None,
-        "queued": {"count": owed["n"], "due_at": owed["soonest"]},
-        "stuck": {"count": stuck["n"]},
-    }
+        return {
+            "ok": bool(last and not last["error"]),
+            # Which build is answering. Bert shows it, and the machine on the
+            # other end of #ernie-state has no other way to ask.
+            # The build, plus where a newer Bert comes from. **Published rather
+            # than built in**, so moving from GitHub to Bitbucket or anywhere
+            # else is one line in an env file and a restart of Ernie -- no new
+            # Bert, and nothing to re-distribute to somebody holding an exe.
+            # `newest` is what anybody should be on; `version` is what this Ernie
+            # happens to be. They are the same thing only from source, where a
+            # git pull is the update and the other end of the API is a second
+            # checkout. Absent when nothing has published one, and Bert fails
+            # open on that the way it does on every other field here.
+            # `newest` is what anybody should be on; `required` is the floor the
+            # release note set, when it set one, and is what sends an older board
+            # read-only rather than merely telling it to update. Both are absent
+            # when nothing has published them, and Bert fails open on that.
+            "build": {**ernie_version.payload(), "update_url": UPDATE_URL,
+                      "newest": newest["version"] if newest else None,
+                      "required": (newest["minimum"] or None) if newest else None},
+            "last_sync": dict(last) if last else None,
+            "seconds_since_sync": stale,
+            # Which read of Discord that age belongs to, so Bert can tell a new
+            # one landing from the same one ageing, and whether one is running now.
+            "synced_at": done["finished_at"] if done else None,
+            "syncing": bool(last and not last["finished_at"]),
+            "board_size": board,
+            "sharing": sharing,
+            # Reported even when sharing is None: a machine that could read none
+            # of the channel has applied nothing, so it has no state_sync rows to
+            # be "sharing" by -- which is exactly the machine that needs telling.
+            "format_skew": format_skew,
+            "clients": roster,
+            # Where a ticket key links to. One string for the whole board rather
+            # than repeated on every card, and absent when no Jira is configured
+            # -- which is what makes the chip vanish rather than link nowhere.
+            "jira_url": JIRA_URL or None,
+            # None rather than a zero, like every other block here: absent is the
+            # ordinary state and a board with nothing invented in it should have
+            # nothing to say about invented data.
+            "invented": {"cards": invented} if invented else None,
+            "queued": {"count": owed["n"], "due_at": owed["soonest"]},
+            "stuck": {"count": stuck["n"]},
+        }
+    finally:
+        # try/finally like its neighbours: a request that raises
+        # part-way otherwise leaves this open, and a reader left open
+        # pins the WAL so it can never checkpoint.
+        con.close()
 
 
 @app.get("/stats")
@@ -1088,99 +1100,123 @@ def cards(
 def card_detail(thread_id: str):
     """Everything Bert needs for the expanded card."""
     con = db()
-    card = con.execute(
-        """SELECT c.*, v.name, v.queue, v.client_raw, v.client_key,
-                  v.thread_date, v.summary, v.confidence, v.archived, v.parent_id
-           FROM cards c JOIN v_thread_current v ON v.thread_id = c.thread_id
-           WHERE c.thread_id = ?""", (thread_id,)).fetchone()
-    if not card:
-        raise HTTPException(404, "no such card")
+    try:
+        card = con.execute(
+            """SELECT c.*, v.name, v.queue, v.client_raw, v.client_key,
+                      v.thread_date, v.summary, v.confidence, v.archived, v.parent_id
+               FROM cards c JOIN v_thread_current v ON v.thread_id = c.thread_id
+               WHERE c.thread_id = ?""", (thread_id,)).fetchone()
+        if not card:
+            raise HTTPException(404, "no such card")
 
-    d = dict(card)
-    d["work_items"] = open_items(con, thread_id)
-    d["equipment"] = rows(con.execute(
-        "SELECT eq_type, eq_number, state, raw FROM thread_equipment WHERE thread_id=?",
-        (thread_id,)))
-    d["tickets"] = rows(con.execute(
-        """SELECT pip_key, kind, created_at, assignee, equipment_master, client_cr
-           FROM tickets WHERE thread_id=? ORDER BY created_at""", (thread_id,)))
-    d["proposals"] = rows(con.execute(
-        """SELECT message_id, kind, proposed_at, equipment_master, equipment_label,
-                  client_cr, client_label, equipment_type, template, assignee,
-                  reporter, reported_problem, has_buttons, issues_json
-           FROM ticket_proposals WHERE thread_id=? ORDER BY proposed_at""",
-        (thread_id,)))
-    for p in d["proposals"]:
-        p["issues"] = json.loads(p.pop("issues_json"))
+        d = dict(card)
+        d["work_items"] = open_items(con, thread_id)
+        d["equipment"] = rows(con.execute(
+            "SELECT eq_type, eq_number, state, raw FROM thread_equipment WHERE thread_id=?",
+            (thread_id,)))
+        d["tickets"] = rows(con.execute(
+            """SELECT pip_key, kind, created_at, assignee, equipment_master, client_cr
+               FROM tickets WHERE thread_id=? ORDER BY created_at""", (thread_id,)))
+        d["proposals"] = rows(con.execute(
+            """SELECT message_id, kind, proposed_at, equipment_master, equipment_label,
+                      client_cr, client_label, equipment_type, template, assignee,
+                      reporter, reported_problem, has_buttons, issues_json
+               FROM ticket_proposals WHERE thread_id=? ORDER BY proposed_at""",
+            (thread_id,)))
+        for p in d["proposals"]:
+            p["issues"] = json.loads(p.pop("issues_json"))
 
-    d["title_history"] = rows(con.execute(
-        """SELECT observed_at, name, queue, confidence FROM thread_titles
-           WHERE thread_id=? ORDER BY observed_at DESC""", (thread_id,)))
-    d["discord_url"] = f"https://discord.com/channels/{card['parent_id']}/{thread_id}"
-    con.close()
-    return d
+        d["title_history"] = rows(con.execute(
+            """SELECT observed_at, name, queue, confidence FROM thread_titles
+               WHERE thread_id=? ORDER BY observed_at DESC""", (thread_id,)))
+        d["discord_url"] = f"https://discord.com/channels/{card['parent_id']}/{thread_id}"
+        con.close()
+        return d
+    finally:
+        # try/finally like its neighbours: a request that raises
+        # part-way otherwise leaves this open, and a reader left open
+        # pins the WAL so it can never checkpoint.
+        con.close()
 
 
 @app.get("/cards/{thread_id}/messages")
 def card_messages(thread_id: str, limit: int = 200, include_bots: bool = True):
     """Latest revision of each message, oldest first. Deleted ones excluded."""
     con = db()
-    sql = """
-        SELECT m.message_id, m.author_name, m.is_bot, m.created_at,
-               r.content, r.edited_at, r.embeds_json
-        FROM messages m
-        JOIN message_revisions r ON r.message_id = m.message_id
-        WHERE m.thread_id = ? AND m.deleted_at IS NULL
-          AND r.observed_at = (SELECT MAX(observed_at) FROM message_revisions
-                               WHERE message_id = m.message_id)
-    """
-    if not include_bots:
-        sql += " AND m.is_bot = 0"
-    sql += " ORDER BY m.created_at LIMIT ?"
+    try:
+        sql = """
+            SELECT m.message_id, m.author_name, m.is_bot, m.created_at,
+                   r.content, r.edited_at, r.embeds_json
+            FROM messages m
+            JOIN message_revisions r ON r.message_id = m.message_id
+            WHERE m.thread_id = ? AND m.deleted_at IS NULL
+              AND r.observed_at = (SELECT MAX(observed_at) FROM message_revisions
+                                   WHERE message_id = m.message_id)
+        """
+        if not include_bots:
+            sql += " AND m.is_bot = 0"
+        sql += " ORDER BY m.created_at LIMIT ?"
 
-    out = rows(con.execute(sql, (thread_id, limit)))
-    con.close()
-    for m in out:
-        m["embeds"] = json.loads(m.pop("embeds_json") or "[]")
-    return {"count": len(out), "messages": out}
+        out = rows(con.execute(sql, (thread_id, limit)))
+        con.close()
+        for m in out:
+            m["embeds"] = json.loads(m.pop("embeds_json") or "[]")
+        return {"count": len(out), "messages": out}
+    finally:
+        # try/finally like its neighbours: a request that raises
+        # part-way otherwise leaves this open, and a reader left open
+        # pins the WAL so it can never checkpoint.
+        con.close()
 
 
 @app.get("/events")
 def events(since: Optional[str] = None, limit: int = 50):
     """Activity feed. Pass `since` (ISO timestamp) to poll for changes."""
     con = db()
-    sql = """SELECT e.*, v.name AS thread_name
-             FROM events e
-             LEFT JOIN v_thread_current v ON v.thread_id = e.thread_id
-             WHERE 1=1"""
-    args: list = []
-    if since:
-        sql += " AND e.occurred_at > ?"
-        args.append(since)
-    # Clamped, because SQLite reads a negative LIMIT as *no limit* -- so
-    # `/events?limit=-1` quietly answered with the whole feed, which on
-    # production is every event there has ever been, from a route with no
-    # authentication in front of it.
-    sql += " ORDER BY e.occurred_at DESC LIMIT ?"
-    args.append(max(1, min(int(limit), EVENTS_MAX)))
+    try:
+        sql = """SELECT e.*, v.name AS thread_name
+                 FROM events e
+                 LEFT JOIN v_thread_current v ON v.thread_id = e.thread_id
+                 WHERE 1=1"""
+        args: list = []
+        if since:
+            sql += " AND e.occurred_at > ?"
+            args.append(since)
+        # Clamped, because SQLite reads a negative LIMIT as *no limit* -- so
+        # `/events?limit=-1` quietly answered with the whole feed, which on
+        # production is every event there has ever been, from a route with no
+        # authentication in front of it.
+        sql += " ORDER BY e.occurred_at DESC LIMIT ?"
+        args.append(max(1, min(int(limit), EVENTS_MAX)))
 
-    out = rows(con.execute(sql, args))
-    con.close()
-    return {"count": len(out), "events": out, "now": datetime.now(timezone.utc).isoformat()}
+        out = rows(con.execute(sql, args))
+        con.close()
+        return {"count": len(out), "events": out, "now": datetime.now(timezone.utc).isoformat()}
+    finally:
+        # try/finally like its neighbours: a request that raises
+        # part-way otherwise leaves this open, and a reader left open
+        # pins the WAL so it can never checkpoint.
+        con.close()
 
 
 @app.get("/clients")
 def clients():
     """Distinct client keys seen on the board, for the filter dropdown."""
     con = db()
-    out = rows(con.execute(
-        """SELECT v.client_key, COUNT(*) AS n,
-                  MAX(v.client_raw) AS example
-           FROM cards c JOIN v_thread_current v ON v.thread_id = c.thread_id
-           WHERE c.completed_at IS NULL AND v.client_key IS NOT NULL
-           GROUP BY v.client_key ORDER BY n DESC"""))
-    con.close()
-    return {"count": len(out), "clients": out}
+    try:
+        out = rows(con.execute(
+            """SELECT v.client_key, COUNT(*) AS n,
+                      MAX(v.client_raw) AS example
+               FROM cards c JOIN v_thread_current v ON v.thread_id = c.thread_id
+               WHERE c.completed_at IS NULL AND v.client_key IS NOT NULL
+               GROUP BY v.client_key ORDER BY n DESC"""))
+        con.close()
+        return {"count": len(out), "clients": out}
+    finally:
+        # try/finally like its neighbours: a request that raises
+        # part-way otherwise leaves this open, and a reader left open
+        # pins the WAL so it can never checkpoint.
+        con.close()
 
 
 @app.get("/clients/roster")
@@ -1202,38 +1238,44 @@ def client_roster():
     Rows that need it are flagged, so the editor does not have to work it out.
     """
     con = db()
-    out = rows(con.execute(
-        """SELECT c.client_id, c.name, c.short_name,
-                  (SELECT COUNT(*) FROM cards k
-                     JOIN v_thread_current v ON v.thread_id = k.thread_id
-                     JOIN client_aliases a ON a.raw_key = v.client_key
-                    WHERE k.completed_at IS NULL
-                      AND a.client_id = c.client_id) AS n
-           FROM clients c
-          WHERE c.offered = 1 AND c.short_name IS NOT NULL AND c.short_name <> ''
-          ORDER BY c.short_name COLLATE NOCASE"""))
-    seen = Counter((c["short_name"] or "").lower() for c in out)
+    try:
+        out = rows(con.execute(
+            """SELECT c.client_id, c.name, c.short_name,
+                      (SELECT COUNT(*) FROM cards k
+                         JOIN v_thread_current v ON v.thread_id = k.thread_id
+                         JOIN client_aliases a ON a.raw_key = v.client_key
+                        WHERE k.completed_at IS NULL
+                          AND a.client_id = c.client_id) AS n
+               FROM clients c
+              WHERE c.offered = 1 AND c.short_name IS NOT NULL AND c.short_name <> ''
+              ORDER BY c.short_name COLLATE NOCASE"""))
+        seen = Counter((c["short_name"] or "").lower() for c in out)
 
-    # Every spelling the board has ever used for each client. Bert searches
-    # these as well as the name, so somebody who types what a title said last
-    # year still finds the customer -- the alias table already knows the
-    # misspellings, and there is no reason to make the editor rediscover them.
-    aliases: dict[str, list[str]] = {}
-    for r in con.execute(
-            """SELECT a.client_id, v.client_raw FROM client_aliases a
-               JOIN v_thread_current v ON v.client_key = a.raw_key
-               WHERE v.client_raw IS NOT NULL AND v.client_raw <> ''"""):
-        aliases.setdefault(r["client_id"], [])
-        if r["client_raw"] not in aliases[r["client_id"]]:
-            aliases[r["client_id"]].append(r["client_raw"])
+        # Every spelling the board has ever used for each client. Bert searches
+        # these as well as the name, so somebody who types what a title said last
+        # year still finds the customer -- the alias table already knows the
+        # misspellings, and there is no reason to make the editor rediscover them.
+        aliases: dict[str, list[str]] = {}
+        for r in con.execute(
+                """SELECT a.client_id, v.client_raw FROM client_aliases a
+                   JOIN v_thread_current v ON v.client_key = a.raw_key
+                   WHERE v.client_raw IS NOT NULL AND v.client_raw <> ''"""):
+            aliases.setdefault(r["client_id"], [])
+            if r["client_raw"] not in aliases[r["client_id"]]:
+                aliases[r["client_id"]].append(r["client_raw"])
 
-    for c in out:
-        c["ambiguous"] = seen[(c["short_name"] or "").lower()] > 1
-        c["aliases"] = aliases.get(c["client_id"], [])
-    stamp = con.execute("SELECT MAX(synced_at) AS at FROM clients").fetchone()
-    con.close()
-    return {"count": len(out), "clients": out,
-            "synced_at": stamp["at"] if stamp else None}
+        for c in out:
+            c["ambiguous"] = seen[(c["short_name"] or "").lower()] > 1
+            c["aliases"] = aliases.get(c["client_id"], [])
+        stamp = con.execute("SELECT MAX(synced_at) AS at FROM clients").fetchone()
+        con.close()
+        return {"count": len(out), "clients": out,
+                "synced_at": stamp["at"] if stamp else None}
+    finally:
+        # try/finally like its neighbours: a request that raises
+        # part-way otherwise leaves this open, and a reader left open
+        # pins the WAL so it can never checkpoint.
+        con.close()
 
 
 

@@ -588,6 +588,59 @@ def check_the_database_exists_before_anything_races_for_it() -> bool:
     return c.report()
 
 
+def check_no_endpoint_leaves_its_connection_open() -> bool:
+    """
+    A reader left open pins the WAL, and the WAL never checkpoints again.
+
+    Every endpoint closes its connection on the way out. Seven of them did it
+    only on the happy path -- `health`, `events`, `clients`, `client_roster`,
+    `card_detail`, `card_messages` and `check_schema` -- so a request that
+    raised part-way leaked one. Bert polls `/health` and `/events` **twelve
+    times a minute**, so the leaks were not rare.
+
+    The consequence is not a slow leak of memory, it is the whole board
+    stopping: a reader holds a WAL snapshot, the snapshot blocks
+    checkpointing, the WAL grows past the database, and writers start timing
+    out. Seen live as `drain failed: database is locked` every five seconds
+    with a 6.59 MB WAL against a 4.58 MB database, and five renames sitting
+    unposted behind it.
+
+    The hazard was already written down one function along -- "without it a
+    request that raised part-way left its connection open, and on Windows
+    that is a file handle nothing gives back" -- and `cards` and `stats` were
+    fixed at the time. The other seven were not.
+
+    Read off the source, because the question is about every path out of the
+    function rather than the one a test happens to take.
+    """
+    c = Check("no endpoint leaves its connection open")
+
+    src = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    opened, leaking = [], []
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        body = ast.get_source_segment(src, fn) or ""
+        if "= rw()" not in body and "= db()" not in body:
+            continue
+        opened.append(fn.name)
+        closes = "con.close()" in body
+        guarded = any(isinstance(n, ast.Try) and n.finalbody
+                      for n in ast.walk(fn))
+        if not (closes and guarded):
+            leaking.append(fn.name)
+
+    c.ok(len(opened) >= 14,
+         f"the endpoints that open a connection are found: {len(opened)}")
+    c.ok(not leaking,
+         "and every one closes it in a finally: " + (", ".join(leaking) or "all do"))
+    for name in ("health", "events", "clients", "client_roster",
+                 "card_detail", "card_messages", "check_schema"):
+        c.ok(name in opened and name not in leaking,
+             f"{name} closes on every path out")
+
+    return c.report()
+
+
 def check_a_missing_table_is_told_apart_from_a_stale_one() -> bool:
     """
     The refusal used to name a remedy that cannot work.
@@ -761,7 +814,8 @@ def check_the_supervisor_sets_up_what_the_cli_does() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_missing_table_is_told_apart_from_a_stale_one,
+CHECKS = (check_no_endpoint_leaves_its_connection_open,
+          check_a_missing_table_is_told_apart_from_a_stale_one,
           check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,
           check_an_undone_change_is_not_resurrected,
