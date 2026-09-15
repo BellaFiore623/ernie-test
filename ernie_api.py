@@ -247,32 +247,24 @@ def clean_url(raw):
     return raw if scheme in ("http", "https") else ""
 
 
-# **Every retag is counted; the panel decides how many it shows.** The
-# question this started from was how much production work turns out to be
-# operations -- PROD to OPS and back -- so only that pair was counted, and
-# the other ten were dropped in the query. Four tags make twelve possible
-# pairs, and on a 244px panel the ones nobody asked about pushed the two
-# that answered the question down the block and off the bottom of
-# `STATS_MOVES_SHOWN`.
+# **The retagging worth counting, and only it.** The question was how much
+# production work turns out to be operations, which is a pair of numbers:
+# PROD to OPS, and back the other way. Four tags make twelve possible pairs
+# and all twelve were reported -- so the two that answer the question shared
+# a 244px panel with ENG to PROD and CS to ENG, which nobody asked about and
+# which are a handful of rows each. The noise pushed the signal down the
+# block and then off the bottom of `STATS_MOVES_SHOWN`.
 #
-# **Dropping them cost more than the crowding did.** A retag that is not
-# PROD/OPS moved the ticket, changed the board, and left no trace anywhere a
-# person looks -- so three tag changes in an afternoon showed as one, and the
-# two that vanished were reported as the figures being broken. A number that
-# quietly ignores two thirds of what you did is worse than a number sharing a
-# panel with rows you skim past.
+# Filtered in the **query**, not in the drawing. Counting everything and
+# showing two would leave a block whose rows do not make its own total, and
+# a figure that does not add up is the first one somebody stops believing --
+# the same rule `Other` exists for in the tally. Here there is no `Other` to
+# write, because the pairs nobody asked about are not counted at all.
 #
-# So the filter moves to the drawing after all, which the block was already
-# built for: `STATS_MOVES_SHOWN` keeps the busiest rows and **sums the tail
-# into one line rather than dropping it**, so the rows still add up to the
-# block's own total -- the rule `Other` exists for in the tally. Counting
-# everything and showing six is not the thing that was rejected; counting
-# everything and showing *two* was.
-#
-# Built from `QUEUES_OFFERED` rather than written out, so a tag retired from
-# the editor stops being counted without anybody remembering this line.
-TAG_MOVES_COUNTED = tuple((a, b) for a in ex.QUEUES_OFFERED
-                          for b in ex.QUEUES_OFFERED if a != b)
+# A pair taken out of here stops being counted; it is not deleted from
+# anything. `thread_titles` is append-only and still holds every rename, so
+# widening this again is one line and no backfill.
+TAG_MOVES_COUNTED = (("PROD", "OPS"), ("OPS", "PROD"))
 
 # **What invented history is prefixed with.** `tools/fake_stats_data.py`
 # gives the sandbox a year of plausible past so the figures panel can be
