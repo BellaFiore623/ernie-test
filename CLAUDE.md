@@ -2069,6 +2069,26 @@ from source -- four processes, four logs, restart one without the others.
   once more. **`undone_at` is still honoured** -- a change taken back and
   then closed on stays taken back, and it is the one row that looks exactly
   like the one being flushed.
+- **The outbox has two beats too, split by cost the way the sync's are.**
+  It did five things on one: drain, make the threads tickets are waiting on,
+  publish `#ernie-state`, publish the status embeds, append to the change
+  log. Only the first two are ones anybody is waiting on -- the three
+  publishes edit in place and announce nothing -- so a change queued behind
+  however long they took, and a slow pass or a contended write cost `drain()`
+  its whole turn. `FAST_SECONDS` is 5 and `POLL_SECONDS` stays 30.
+  Found as a Complete sitting unsent for minutes while the state channel was
+  being rewritten after 357 messages arrived at once. The card said *Pushing
+  to Discord…* the whole time and the log said nothing, because `run.sh`
+  redirects to a file and **Python block-buffers stdout the moment it is not
+  a tty** -- so the log ended at the previous evening for a process eighteen
+  minutes old. `run.sh` starts all three with `python -u` now. The obvious
+  move made it worse, and is worth writing down: `./run.sh stop` uses
+  `taskkill`, which terminates without flushing, so stopping the process to
+  read its buffer **discards** the buffer rather than revealing it.
+  `--once` still does everything: a pass asked for by hand is asking for the
+  whole job rather than the cheap half of it. `next_full` is a wall clock and
+  the sleep is measured from the top of the pass, both for the reasons the
+  sync gives.
 - **A blocked outbox says so; it does not vanish.** `run()` used to answer a
   refused write with `sys.exit`, which is right in a CLI and wrong on a
   thread: `SystemExit` there is swallowed by `threading` without a word, so

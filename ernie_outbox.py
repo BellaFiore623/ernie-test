@@ -31,7 +31,16 @@ import ernie_status
 import ernie_version
 from ernie_sync import Discord, GuildMismatch, load_env
 
-POLL_SECONDS = 30
+# **Two beats, split by cost, the way `ernie_sync` splits its own.** Draining
+# is what somebody is watching: a card says "Pushing to Discord..." until it
+# lands, and until now that wait was a whole cycle behind four publishes that
+# nobody is watching at all. Worse when one of those publishes is slow or a
+# write contends -- `drain()` loses its entire turn to a `database is locked`
+# it cannot even report, because the error goes to a log Python was buffering.
+# Found as a Complete sitting unsent for minutes while the state channel was
+# being rewritten after 357 messages arrived at once.
+FAST_SECONDS = 5       # drain and make_threads: cheap, and a person is waiting
+POLL_SECONDS = 30      # the publishes: expensive, and nothing is waiting
 MAX_ATTEMPTS = 5
 # Matches ernie_api.UNDO_WINDOW_S. Duplicated rather than imported, because
 # importing the API here would pull FastAPI into the outbox for one integer --
@@ -479,7 +488,7 @@ def _pause(stop, seconds) -> bool:
 
 
 def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
-        once: bool = False, stop=None) -> None:
+        fast: int = FAST_SECONDS, once: bool = False, stop=None) -> None:
     """The outbox loop, so something other than a CLI can run it.
 
     Lifted out whole rather than reimplemented: the pass is not just
@@ -489,11 +498,32 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
     reasons for being on *this* loop rather than the sync's, all of them
     about this being the only process allowed to write to Discord.
 
-    `stop` is a `threading.Event`; nothing else about the loop moved.
+    **The pass has two halves and they run at different rates.** `drain` and
+    `make_threads` are what a person is waiting on, and they are cheap -- a
+    whole cycle measured two seconds on a settled board. The three publishes
+    are the expensive half and nobody is watching them: the state channel, the
+    status embeds and the change log all edit in place and announce nothing.
+    Putting them on one beat meant a change queued behind however long the
+    publishes took, and a lock or a slow pass cost the drain its turn
+    entirely.
+
+    `next_full` is a wall clock rather than a count of fast passes, and the
+    sleep is measured from the **top** of the pass -- both for the reason
+    `ernie_sync` gives: sleeping a fixed amount after a pass that takes four
+    seconds is a nine-second beat that lurches once a minute.
+
+    `stop` is a `threading.Event`.
     """
+    next_full = 0.0        # the first pass is a full one
     while True:
         if stop is not None and stop.is_set():
             return
+        t0 = time.time()
+        # `once` does everything, because a single pass asked for by hand is
+        # asking for the whole job rather than the cheap half of it.
+        full = once or t0 >= next_full
+        if full:
+            next_full = t0 + interval
         try:
             c = drain(con, d)
             m = make_threads(con, d)
@@ -518,50 +548,52 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
         except Exception as e:
             print(f"[{now()[:19]}] drain failed: {e}", file=sys.stderr)
 
-        # SQLite -> Discord, so it goes through the one process allowed to
-        # write there. The pull in the other direction rides with the sync.
-        state_channel = os.environ.get("STATE_CHANNEL_ID")
-        if state_channel and d.writes_allowed:
-            try:
-                s = ernie_state.publish(d, state_channel, db)
-                if s["posted"] or s["edited"]:
-                    print(f"[{now()[:19]}] state: posted {s['posted']}, "
-                          f"edited {s['edited']}")
-            except Exception as e:
-                print(f"[{now()[:19]}] state publish failed: {e}",
-                      file=sys.stderr)
+        if full:
+            # SQLite -> Discord, so it goes through the one process allowed to
+            # write there. The pull in the other direction rides with the sync.
+            state_channel = os.environ.get("STATE_CHANNEL_ID")
+            if state_channel and d.writes_allowed:
+                try:
+                    s = ernie_state.publish(d, state_channel, db)
+                    if s["posted"] or s["edited"]:
+                        print(f"[{now()[:19]}] state: posted {s['posted']}, "
+                              f"edited {s['edited']}")
+                except Exception as e:
+                    print(f"[{now()[:19]}] state publish failed: {e}",
+                          file=sys.stderr)
 
-        # The ticket's own status, in its own thread. No channel to
-        # configure: it goes to the threads the board already knows about,
-        # and only the ones Ernie watched open -- so a machine that has just
-        # inherited a server posts nothing.
-        if d.writes_allowed:
-            try:
-                st = ernie_status.publish(d, con, db)
-                if st["posted"] or st["edited"]:
-                    print(f"[{now()[:19]}] status: posted {st['posted']}, "
-                          f"edited {st['edited']}")
-            except Exception as e:
-                print(f"[{now()[:19]}] status failed: {e}", file=sys.stderr)
+            # The ticket's own status, in its own thread. No channel to
+            # configure: it goes to the threads the board already knows about,
+            # and only the ones Ernie watched open -- so a machine that has just
+            # inherited a server posts nothing.
+            if d.writes_allowed:
+                try:
+                    st = ernie_status.publish(d, con, db)
+                    if st["posted"] or st["edited"]:
+                        print(f"[{now()[:19]}] status: posted {st['posted']}, "
+                              f"edited {st['edited']}")
+                except Exception as e:
+                    print(f"[{now()[:19]}] status failed: {e}", file=sys.stderr)
 
-        # The durable record, if there is somewhere to keep it. Both boards
-        # hold the whole history, so only one machine should set this -- two
-        # would write every line twice.
-        log_channel = os.environ.get("CHANGELOG_CHANNEL_ID")
-        if log_channel and d.writes_allowed:
-            try:
-                c = ernie_changelog.tick(d, log_channel, con)
-                if c["sent"] or c.get("struck"):
-                    note = f"{c['sent']} logged"
-                    if c.get("struck"):
-                        note += f", {c['struck']} struck through"
-                    print(f"[{now()[:19]}] changelog: {note}")
-            except Exception as e:
-                print(f"[{now()[:19]}] changelog failed: {e}", file=sys.stderr)
+            # The durable record, if there is somewhere to keep it. Both boards
+            # hold the whole history, so only one machine should set this -- two
+            # would write every line twice.
+            log_channel = os.environ.get("CHANGELOG_CHANNEL_ID")
+            if log_channel and d.writes_allowed:
+                try:
+                    c = ernie_changelog.tick(d, log_channel, con)
+                    if c["sent"] or c.get("struck"):
+                        note = f"{c['sent']} logged"
+                        if c.get("struck"):
+                            note += f", {c['struck']} struck through"
+                        print(f"[{now()[:19]}] changelog: {note}")
+                except Exception as e:
+                    print(f"[{now()[:19]}] changelog failed: {e}", file=sys.stderr)
 
         if once:
             return
-        if _pause(stop, interval):
+        # From the top of the pass, not the end of it.
+        if _pause(stop, fast - (time.time() - t0)):
             return
 
 
@@ -572,7 +604,12 @@ def main() -> None:
     ap.add_argument("--db", default="ernie.db")
     ap.add_argument("--env", default="ernie.env")
     ap.add_argument("--once", action="store_true")
-    ap.add_argument("--interval", type=int, default=POLL_SECONDS)
+    ap.add_argument("--interval", type=int, default=POLL_SECONDS,
+                    help="seconds between the publishes: state, status and "
+                         "the change log")
+    ap.add_argument("--fast", type=int, default=FAST_SECONDS,
+                    help="seconds between drains, which is what a card "
+                         "waiting to post is waiting for")
     ap.add_argument("--dry-run", action="store_true",
                     help="show what would be posted, send nothing")
     a = ap.parse_args()
@@ -603,7 +640,7 @@ def main() -> None:
     print(f"{who['bot']} -> {who['guild']} ({guild})  [POSTING]  db={a.db}")
 
     try:
-        run(con, d, a.db, interval=a.interval, once=a.once)
+        run(con, d, a.db, interval=a.interval, fast=a.fast, once=a.once)
     except GuildMismatch as e:
         # A CLI can still leave on it: it is a configuration problem, not a
         # bad row, and there is a console to say so in.

@@ -212,7 +212,69 @@ def check_the_loop_stops_when_asked() -> bool:
     return c.report()
 
 
-CHECKS = (check_the_loop_stops_when_asked,
+def check_the_outbox_drains_faster_than_it_publishes() -> bool:
+    """
+    A card says "Pushing to Discord..." until the drain, and nothing else.
+
+    The outbox did five things on one beat: drain, make the threads tickets
+    are waiting on, publish the state channel, publish the status embeds and
+    append to the change log. Only the first two are ones anybody is waiting
+    on -- the three publishes edit in place and announce nothing. So a change
+    queued behind however long those took, and when one of them was slow, or
+    a write contended, `drain()` lost its whole turn.
+
+    Found as a Complete sitting unsent for minutes while the state channel
+    was being rewritten after 357 messages arrived at once, with the error --
+    if there was one -- going to a log Python was buffering.
+
+    Same split, and the same reasoning, as this file's own subject: cheap and
+    watched on the fast beat, expensive and unwatched on the slow one.
+    """
+    c = Check("the outbox drains faster than it publishes")
+
+    import ernie_outbox as ob
+
+    c.ok(ob.FAST_SECONDS < ob.POLL_SECONDS,
+         f"the drain beat is the shorter one ({ob.FAST_SECONDS}s "
+         f"against {ob.POLL_SECONDS}s)")
+
+    src = (ROOT / "ernie_outbox.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    run = next(n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "run")
+    body = ast.get_source_segment(src, run) or ""
+
+    # Which calls sit under an `if full:` and which do not.
+    def guarded(name):
+        for node in ast.walk(run):
+            if not (isinstance(node, ast.If)
+                    and getattr(node.test, "id", "") == "full"):
+                continue
+            if name in (ast.get_source_segment(src, node) or ""):
+                return True
+        return False
+
+    c.ok(not guarded("drain(con"), "drain runs on every pass")
+    c.ok(not guarded("make_threads(con"),
+         "and so does making the threads tickets are waiting on")
+    for slow in ("ernie_state.publish", "ernie_status.publish",
+                 "ernie_changelog.tick"):
+        c.ok(guarded(slow), f"{slow} runs only on a full pass")
+
+    # A wall clock, not a count of fast passes -- and the sleep measured from
+    # the top of the pass, or a slow one lurches the beat.
+    c.ok("next_full" in body, "the full pass is due by a clock")
+    c.ok("time.time() - t0" in body,
+         "and the beat is measured from the top of the pass, not its end")
+
+    # `--once` is somebody asking for the whole job by hand.
+    c.ok("once or" in body, "a single pass by hand still does everything")
+
+    return c.report()
+
+
+CHECKS = (check_the_outbox_drains_faster_than_it_publishes,
+          check_the_loop_stops_when_asked,
           check_a_fast_pass_skips_what_a_fast_pass_is_for_skipping,
           check_the_loop_holds_its_beat,
           check_a_quiet_fast_pass_says_nothing,
