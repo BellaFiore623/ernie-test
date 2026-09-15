@@ -486,12 +486,56 @@ def check_the_installer_and_the_app_agree() -> bool:
     c.equal(nsi.count("Call EnsureClosed") + nsi.count("Call un.EnsureClosed"),
             2, "install and uninstall both check it")
 
-    # Program and board in different directories, which is what lets the
-    # upgrade wipe one and the uninstall spare the other.
-    c.ok("$LOCALAPPDATA\Programs\\" in nsi.replace("${AppName}", "Ernie"),
+    # **The board directory is the one that has to agree, and it was the one
+    # nothing compared.** This resolved `${AppName}` by substituting "Ernie"
+    # into it, which is assuming the answer: rename the define and every
+    # assertion here went on passing while the uninstaller pointed at a
+    # directory that does not exist. "Also delete my data?" would find
+    # nothing, delete nothing, and leave the database and the env file -- the
+    # Discord token in it -- sitting on disk, with no error at any point. The
+    # mutex beside it has a paragraph explaining why it is held together; the
+    # path to somebody's board was held by nothing at all.
+    #
+    # So it is derived from the defines and compared against the directory
+    # the application actually opens.
+    app_dir = defines.get("AppDir")
+    c.equal(app_dir, ernie_app.CONFIG_DIR.name,
+            "the installer's data directory is the one the app opens")
+    c.ok('InstallDir "$LOCALAPPDATA\\Programs\\${AppDir}"' in nsi,
          "the program installs under LOCALAPPDATA/Programs")
-    prog, data = "Programs\Ernie", "$LOCALAPPDATA\Ernie"
-    c.ok(prog not in data, "and the board is not inside it")
+    c.ok('"$LOCALAPPDATA\\${AppDir}"' in nsi,
+         "and the board sits beside the program rather than inside it")
+
+    # **A label may move; an identity may not.** AppName is what a person
+    # reads -- the installer title, the Start menu shortcut, the Add/Remove
+    # entry -- and it is meant to be changeable, which is exactly why nothing
+    # on disk may key off it. The program directory moving means a new
+    # installer no longer replaces the old one: two copies, two Add/Remove
+    # entries, and two programs that hold different mutexes and so cannot
+    # tell that the other is running.
+    c.ok(bool(defines.get("AppName")), "the installer has a display name")
+    c.ok("Uninstall\\${AppDir}" in defines.get("RegKey", ""),
+         "the Add/Remove entry keys off the directory, so renaming the app "
+         "still upgrades the install it is replacing")
+    c.ok("$LOCALAPPDATA\\Programs\\${AppName}" not in nsi,
+         "and nothing on disk is keyed to the display name")
+
+    # The installer runs an exe and packs a directory; PyInstaller names
+    # both. Renaming on one side and not the other fails at build time with
+    # a missing path, which is loud -- but only for whoever runs the build,
+    # and the release recipe runs it last.
+    spec = (ROOT / "ernie.spec").read_text(encoding="utf-8")
+    exe_stem = (defines.get("AppExe") or "").rsplit(".", 1)[0]
+    c.ok('name="%s"' % exe_stem in spec,
+         "the exe the installer runs is the one the spec builds")
+    c.ok('File /r "..\\dist\\${AppName}\\*.*"' in nsi,
+         "and it packs the directory that build put there")
+
+    # The shortcut and the old one it replaces. An upgrade that renames the
+    # application leaves the previous Start menu entry pointing at an exe it
+    # has just deleted -- a dead link rather than a second way in.
+    c.ok("${OldShortcut}" in nsi,
+         "a renamed build clears the Start menu entry it supersedes")
 
     # The uninstall may offer to remove the board; it may not simply do it.
     body = nsi.split("Section \"Uninstall\"")[-1]

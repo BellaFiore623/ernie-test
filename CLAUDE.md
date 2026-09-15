@@ -2388,6 +2388,36 @@ the folder sends everybody to an empty page; a build in the folder with no
 note is one nobody hears about. Neither is broken, and both are the kind of
 thing nobody notices for a week.
 
+- **The installed application is called Bert, and only the label moved.**
+  The window has always said Bert -- it is the board, the thing with tickets
+  in it, the half a person actually uses. Ernie is the half that talks to
+  Discord and has no window at all, so the Start menu, the Add/Remove entry
+  and the setup file were naming the product after its plumbing.
+  **`AppName` was doing four jobs**, which is why this needed care rather
+  than a find-and-replace: the display name, the program directory, the
+  registry key, and `RMDir /r "$LOCALAPPDATA\${AppName}"` -- **the path to
+  somebody's board**. Renamed naively, the uninstall's "also delete my data"
+  would have gone looking in `%LOCALAPPDATA%\Bert`, found nothing, deleted
+  nothing, and left the database and the env file with the Discord token in
+  it sitting on disk. No error, at any point.
+  So `AppName` is the label and **`AppDir` is the identity**: the program
+  directory, the registry key and the board all key off `AppDir`, which stays
+  `Ernie` for ever unless somebody deliberately migrates it. Moving the
+  program directory would mean a new installer no longer *replaces* the old
+  one -- two copies, two Add/Remove entries, and two programs holding
+  different mutexes, so neither can tell the other is running, which is the
+  one failure the mutex exists to prevent. Moving the board directory orphans
+  every database in the field, production's included.
+  `${OldShortcut}` clears the Start menu entry the previous name left, which
+  otherwise points at an exe the upgrade has just deleted.
+  **The check that should have caught it was assuming its own answer.**
+  `check_app.py` resolved `${AppName}` by substituting the string `"Ernie"`
+  into the script before looking, so every assertion about the board
+  directory would have gone on passing through exactly the rename that broke
+  it -- while the mutex beside it had a paragraph explaining why *it* was
+  held together. It compares `AppDir` against `ernie_sync.CONFIG_DIR.name`
+  now, and the failure was confirmed by making it: `got 'Bert', want
+  'Ernie'`.
 - **Per-user, and no admin.** `%LOCALAPPDATA%\Programs\Ernie`, HKCU for the
   Add/Remove Programs entry. Asking for admin would cost a UAC prompt on an
   unsigned binary -- the prompt people are right to refuse -- and put the

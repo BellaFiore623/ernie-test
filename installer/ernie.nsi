@@ -29,23 +29,38 @@ Unicode true
   !define AppVersion "0.0.0"
 !endif
 
-!define AppName    "Ernie"
-!define AppExe     "Ernie.exe"
+; **What a person reads, and nothing else.** AppName is free to change:
+; it is the installer title, the Start menu shortcut and the Add/Remove
+; entry. Everything on disk keys off AppDir instead, because those are
+; identity rather than labels -- move the program directory and the new
+; installer stops replacing the old one, leaving two copies and two
+; Add/Remove entries; move the board directory and the uninstall's
+; "delete my data" goes looking somewhere nothing lives, finds nothing,
+; and silently leaves the database and the token on disk.
+;
+; The application a person uses is Bert -- the board, the window, the
+; thing with tickets in it. Ernie is the half that talks to Discord and
+; has no window at all, so naming the installed program after it was
+; naming the product after its plumbing.
+!define AppName    "Bert"
+!define AppDir     "Ernie"
+!define AppExe     "Bert.exe"
+!define OldShortcut "Ernie.lnk"
 !define Publisher  "Edge AI Solutions"
 ; The same mutex `ernie_app.take_lock()` holds. Named here so the installer
 ; can tell whether the thing it is about to overwrite is running -- Windows
 ; locks a running exe, so without this an upgrade fails halfway and leaves a
 ; half-written program directory.
 !define AppMutex   "Local\ErnieBert"
-!define RegKey     "Software\Microsoft\Windows\CurrentVersion\Uninstall\${AppName}"
+!define RegKey     "Software\Microsoft\Windows\CurrentVersion\Uninstall\${AppDir}"
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 
 Name "${AppName} ${AppVersion}"
-OutFile "..\dist\Ernie-${AppVersion}-setup.exe"
-InstallDir "$LOCALAPPDATA\Programs\${AppName}"
+OutFile "..\dist\${AppName}-${AppVersion}-setup.exe"
+InstallDir "$LOCALAPPDATA\Programs\${AppDir}"
 ; Per-user: asking for admin would put the files somewhere the application
 ; cannot write to and cost a UAC prompt on an unsigned binary, which is the
 ; prompt people are right to refuse.
@@ -119,9 +134,13 @@ Section "Install"
   CreateDirectory "$INSTDIR"
 
   SetOutPath "$INSTDIR"
-  File /r "..\dist\Ernie\*.*"
+  File /r "..\dist\${AppName}\*.*"
 
   CreateShortCut "$SMPROGRAMS\${AppName}.lnk" "$INSTDIR\${AppExe}"
+  ; The shortcut an older build left behind points at an exe this one
+  ; just deleted, so it is a dead entry in the Start menu rather than a
+  ; second way in. Removed on the way past.
+  Delete "$SMPROGRAMS\${OldShortcut}"
 
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
@@ -147,6 +166,7 @@ Section "Uninstall"
 
   RMDir /r "$INSTDIR"
   Delete "$SMPROGRAMS\${AppName}.lnk"
+  Delete "$SMPROGRAMS\${OldShortcut}"
   DeleteRegKey HKCU "${RegKey}"
 
   ; **The board is not ours to delete.** %LOCALAPPDATA%\Ernie holds the
@@ -158,13 +178,13 @@ Section "Uninstall"
   ; must not be asked -- an /S run would hang on a dialog nobody can see.
   ; Keeping the data is the safe way to not ask.
   IfSilent done
-  IfFileExists "$LOCALAPPDATA\${AppName}\*.*" 0 done
+  IfFileExists "$LOCALAPPDATA\${AppDir}\*.*" 0 done
     MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 \
       "Also delete ${AppName}'s data?$\r$\n$\r$\nThat is the local database, \
 the log, and the settings file with your Discord token in it, in$\r$\n\
-$LOCALAPPDATA\${AppName}$\r$\n$\r$\nKeep it if you are reinstalling. Nothing \
+$LOCALAPPDATA\${AppDir}$\r$\n$\r$\nKeep it if you are reinstalling. Nothing \
 on Discord is affected either way." \
       IDNO done
-    RMDir /r "$LOCALAPPDATA\${AppName}"
+    RMDir /r "$LOCALAPPDATA\${AppDir}"
   done:
 SectionEnd
