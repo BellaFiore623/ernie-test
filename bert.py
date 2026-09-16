@@ -3303,10 +3303,21 @@ class Card(QFrame):
         # here, for the same reason warning_row() exists.
         self.title_state.setStyleSheet("font-size:11px; padding:1px 0 3px 0;"
                                        " background:transparent;")
+        # The mark goes beside the title rather than into it: a tick inside
+        # the box would be part of the string, and the string is what gets
+        # saved as the thread's name.
+        self.title_mark = QLabel()
+        self.title_mark.setStyleSheet("background:transparent;")
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+        title_row.addWidget(self.title_mark)
+        title_row.addWidget(self.f_title, 1)
+
         title_box = QVBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(2)
-        title_box.addWidget(self.f_title)
+        title_box.addLayout(title_row)
         title_box.addWidget(self.title_state)
         title_holder = QWidget()
         # Nor here, for the same reason -- it was masked only by the line
@@ -3582,21 +3593,36 @@ class Card(QFrame):
                     "The fields below cannot express this title, so it is "
                     "yours to repair.")
 
-        if t.confidence in ("strict", "loose"):
-            self.title_state.setText(
-                f"<span style='color:{T.OK_FG}'>✓</span> "
+        guided = getattr(self, "_entry", ENTRY_DEFAULT) == "guided"
+        ok = t.confidence in ("strict", "loose")
+        mark, colour = ("✓", T.OK_FG) if ok else (
+            ("⚠", T.AMBER_FG) if t.confidence == "prefix_only"
+            else ("⚠", T.RED_FG))
+        if hasattr(self, "title_mark"):
+            self.title_mark.setText(
+                f"<span style='color:{colour}; font-size:14px'>{mark}</span>")
+
+        # Guided already shows the parts as fields, so repeating them under
+        # the title is the same sentence twice -- and the quieter copy is the
+        # one the eye reads second and trusts less. It keeps only what the
+        # fields cannot say, which is what is wrong and what the shape should
+        # have been. Typing has no fields, so the breakdown there is the only
+        # account of what Ernie made of the string.
+        if ok:
+            self.title_state.setText("" if guided else
                 f"<span style='color:{T.MUTED}'>{t.queue} &middot; {t.client_raw} "
                 f"&middot; {title_stamp(t.date)} &middot; {t.summary or ''}</span>")
         elif t.confidence == "prefix_only":
             self.title_state.setText(
-                f"<span style='color:{T.AMBER_FG}'>⚠ no date Ernie can read</span> "
+                f"<span style='color:{T.AMBER_FG}'>no date Ernie can read</span> "
                 f"<span style='color:{T.MUTED}'>&mdash; tag {t.queue} is fine, "
                 f"the rest won't parse</span>")
         else:
             self.title_state.setText(
-                f"<span style='color:{T.RED_FG}'>⚠ doesn't match</span> "
+                f"<span style='color:{T.RED_FG}'>doesn't match</span> "
                 f"<span style='color:{T.MUTED}'>TAG: Client - 25Aug26 - "
                 f"what it's about</span>")
+        self.title_state.setVisible(bool(self.title_state.text()))
 
     def warn_changed(self, msg):
         """Live notice, while the editor is open, that the card moved."""
