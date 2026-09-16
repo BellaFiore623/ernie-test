@@ -63,16 +63,12 @@ STRICT = re.compile(
 
 # Tier 2: date present somewhere, separators loose or absent.
 #
-# The client is `.*?` and not `.+?`, because a title with no client at all is
-# a shape people type -- and one that must match at least one character eats
-# the first digit of the date to satisfy itself. `PROD: 29Jun26 - Trade show`
-# parsed as client "2" and date 9 Jun, which is not a missing client, it is
-# the wrong date, silently, twenty days out. Non-greedy means the engine
-# tries the empty client first, so the date claims the digits it is entitled
-# to and a real client still wins by backtracking.
-#
-# STRICT does not need this: its separator between client and date is
-# mandatory, so a bare date cannot be split across the two groups.
+# The client is `.*?`, not `.+?`: titles with no client are a shape people
+# type, and a group that must match something takes the first digit of the
+# date instead -- `PROD: 29Jun26 - x` read as client "2", date 9 Jun. Empty
+# is tried first, so the date keeps its digits and a real client still wins
+# by backtracking. STRICT needs no such thing: its client/date separator is
+# mandatory.
 LOOSE = re.compile(
     rf"^{_PREFIX}(?P<client>.*?)\s*[-:]?\s*(?P<date>{_DATE_TOKEN})\s*[-:]?\s*(?P<summary>.*)$",
     re.IGNORECASE,
@@ -153,27 +149,21 @@ class Title:
 
 
 def replace_field(name: str, field: str, value: str) -> str:
-    """Swap one named piece of a title and leave every other byte alone.
+    """Swap one named piece of a title, leaving every other byte alone.
 
-    The editor used to rebuild the whole string from the parsed parts, which
-    normalises everything it touches on the way past: picking a client on
-    `OPS: Trekk - 04aug26 - SSD0129 motor short` returned it with `04Aug26`
-    and tidied spacing, so a field nobody edited moved. Measured against the
-    mirrors, **513 of production's 1,164 titles** differ from their own
-    recomposition -- lower-case months, `3Aug26` for the 3rd, ISO dates,
-    missing spaces around the hyphens -- and each rewrite is a real thread
-    rename, two per ten minutes on a budget shared between both machines,
-    posting a system message into a customer thread.
+    Never rebuild a title from its parsed parts: that renormalises whatever
+    it passes -- `04aug26` to `04Aug26`, odd spacing tidied -- and a title
+    changing at all is a real thread rename, two per ten minutes on a budget
+    shared between both machines. Roughly half of production's titles differ
+    from their own recomposition.
 
-    So the only bytes that may change are the ones being changed. Returns the
-    title untouched when the field has no segment to swap, which is the
-    honest answer for a title with no client slot -- `title_takes_client` in
-    bert asks the same question and the editor says so rather than guessing.
+    Returns the title unchanged when there is no segment to swap, which is
+    the case `bert.title_takes_client` asks about.
     """
     for rx in (STRICT, LOOSE):
         m = rx.match(name or "")
-        # The same guard parse_title uses: a match whose date will not parse
-        # is not a match, or `32Jun26` would be treated as a real segment.
+        # parse_title's guard: a match whose date will not parse is not a
+        # match, or `32Jun26` would count as a real segment.
         if m and parse_date(m.group("date")):
             try:
                 a, b = m.span(field)
@@ -183,21 +173,18 @@ def replace_field(name: str, field: str, value: str) -> str:
                 return name
             if a != b and not value:
                 # Emptying a field takes its separator with it, or the title
-                # keeps the punctuation for something that is no longer
-                # there: clearing the client left `OPS:  - 04aug26 - x`.
-                # The mirror of the rule below -- the last field gives up the
-                # separator before it, any other gives up the one after.
+                # keeps punctuation for something no longer there. The last
+                # field gives up the separator before it, any other the one
+                # after.
                 rest = name[b:]
                 if rest.strip(" -:") == "":
                     return name[:a].rstrip(" -:")
                 gap = re.match(r"\s*[-:]\s*", rest)
                 return name[:a] + (rest[gap.end():] if gap else rest)
             if a == b and value:
-                # The segment is there and empty -- `PROD: 29Jun26 - x` has a
-                # client group matching nothing between the tag and the date.
-                # Splicing a name straight in butts it against its neighbour,
-                # so the separator has to come with it, on whichever side the
-                # neighbour is.
+                # An empty segment -- `PROD: 29Jun26 - x` matches no client
+                # between tag and date -- so an inserted name brings its own
+                # separator, on whichever side the neighbour is.
                 sep = value + " - " if a < len(name) else " - " + value
                 return name[:a] + sep + name[b:]
             return name[:a] + value + name[b:]

@@ -278,37 +278,19 @@ SEARCH_HINT_PAD = 16
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    # **Pitched where real light modes are pitched.** Measured against five of
-    # them -- GitHub, Linear, Notion, Atlassian, Stripe -- every one puts its
-    # canvas at luminance 1.00, its panels at 0.92-0.95, its borders at
-    # 0.69-0.80 and its text at 12-18:1. This palette sat at 0.59, 0.55, 0.41
-    # and 9.5:1: roughly half the luminance of any of them.
+    # Pitched where real light modes are pitched: a near-white canvas,
+    # near-black text, colour on small things and structure from hairlines.
+    # Answering glare by dimming the field produces something too dark to
+    # read as crisp and too light to read as restful.
     #
-    # That was not a light mode, it was a dimmed one, and the muddy middle is
-    # the worst place to be -- too dark to read as crisp, too light to read as
-    # restful. It arrived one reasonable step at a time: light was reported as
-    # glaring, the answer each round was to bring the field down, and three
-    # rounds of that walked away from the thing being asked for. **Real light
-    # modes answer glare by going up, not down** -- a white ground, near-black
-    # text at 15:1, and comfort out of crispness rather than dimness.
+    # Every value is solved against the floors `check_palette.py` holds
+    # rather than chosen by eye -- CARD_MIN, CONTROL_MIN, EDGE_MIN -- so a
+    # change here is checked rather than judged. The tag stripe in particular
+    # doubles as that tag's label in the figures panel, where it is text.
     #
-    # The structure was never wrong. Card over ground was 1.12 against their
-    # 1.05-1.08, border off fill 1.56 against their 1.23-1.43. It only needed
-    # moving up an octave.
-    #
-    # Every value here is solved against the floors `check_palette.py` holds
-    # rather than chosen by eye: a fill of 0.96 puts the canvas at or under
-    # 0.886 to clear CARD_MIN, surface over canvas lands inside 1.10-1.30, a
-    # control sits CONTROL_MIN under the fill it is on, and a tag stripe
-    # stands EDGE_MIN off its own fill -- which is what keeps it dark enough
-    # to double as that tag's label in the figures panel, where it is drawn as
-    # text rather than as a line.
-    #
-    # Neutral, not tinted. A census of the old board found 98.5% of the screen
-    # at chroma 10 or more and 1.5% reading as grey; a ground with a hue of
-    # its own also hides whichever tags share it -- cool left ENG and Medium
-    # at 1.1 of colour from the workspace, warm would have done the same to
-    # PROD and High. Grey treats all four alike.
+    # Neutral rather than tinted: a ground with a hue of its own hides
+    # whichever tags share it. Grey treats all four alike.
+    # Reasoning and measurements: docs/bert-ui.md.
     "ink": "#262626", "muted": "#5F5F5F", "line": "#C6C6C6",
     "surface": "#FFFFFF", "canvas": "#EEEEEE", "panel": "#E7E7E7",
     # The activity bar, under the sections either side of the board.
@@ -846,18 +828,12 @@ _DATE_RX = re.compile(ex._DATE_TOKEN, re.IGNORECASE)
 
 
 def compose_title(queue, client, date, summary) -> str:
-    """The four fields as the one string Discord actually holds.
+    """The four fields as the one string Discord holds.
 
-    Written out three times before this -- in `_suggest_title`, in
-    `_queue_picked`, and in the template a new ticket starts from -- which is
-    three places for the shape to drift and no way to check it once.
-
-    The round trip is what matters: a title that parses has to survive
-    `compose(*parse(title))` unchanged, or touching any field quietly
-    rewrites something nobody asked to change. Not hypothetical -- `04aug26`
-    becoming `04Aug26` was measured at 29 production cards, each one a real
-    thread rename posting a system message into a customer thread, and it is
-    why composing is never the *only* path to a title.
+    Only for a title there is nothing to preserve in -- a new ticket, or one
+    the fields cannot express. A title that already parses is spliced instead
+    (`ex.replace_field`), because composing renormalises whatever it passes
+    and every change is a real thread rename.
     """
     out = f"{(queue or '').strip()}:"
     for part in ((client or "").strip(),
@@ -871,28 +847,18 @@ def compose_title(queue, client, date, summary) -> str:
 class DateBox(QDateEdit):
     """A date field that can say it has no date, and still opens on today.
 
-    Qt has no empty date, so the floor stands for one and
-    `setSpecialValueText` puts "none" in the box. What that does not fix is
-    the calendar: at the floor it opens on January 1900, so choosing a date
-    for a title that has none meant scrolling back a hundred and twenty-six
-    years.
-
-    So the sentinel is for *display* only. The moment somebody reaches for
-    the control -- a click, an arrow key, the popup -- an empty field becomes
-    today, which is the date nearly every ticket wants and one keystroke from
-    the rest. Reaching for it is the intent; nothing writes until then, so a
-    card whose title has no date keeps saying so until somebody says
-    otherwise.
+    Qt has no empty date, so `NO_DATE` stands for one and
+    `setSpecialValueText` shows "none". That leaves the calendar opening on
+    the floor, so reaching for the control -- click, arrow key, popup --
+    wakes an empty field to today first. Nothing is written until then, so a
+    title with no date goes on saying so.
     """
 
-    # The drop-down keeps its hit area and loses its arrow; the glyph below
-    # is drawn into that space instead. An arrow says "a list drops down
-    # here", which is not what happens and not what somebody is looking for
-    # when they want to set a date.
+    # The drop-down keeps its hit area and loses its arrow; paintEvent draws
+    # a calendar there instead, since an arrow promises a list.
     ARROW_W = 30
-    # The field carries a 1px border and a 5px corner radius, so the widget's
-    # outer edge is not where the button ends. Measured from there the glyph
-    # rode into the rounded corner and looked like it was falling off.
+    # Inside the field's 1px border and 5px radius, or the glyph rides the
+    # rounded corner.
     EDGE = 3
 
     def paintEvent(self, e):
@@ -919,8 +885,7 @@ class DateBox(QDateEdit):
         return False
 
     def mousePressEvent(self, e):
-        # Woken here, the click still lands: the popup opens on today rather
-        # than on the floor, which is the whole point.
+        # Before the click lands, so the popup opens on today.
         self._wake()
         super().mousePressEvent(e)
 
@@ -934,71 +899,42 @@ class DateBox(QDateEdit):
 def title_takes_client(title: str) -> bool:
     """Whether picking a client can reach this title at all.
 
-    `_suggest_title` rebuilds the client segment, and there is only a segment
-    to rebuild once the date has marked where it ends -- the same anchoring
-    `title_problems` turns on. Below that the pick lands nowhere: the card
-    changes, because the name is saved as a `client_override`, and the thread
-    title does not, which reads as the dropdown being broken.
-
-    Stated once so the editor can act on it and say it in the same breath,
-    rather than one of them drifting from the other.
+    The client is whatever sits between the tag and the date, so there is
+    only a segment to change once a date marks where it ends. Below that a
+    pick is saved as a `client_override` and the title does not move, so the
+    editor says so rather than appearing to do nothing.
     """
     return ex.parse_title(title or "").confidence in ("strict", "loose")
 
 
 def title_problems(c) -> list:
-    """What is actually wrong with this card's title, in words.
+    """What is wrong with this card's title, in words a person can act on.
 
-    The card used to say "Couldn't read this thread's title -- check the
-    client and details, then edit to fix" and say it to everybody, whatever
-    was wrong. Three cards can be red for three different reasons and read
-    identically, which tells somebody to go and look rather than what to do
-    when they get there.
+    Read off the parsed fields, not the issue code: `title_loose` says the
+    shape was wrong without saying which part is missing, and queue,
+    client_raw and thread_date each either exist or do not.
 
-    Read off the parse rather than the issue code, because the code does not
-    know. `title_loose` means the shape was not the documented one; it does
-    not say which part was missing, and for the card this was written against
-    -- `PROD: 29Jun26 - Trade show TOF` -- the answer is the client and
-    nothing else. The parsed fields do know: queue, client_raw and
-    thread_date are each either there or not.
-
-    A list, because a title can be wrong in more than one way at once, and
-    saying only the first would be the same failure one step smaller.
-
-    Pure, over the payload, so the wording can be checked without a
-    QApplication -- which these checks never make.
+    A list, because a title can be wrong in several ways at once. Pure over
+    the payload, so the wording is checked without a QApplication.
     """
     if (c.get("confidence") or "") == "strict":
         return []
     raw = (c.get("name") or "").strip()
-    # Nothing at all is one fact, not three. "No tag, no client name, no
-    # date" over an empty box is the software reading out what is absent
-    # rather than saying what to do, and every other message here names one
-    # thing to go and fix.
+    # Nothing at all is one fact, not three: every other message here names
+    # one thing to go and fix.
     if not raw and not any(c.get(k) for k in
                            ("queue", "client_raw", "thread_date", "summary")):
         return ["No title"]
 
-    # Every pattern is anchored on the tag, so without one the parser never
-    # reaches the rest and reports nothing for any of it -- and reading that
-    # as "no client, no date" quotes the parser's silence back as the title's.
-    # `29Jun26 - Trade show TOF` was told it had no date with the date sitting
-    # in it.
-    #
-    # The answer is not to go quiet about the rest, which was the first fix
-    # and left that title saying only "No tag" when it is also missing its
-    # client. It is to ask the question properly: put a tag on the front and
-    # parse again. The probe says what would still be wrong once the real tag
-    # is there, which is exactly what somebody about to fix it needs, and it
-    # costs one parse of a string already in hand.
+    # Every pattern is anchored on the tag, so without one nothing else
+    # parses and every field reads as absent whether it is or not. Put a tag
+    # on the front and parse again: the probe says what would still be wrong
+    # once a real one is there.
     if not (c.get("queue") or ex.PREFIX_ONLY.match(raw)):
         t = ex.parse_title(f"{ex.QUEUES_OFFERED[0]}: {raw}")
-        # `t.queue or ...` and a call to the half below rather than back to
-        # the top. Recursing looked equivalent and was not: PREFIX_ONLY needs
-        # at least one character after the tag, so an *empty* title probes to
-        # `PROD: `, which does not parse either, which has no queue, which
-        # probes again -- for ever. Clearing the title box in typing mode
-        # took the editor down with a RecursionError.
+        # Into the half below, never back to the top: PREFIX_ONLY needs a
+        # character after the tag, so an empty title probes to `PROD: `,
+        # which has no queue either, and recursing would not terminate.
         return ["No tag"] + _title_problems_after_tag(dict(
             c, queue=t.queue or ex.QUEUES_OFFERED[0], client_raw=t.client_raw,
             thread_date=t.date.isoformat() if t.date else None,
@@ -1010,39 +946,31 @@ def title_problems(c) -> list:
 def _title_problems_after_tag(c, raw) -> list:
     """Everything that can be judged once a tag is known to be there.
 
-    Split from `title_problems` so the tagless probe is one step rather than
-    a call back to the top, which is what made an empty title loop.
+    Separate from `title_problems` so the tagless probe is one step rather
+    than a recursive call.
     """
     # The probe can land on a title that parses perfectly -- one missing only
-    # its tag -- and then there is nothing else to report. This guard lived
-    # at the top of the caller, which the probe path no longer goes through.
+    # its tag -- and then there is nothing else to say.
     if (c.get("confidence") or "") == "strict":
         return []
     out = []
     dated = bool(c.get("thread_date") or "")
 
-    # The date is what anchors the client: the client is whatever sits
-    # between the tag and the date, so with no date there is no client slot
-    # to be empty. `PROD: Thrasher - Trade show TOF` comes back with the
-    # whole of it as the summary and no client at all -- and saying "No
-    # client name" there is the third form of the same mistake, a field
-    # reported missing because the parser could not reach it rather than
-    # because it is not there. Thrasher was sitting in the title.
-    #
-    # So the client is judged once the date has placed it, and not before.
-    # Add the date and the question answers itself.
+    # The date anchors the client -- the client is whatever sits between the
+    # tag and the date -- so with no date there is no client slot to be
+    # empty. `PROD: Thrasher - Trade show TOF` parses with the whole of it as
+    # the summary, and calling that a missing client would be reporting a
+    # field the parser could not reach rather than one that is absent.
     if dated and not (c.get("client_raw") or ""):
         out.append("No client name")
     if not dated:
-        # A date that is present and refused is a different job from one that
-        # was never typed -- 32Jun26 is a correction, a missing date is an
-        # addition -- and the card should not send somebody looking for the
-        # second when it is the first.
+        # A date refused is a correction; a date never typed is an
+        # addition. Different jobs, so different words.
         out.append("Date not readable" if _DATE_RX.search(raw) else "No date")
     if dated and not (c.get("summary") or ""):
-        # The one remaining field, and the only reason a title with a tag, a
-        # client and a date still will not parse strictly. Saying "non-
-        # standard format" there sends somebody looking at the separators.
+        # The only reason a title with a tag, client and date still fails
+        # strict; "non-standard format" would send somebody to the
+        # separators.
         out.append("No description")
     # Everything is present and it still did not parse strictly, so the shape
     # is the complaint: the separators or the date's spelling.
@@ -1109,17 +1037,12 @@ def unsent_mark(c):
         why = "waiting to post to the thread"
     else:
         why = "waiting to reach the shared board"
-    # The ink, not the accent. Measured against every card fill in both
-    # palettes, the accent averages 4.6:1 in light and 5.9:1 in dark; the ink
-    # is 13.7:1 and 11.8:1. It is also the cheaper choice: a card already
-    # wears its tag's colour, and a mark that spends none leaves colour
-    # meaning something.
+    # The ink, not the accent: it reads roughly twice as well on every card
+    # fill, and a card already wears its tag's colour, so a mark spending
+    # none leaves colour meaning something.
     #
-    # One sentence for all three cases. #ernie-state is a Discord channel too,
-    # so a card waiting only on the shared board is still waiting on Discord
-    # and saying so twice differently would be drawing a distinction the
-    # reader cannot act on either way. Which of the three it is stays in the
-    # tooltip, where it belongs.
+    # One sentence for all three waiting cases -- #ernie-state is a Discord
+    # channel too -- with which of them it is left to the tooltip.
     return "Pushing to Discord…", T.INK, f"Changed here — {why}"
 
 
@@ -2183,19 +2106,14 @@ class ClientCombo(Combo):
             self.setItemData(self.count() - 1, c.get("name"), Qt.ToolTipRole)
             offered.add(short.lower())
 
-        # A client already on the card that Jira does not offer -- retired,
-        # paused, or never in the list -- stays on the card. Same reason the
-        # queue dropdown keeps a retired tag: not offering it to anybody is
-        # not the same as taking it off the one ticket that has it.
+        # A client the roster does not offer -- retired, paused, or never
+        # listed -- stays on the card it is already on, the same rule the
+        # queue dropdown follows for a retired tag.
         #
-        # But it is **shown, not offered**: put in the box rather than added
-        # to the list. It used to be an item, and an item is something you
-        # can pick -- so a card whose title had a typo in it put that typo in
-        # the dropdown, under the same heading as the customers Jira knows
-        # about. Reported after `Trafford NJKNKNKNLN` turned up there. Bert
-        # cannot tell a retired client from a fat-fingered one: both are just
-        # a string the roster has never heard of. What it can do is stop
-        # dressing the second one up as a choice.
+        # Shown, not offered: put in the box rather than added to the list.
+        # Bert cannot tell a retired client from a typo -- both are strings
+        # the roster has never heard of -- so it declines to dress either as
+        # a choice.
         self._unlisted = bool(current) and current.lower() not in offered
 
         # The popup is filled by client_matches rather than filtered by the
@@ -2636,22 +2554,14 @@ def a_few(n, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-# **The equipment the board can be narrowed to, and what each covers.**
+# The equipment the board can be narrowed to, and what each covers.
 #
 # The names are what people say; `eq_type` is what `ernie_extract` reads off
-# a title, and the two are not the same word. Measured against production's
-# 889 threads: SSD 217, EReel 166, ODE 52, LED 14, OLK 3.
+# a title, and the two are not the same word. Bot covers SSD and LED because
+# production calls both bots; splitting LED out is one line here.
 #
-# **Bot covers SSD and LED**, because both are bots -- production carries
-# `SSD0040: Edge AI Services DEMO bot` and `OPS: IPI - LED Bot (exception)
-# LED0059`, which says so outright. Splitting LED into a chip of its own is
-# one line here if it turns out to be a distinct thing to the people using
-# this; folding it in was the call that keeps the row to the four that were
-# asked for.
-#
-# A thread can carry several: 65 of production's threads have two or more and
-# one has six, so a card matching *any* selected type is shown rather than
-# needing all of them.
+# A thread can carry several pieces, so a card matching *any* selected type
+# is shown rather than needing all of them.
 EQUIPMENT_FILTERS = (
     ("Bot", ("SSD", "LED")),
     ("E-Reels", ("EReel",)),
@@ -3476,17 +3386,12 @@ class Card(QFrame):
 
         # textEdited fires only for typing, so rebuilding the suggestion below
         # doesn't count as the person taking the title over.
-        # Which of the two this person asked for. Both write the same title
-        # through the same splice and both get the same warnings underneath,
-        # so this hides controls rather than changing what saving does --
-        # which is what keeps it one code path with a preference on top
-        # rather than two editors to keep in step.
+        # Which of the two this person asked for. Both modes hide controls
+        # rather than changing what saving does, which keeps them one editor
+        # with a preference on top rather than two to keep in step.
         #
-        # Read before anything asks. It used to be set after the rows were
-        # added, and `_check_title()` runs during the wiring below -- so the
-        # first pass saw the default, guided, and made the box read-only in
-        # typing mode too. Nothing put it back, because the branch that would
-        # have was the one being skipped.
+        # Read before anything asks: `_check_title()` runs during the wiring
+        # below and needs to know which mode it is in.
         self._entry = (self.board.settings.get("entry") or ENTRY_DEFAULT)
 
         self.f_title.textEdited.connect(self._title_edited)
@@ -3584,6 +3489,7 @@ class Card(QFrame):
         lab.setVisible(bool(note))
 
     def _show_guided_rows(self, on):
+        """Show or hide the four fields the guided mode adds."""
         for lab, w in getattr(self, "_guided_rows", []):
             if lab is not None:
                 lab.setVisible(on)
@@ -3592,12 +3498,10 @@ class Card(QFrame):
     def set_entry_mode(self, mode):
         """Switch an already-open editor between typing and guided.
 
-        Settings can be opened while a card is being edited, and `render()`
-        deliberately spares the bands in that case -- so without this the
-        editor kept the mode it was built with and the change looked like it
-        had not taken. It costs a row of visibility and one `_check_title`,
-        because both modes are the same editor: nothing about what saving
-        does depends on which is showing.
+        Settings can be opened mid-edit, and `render()` spares the bands an
+        editor lives in, so the change has to reach it directly. Cheap
+        because both modes are one editor: nothing about saving depends on
+        which is showing.
         """
         if mode == getattr(self, "_entry", None) or not self.editing:
             return
@@ -3616,25 +3520,17 @@ class Card(QFrame):
             self._syncing = False
 
     def _put(self, field, value):
-        """Splice one field into the title and leave every other byte alone.
-
-        Never rebuilds. The editor used to compose the whole title from the
-        parsed parts, so picking a client also normalised the date and the
-        spacing -- `04aug26` became `04Aug26` -- and 513 of production's
-        1,164 titles differ from their own recomposition. Each of those is a
-        real thread rename at two per ten minutes, posting a system message
-        into a customer thread, for a field nobody edited.
-        """
+        """Put one field into the title, touching nothing else."""
         if getattr(self, "_syncing", False):
             return
         cur = self.f_title.text()
         if ex.parse_title(cur).confidence in ("strict", "loose"):
             self._set_title(ex.replace_field(cur, field, value))
             return
-        # Nothing to splice into. Composing is only dangerous for a title
-        # that already parses -- that is where the 513 gratuitous renames
-        # live -- and this one does not, so there are no bytes worth
-        # preserving and the fields build a replacement outright.
+        # Nothing to splice into, and nothing worth preserving either, so
+        # the fields build a replacement. Safe only here: composing a title
+        # that *does* parse renormalises it, which is a rename nobody asked
+        # for.
         self._set_title(self._composed())
 
     def _composed(self) -> str:
@@ -3650,10 +3546,8 @@ class Card(QFrame):
     def _fields_from_title(self, t):
         """The other direction: what the title says, in the fields.
 
-        A field that has focus is left alone. Somebody typing into it is
-        mid-thought, and the title is being rebuilt from what they have typed
-        so far -- pushing the half-parsed answer back at them fights the
-        typing rather than helping it.
+        A field with focus is skipped -- pushing a half-parsed answer back at
+        somebody mid-type fights them.
         """
         self._syncing = True
         try:
@@ -3734,24 +3628,21 @@ class Card(QFrame):
         self._set_title(f"{q}: {rest}".rstrip())
 
     def _check_title(self, _text=None):
-        # The note under the Client box depends on the title as well as
-        # the box, so editing the title has to re-ask it.
+        """Title -> fields, and the state of the title box itself.
+
+        Runs on every keystroke in the title box.
+        """
+        # The Client note depends on the title as well as the box.
         self._say_client()
         t = ex.parse_title(self.f_title.text().strip())
-        # Every field shows whatever the title actually says, including when
-        # the person types a different prefix by hand. Both directions are
-        # live, so somebody who would rather type never has to look at the
-        # fields and somebody who would rather pick never has to type.
+        # The fields follow the title, including a prefix typed by hand.
         if not getattr(self, "_syncing", False):
             self._fields_from_title(t)
-        # Guided never hands back a box. Handing one over was the mode giving
-        # up at the point it is most useful -- the titles the fields cannot
-        # express are exactly the ones somebody needs help rebuilding. So the
-        # title stays the result of the fields, and when the thread is called
-        # something the fields cannot say, both are shown: what it is called
-        # now, and what it will be called. Not a disabled box either -- a
-        # frame around something nobody can type in is an invitation the
-        # control then refuses.
+        # Guided never hands the box back, even for a title the fields cannot
+        # express -- those are the ones somebody most needs help rebuilding.
+        # It shows both instead: what the thread is called now, and what it
+        # will be called. No frame either, since a frame invites typing the
+        # control would refuse.
         if getattr(self, "_entry", ENTRY_DEFAULT) == "guided":
             if not self.f_title.isReadOnly():
                 self.f_title.setReadOnly(True)
@@ -3773,8 +3664,8 @@ class Card(QFrame):
                     f"<span style='color:{T.MUTED}'>Now: {shown}</span>")
             self.title_was.setVisible(broken)
         else:
-            # Stated, not assumed. A mode that is only "whatever the other one
-            # did not do" is one line away from inheriting it.
+            # Stated rather than left as whatever guided did, which is one
+            # line away from inheriting it.
             self.title_was.hide()
             if self.f_title.isReadOnly():
                 self.f_title.setReadOnly(False)
@@ -3868,16 +3759,17 @@ class Card(QFrame):
     def _override(self) -> str:
         """What the Client box means as a client_override.
 
-        An override says "the parsed client is wrong, use this instead". When
-        the title already says what the box says -- which it does whenever the
-        client was picked from the list, because picking rewrites the title --
-        there is nothing to override, and saying so anyway would be a lie with
-        consequences: needs_triage() reads a client_override as somebody
-        vouching for an unreadable card, and would clear the red edge off
-        every ticket anyone had merely opened.
+        An override says "the parsed client is wrong, use this instead", and
+        `needs_triage` reads one as somebody vouching for an unreadable card
+        -- so writing one that nobody decided clears the red edge off a
+        ticket that still needs it. Three answers:
 
-        Compared against the title in the box rather than the card's
-        client_raw, which is the *old* title's client until the next sync.
+          title already says it   nothing to override
+          box untouched           whatever the card already had
+          box changed or emptied  a decision, so write it
+
+        Compared against the title in the box, not the card's client_raw,
+        which is the old title's client until the next sync.
         """
         typed = self.f_client.text().strip()
         if not typed:
@@ -3885,21 +3777,10 @@ class Card(QFrame):
         t = ex.parse_title(self.f_title.text().strip())
         if ex.normalise_client(typed) == ex.normalise_client(t.client_raw or ""):
             return ""
-        # Untouched. The box was *seeded* from the card, so a name still
-        # sitting in it is not a decision anybody made in this editor -- and
-        # an override is a decision. Take the client out of a title and the
-        # box goes on holding what the old title parsed to, which used to be
-        # written back as "the parsed client is wrong, use this instead": an
-        # override out of nothing, on a card whose owner had only edited the
-        # title. It then re-seeded the box it came from and could never clear.
-        #
-        # So an untouched box answers with whatever the card already had,
-        # which is usually nothing and must not become something. Emptying
-        # the box is still a decision and still clears it, and the title
-        # check above still comes first, so an override the title has caught
-        # up with is retired rather than preserved.
-        #
-        # The same guard `client_note` uses, on the half that writes.
+        # The box is seeded from the card, so a name still sitting in it is
+        # not a decision made here -- and an override that writes itself
+        # re-seeds the box it came from and can never clear. Same guard
+        # `client_note` uses, on the half that writes.
         if client_squash(typed) == client_squash(
                 getattr(self, "_client_opened_with", "") or ""):
             base = getattr(self, "_edit_base", None) or {}
@@ -4382,19 +4263,10 @@ class Band(QWidget):
             self.panel.setMinimumHeight(DROP_ZONE_MIN if not self.cards else 0)
         else:
             self.panel.setMinimumHeight(0)
-            # A hidden band takes its "+ New Ticket" with it, and the band
-            # is the answer to "where does this go" -- so with everything in
-            # Needs Attention there was no way to start a ticket in Critical
-            # at all, which is the one case where you most want to. Measured:
-            # four of the five buttons did not exist.
-            # Always. A band a *filter* emptied used to hide, on the
-            # reasoning that somebody narrowing the view did it deliberately
-            # and five headings over one result fights the narrowing. True
-            # about the headings, and it quietly took the rest with them: a
-            # band is a **drop target** and it carries "+ New Ticket", so
-            # under a filter there was again no way to drag a card into an
-            # empty priority or start one there -- which is the bug the
-            # comment above describes, coming back whenever a chip was on.
+            # Every band is drawn, empty or not, and whatever a filter has
+            # left in it. A band is a drop target and carries its own
+            # "+ New Ticket", so hiding one takes away the only way to drag a
+            # card into that priority or start one there.
             self.setVisible(True)
 
         if wants_hint:
@@ -4716,18 +4588,13 @@ class Rail(QWidget):
         self.setMinimumWidth(RAIL_MIN_W)
         self.setMaximumWidth(RAIL_MAX_W)
         self.resize(RAIL_WIDTH, self.height())
-        # Scoped to the rail itself. Unscoped, a background rule cascades to
-        # every descendant *and* to the tooltip a descendant owns, so hovering
-        # a row produced a box the right size for its three lines, painted the
-        # canvas colour, with the text the same colour as the box. Measured
-        # against a plain widget in the same process: readable there, solid
-        # black here.
-        # A plain QWidget subclass ignores a stylesheet background
-        # unless it says so: Qt only paints one for widgets that opt
-        # in. Without this the rule below did nothing at all -- proved
-        # by setting it to magenta and seeing the window through it --
-        # and it went unnoticed for as long as this and the window
-        # behind it were the same colour.
+        # Scoped to the rail itself: an unscoped background rule cascades to
+        # every descendant and to the tooltips they own, which paints a
+        # tooltip's text the same colour as its box.
+        #
+        # WA_StyledBackground because a plain QWidget subclass ignores a
+        # stylesheet background unless it opts in -- without it the rule
+        # below does nothing at all, silently.
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"Rail {{ background:{T.PANEL}; }}" + tip_css())
 
@@ -5181,17 +5048,10 @@ class Stats(QWidget):
         self.holder.setLayout(self.body)
         self.holder.setStyleSheet("background:transparent;")
 
-        # The panel scrolls, the way the running order does. It used to be a
-        # widget in a plain layout with a stretch under it, which was fine
-        # while three blocks fitted -- add a fourth and Qt does not clip the
-        # overflow, it *squashes every block proportionally*: measured, the
-        # tally asked for 134px and was given 11, so a table of six rows was
-        # drawn as one line and "time to close" was cut off the bottom edge.
-        # Nothing said anything, because nothing had failed.
-        #
-        # More blocks are coming as people say what they want here, so this
-        # is the shape that survives that rather than a height to keep an eye
-        # on.
+        # The panel scrolls, the way the running order does. In a plain
+        # layout Qt does not clip an overflowing block, it squashes every
+        # block proportionally -- so one block too many draws a six-row table
+        # as a single line, with nothing reporting a failure.
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -7603,22 +7463,14 @@ class Bert(QMainWindow):
             QMessageBox.warning(self, "Couldn't complete that card", str(e))
         else:
             self.completing.add(tid)
-            # **Take it off the board now, even with an editor open.**
-            # An open editor parks every poll -- rebuilding a band destroys
-            # the widget somebody is typing into -- so a card closed while
-            # one was open just sat there looking untouched. The ticket was
-            # shut on the server and nothing on screen said so, pressing
-            # Complete again did nothing because it was already closed, and
-            # the card only left when the editor did. Reported as not being
-            # able to complete a ticket while editing another, which is
-            # exactly what it looks like.
+            # Take it off the board now, even with an editor open: an open
+            # editor parks every poll, so otherwise a card closed meanwhile
+            # sits there looking untouched until the editor closes.
             #
             # Hidden rather than rebuilt. The card being closed is never the
-            # one being edited -- that one is in edit mode and has no
-            # Complete button -- so nothing anybody is typing into is
-            # touched, and the next real render replaces the lot anyway: the
-            # band's signature already differs, because the payload that
-            # follows no longer carries this card.
+            # one being edited -- that one has no Complete button -- so
+            # nothing being typed into is touched, and the next real render
+            # replaces the lot anyway.
             if self.editing_card:
                 self._hide_closed_card(tid)
         self.refresh()
@@ -8144,26 +7996,16 @@ class Bert(QMainWindow):
             f"<span style='color:{T.RED_FG}'>{attention_text(problems)}</span>"
             if problems else "")
 
-        # Straight down the order the server sent. Unassigned used to float its
-        # unreadable threads here, which put them at the top of the board while
-        # every other view -- the state channel, the numbers on the card
-        # messages -- still read them in rank order, and left a drop between
-        # two visible cards computing a rank against neighbours that were not
-        # its neighbours. They are ranked to the top for real now, in
-        # ensure_card, so there is one order and this draws it.
-        # An open editor is never rebuilt under somebody. The poll already
-        # parks its payload for exactly this reason -- but render() is reached
-        # from places no poll goes, a resize and the end of a drag, and those
-        # tore the editor down anyway. Maximising the window while writing a
-        # new ticket destroyed it outright: the placeholder is not in
-        # self.cards, so nothing rebuilt it, and editing_card was left naming
-        # a widget that no longer existed, which holds every later poll and
-        # leaves the board frozen with nothing on it to say why.
+        # Straight down the order the server sent: rank is the only order,
+        # and an unreadable thread is ranked to the top in `ensure_card`
+        # rather than floated here.
         #
-        # Only the bands are spared, because that is where an editor lives.
-        # The rail holds none and re-clips to the new width happily -- and the
-        # band signatures are deliberately left alone, so whatever changed is
-        # drawn by the render that follows the editor closing.
+        # An open editor is never rebuilt under somebody. render() is reached
+        # from places the poll does not go -- a resize, the end of a drag --
+        # and rebuilding a band destroys the widget being typed into. Only
+        # the bands are spared, since that is where an editor lives; the band
+        # signatures are left alone too, so `_bands_stale` redraws whatever
+        # changed once the editor closes.
         self._bands_stale = bool(self.editing_card)
         ordered = []
         for band, w in self.bands.items():
