@@ -451,10 +451,15 @@ def check_a_red_card_says_what_is_wrong_with_it():
     # date-reading it is was never a question worth putting to a reader.
     import inspect
     src = inspect.getsource(bert.Card._check_title)
-    c.ok("title_problems(" in src,
+    # Comments stripped: the reasoning above quotes the wording it replaced,
+    # and a check that reads a comment as code is a check that fires at
+    # whoever explains themselves.
+    code = chr(10).join(l for l in src.splitlines()
+                     if not l.lstrip().startswith("#"))
+    c.ok("title_problems(" in code,
          "the editor says what the card says, from the same function")
     for gone in ("no date Ernie can read", "doesn't match"):
-        c.ok(gone not in src, f"and not its own words for it: {gone!r}")
+        c.ok(gone not in code, f"and not its own words for it: {gone!r}")
 
     # No tag at all. Every pattern is anchored on it, so the parser never
     # reaches the rest and reports nothing for any of it -- which was being
