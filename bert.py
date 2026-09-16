@@ -970,7 +970,13 @@ def title_problems(c) -> list:
     """
     if (c.get("confidence") or "") == "strict":
         return []
-    raw = c.get("name") or ""
+    raw = (c.get("name") or "").strip()
+    # Nothing at all is one fact, not three. "No tag, no client name, no
+    # date" over an empty box is the software reading out what is absent
+    # rather than saying what to do, and every other message here names one
+    # thing to go and fix.
+    if not raw:
+        return ["No title"]
 
     # Every pattern is anchored on the tag, so without one the parser never
     # reaches the rest and reports nothing for any of it -- and reading that
@@ -3946,6 +3952,19 @@ class Card(QFrame):
 
     def save(self) -> bool:
         """True if the write landed. Closing Bert waits on the answer."""
+        # Refused here rather than discovered in the outbox. A thread has to
+        # have a name -- Discord rejects an empty one -- so this would have
+        # gone out, come back 4xx, burned its five attempts and settled on
+        # the card as "Not sent", for something that was answerable the
+        # moment it was typed.
+        if not self._title_to_send().strip():
+            QMessageBox.warning(
+                self, "No title",
+                "A thread needs a name, and Discord will not take an empty "
+                "one.\n\nThe shape is: TAG: Client - 25Aug26 - what it's "
+                "about.")
+            self.f_title.setFocus()
+            return False
         if self.is_new:
             return self.board.create_ticket(self, {
                 "title": self._title_to_send(),

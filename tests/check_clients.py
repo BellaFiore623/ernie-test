@@ -449,10 +449,22 @@ def check_a_red_card_says_what_is_wrong_with_it():
     # either, which has no queue, which probes again -- for ever. Clearing
     # the title box in typing mode took the editor down with a
     # RecursionError. Found by driving the editor rather than by reading it.
+    # And it answers with one fact rather than three. "No tag, no client
+    # name, no date" over an empty box reads out what is absent; every other
+    # message here names one thing to go and fix.
     for empty in ("", "   "):
         c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
                     "thread_date": None, "summary": None, "name": empty}),
-                ["No tag", "No date"], f"an empty title answers rather than loops: {empty!r}")
+                ["No title"], f"an empty title answers rather than loops: {empty!r}")
+
+    # It is also refused at save, rather than discovered in the outbox:
+    # Discord will not take a nameless thread, so it would have gone out,
+    # come back 4xx, burned its five attempts and settled on the card as
+    # "Not sent" for something answerable the moment it was typed.
+    src = inspect.getsource(bert.Card.save)
+    c.ok("_title_to_send().strip()" in src, "save refuses an empty title")
+    c.ok(src.index("_title_to_send().strip()") < src.index("self.is_new"),
+         "before it asks the server anything")
 
     # The editor's warning line is built from this too. There were two
     # vocabularies -- the card said "No date" and the editor said "no date
