@@ -3655,16 +3655,28 @@ class Card(QFrame):
             self.title_state.setText("" if guided else
                 f"<span style='color:{T.MUTED}'>{t.queue} &middot; {t.client_raw} "
                 f"&middot; {title_stamp(t.date)} &middot; {t.summary or ''}</span>")
-        elif t.confidence == "prefix_only":
-            self.title_state.setText(
-                f"<span style='color:{T.AMBER_FG}'>no date Ernie can read</span> "
-                f"<span style='color:{T.MUTED}'>&mdash; tag {t.queue} is fine, "
-                f"the rest won't parse</span>")
         else:
+            # The same words the card uses. There was a second vocabulary
+            # here -- "no date Ernie can read", "doesn't match" -- saying the
+            # same things differently, which is how two accounts of one
+            # condition start disagreeing. And it named a half: the parser is
+            # `ernie_extract.parse_title`, which Bert imports and Ernie runs,
+            # so whose date-reading it is was never a question worth putting
+            # to the reader.
+            said = " &middot; ".join(title_problems({
+                "name": self.f_title.text().strip(), "queue": t.queue,
+                "client_raw": t.client_raw, "summary": t.summary,
+                "thread_date": t.date.isoformat() if t.date else None,
+                "confidence": t.confidence}))
+            colour = T.AMBER_FG if t.confidence == "prefix_only" else T.RED_FG
+            # The shape, but only where there is nothing else showing it. In
+            # guided the four fields are the shape; in typing this line is
+            # all there is.
+            hint = ("" if guided else
+                    f" <span style='color:{T.MUTED}'>&mdash; TAG: Client - "
+                    f"25Aug26 - what it's about</span>")
             self.title_state.setText(
-                f"<span style='color:{T.RED_FG}'>doesn't match</span> "
-                f"<span style='color:{T.MUTED}'>TAG: Client - 25Aug26 - "
-                f"what it's about</span>")
+                f"<span style='color:{colour}'>{said}</span>{hint}")
         self.title_state.setVisible(bool(self.title_state.text()))
 
     def warn_changed(self, msg):

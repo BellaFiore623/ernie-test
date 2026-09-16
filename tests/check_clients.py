@@ -443,6 +443,19 @@ def check_a_red_card_says_what_is_wrong_with_it():
                 "client_raw": "Thrasher", "thread_date": "2026-08-03"}),
             [], "a title that parses says nothing")
 
+    # The editor's warning line is built from this too. There were two
+    # vocabularies -- the card said "No date" and the editor said "no date
+    # Ernie can read" about the same title -- which is how two accounts of
+    # one condition start disagreeing. It also named a half, and the parser
+    # is ernie_extract.parse_title: Bert imports it, Ernie runs it, and whose
+    # date-reading it is was never a question worth putting to a reader.
+    import inspect
+    src = inspect.getsource(bert.Card._check_title)
+    c.ok("title_problems(" in src,
+         "the editor says what the card says, from the same function")
+    for gone in ("no date Ernie can read", "doesn't match"):
+        c.ok(gone not in src, f"and not its own words for it: {gone!r}")
+
     # No tag at all. Every pattern is anchored on it, so the parser never
     # reaches the rest and reports nothing for any of it -- which was being
     # quoted back as "no client, no date" over a title with the date sitting
