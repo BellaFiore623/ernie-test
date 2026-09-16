@@ -861,13 +861,23 @@ def title_problems(c) -> list:
     raw = c.get("name") or ""
 
     # Every pattern is anchored on the tag, so without one the parser never
-    # reaches the rest and reports nothing for any of it. Reading that as
-    # "no client, no date" is the parser's silence being quoted as the
-    # title's: `29Jun26 - Trade show TOF` was told it had no date with the
-    # date sitting in it. One true thing instead, and the rest becomes
-    # answerable once the tag is there.
+    # reaches the rest and reports nothing for any of it -- and reading that
+    # as "no client, no date" quotes the parser's silence back as the title's.
+    # `29Jun26 - Trade show TOF` was told it had no date with the date sitting
+    # in it.
+    #
+    # The answer is not to go quiet about the rest, which was the first fix
+    # and left that title saying only "No tag" when it is also missing its
+    # client. It is to ask the question properly: put a tag on the front and
+    # parse again. The probe says what would still be wrong once the real tag
+    # is there, which is exactly what somebody about to fix it needs, and it
+    # costs one parse of a string already in hand.
     if not (c.get("queue") or ex.PREFIX_ONLY.match(raw)):
-        return ["No tag"]
+        t = ex.parse_title(f"{ex.QUEUES_OFFERED[0]}: {raw}")
+        c = dict(c, queue=t.queue, client_raw=t.client_raw,
+                 thread_date=t.date.isoformat() if t.date else None,
+                 confidence=t.confidence)
+        return ["No tag"] + title_problems(c)
 
     out = []
     if not (c.get("client_raw") or ""):

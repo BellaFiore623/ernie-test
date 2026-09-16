@@ -431,13 +431,19 @@ def check_a_red_card_says_what_is_wrong_with_it():
     # No tag at all. Every pattern is anchored on it, so the parser never
     # reaches the rest and reports nothing for any of it -- which was being
     # quoted back as "no client, no date" over a title with the date sitting
-    # in it. One true thing, and the rest becomes answerable once it is there.
-    c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
-                "thread_date": None, "name": "29Jun26 - Trade show TOF"}),
-            ["No tag"], "a missing tag is the only thing claimed")
-    c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
-                "thread_date": None, "name": "Trade show TOF"}),
-            ["No tag"], "and still the only thing when there is no date either")
+    # in it. Going quiet about the rest was the first fix and was also wrong:
+    # that title really is missing its client too. So the tag is put on the
+    # front and the title parsed again, and the probe says what would still
+    # be wrong once the real one is there.
+    bare = lambda name: {"confidence": "none", "queue": None,
+                         "client_raw": None, "thread_date": None, "name": name}
+    c.equal(tp(bare("29Jun26 - Trade show TOF")),
+            ["No tag", "No client name"], "the date it does have is not claimed missing")
+    c.equal(tp(bare("Trade show TOF")),
+            ["No tag", "No client name", "No date"], "and everything absent is")
+    # The case the probe exists for: missing the tag and nothing else.
+    c.equal(tp(bare("Edge AI Services - 29Jun26 - Trade show TOF")),
+            ["No tag"], "a title missing only its tag says only that")
 
     # A date typed and refused is a correction; a date never typed is an
     # addition. Sending somebody to look for the second when it is the first
