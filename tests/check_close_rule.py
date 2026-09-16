@@ -229,7 +229,8 @@ def check_complete_is_the_word_for_a_work_item_and_close_for_a_ticket() -> bool:
 
     src = inspect.getsource(bert.Card._build_view)
     label = src.split("self.done_btn = QPushButton(")[1].split(")")[0]
-    c.ok("Close" in label, f"the card's button says Close ({label!r})")
+    c.ok("Close thread" in label,
+         f"the card's button says what it does to Discord ({label!r})")
     c.ok("Complete" not in label, "and no longer says Complete")
 
     def said(new_value, actor="Bella Fiore"):

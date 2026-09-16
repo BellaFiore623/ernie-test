@@ -3052,13 +3052,15 @@ class Card(QFrame):
         self.edit_btn.setStyleSheet(btn_css())
         self.edit_btn.clicked.connect(self.enter_edit)
 
-        # Close, not Complete. Completing is what happens to a work item --
-        # one bubble, one tick -- and a ticket leaving the board is a
-        # different act on a different thing. Sharing the word made the two
-        # read as the same one.
+        # Close thread, not Complete. Two things were wrong with the old
+        # word. Completing is what happens to a work item -- one bubble, one
+        # tick -- so the ticket and the bubble shared a verb and read as the
+        # same act. And the button does not only take the card off the board:
+        # it archives the Discord thread, which is the part somebody should
+        # be able to see before pressing it rather than afterwards.
         #
         # Qt puts a button's icon on the left, always.
-        self.done_btn = QPushButton("Close ")
+        self.done_btn = QPushButton("Close thread ")
         self.done_btn.setLayoutDirection(Qt.RightToLeft)
         self.done_btn.setStyleSheet(btn_css())
         self.done_btn.setIcon(tick_icon(T.OK_FG))
@@ -3082,7 +3084,7 @@ class Card(QFrame):
             self.done_btn.setToolTip(
                 f"{n} thing{'' if n == 1 else 's'} still to do on this "
                 f"ticket. Tick them off, or remove them in the editor, "
-                f"then close it.")
+                f"then close the thread.")
 
         age, chips = self._fit_foot(d)
         if age:
@@ -7426,7 +7428,7 @@ class Bert(QMainWindow):
     def complete(self, tid):
         if not self._guard():
             return
-        self.notify("Closing the ticket\u2026")
+        self.notify("Closing the thread\u2026")
         try:
             self.api.complete(tid, self.name())
         except Conflict as e:
@@ -7450,7 +7452,7 @@ class Bert(QMainWindow):
                 f"{moments_ago(d.get('at'))}".strip())
         except Exception as e:
             self._clear_toast()
-            QMessageBox.warning(self, "Couldn't close that ticket", str(e))
+            QMessageBox.warning(self, "Couldn't close that thread", str(e))
         else:
             self.completing.add(tid)
             # Take it off the board now, even with an editor open: an open

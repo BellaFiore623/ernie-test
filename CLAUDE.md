@@ -179,8 +179,13 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 - **Complete is the word for a work item; close is the word for a ticket.**
   One bubble and one tick against the whole ticket leaving the board: two
   acts on two different things, and they shared a word. The card's button
-  says **Close**, and the thread is told `X closed this thread in Bert` —
-  the same sentence as the Discord closure with the place swapped.
+  says **Close thread**, which also says the part that is easy to miss: it
+  archives the Discord thread, not just the card. The thread is told
+  `X closed this thread in Bert` — the same sentence as the Discord closure
+  with the place swapped. The longer label costs the footer 77px, which
+  `_fit_foot` pays out of the age and a second issue chip; measured across
+  600 renders from the column's 463px minimum upward, nothing lands off the
+  card and nothing is dropped without landing in a tooltip.
 - **A ticket with work still on it cannot be closed from Bert.** A card is a
   list of what is left, so closing one with bubbles on it says the ticket is
   finished while the card says it is not. `guard_work_done` refuses it and
