@@ -181,6 +181,17 @@ def replace_field(name: str, field: str, value: str) -> str:
                 return name
             if a < 0:
                 return name
+            if a != b and not value:
+                # Emptying a field takes its separator with it, or the title
+                # keeps the punctuation for something that is no longer
+                # there: clearing the client left `OPS:  - 04aug26 - x`.
+                # The mirror of the rule below -- the last field gives up the
+                # separator before it, any other gives up the one after.
+                rest = name[b:]
+                if rest.strip(" -:") == "":
+                    return name[:a].rstrip(" -:")
+                gap = re.match(r"\s*[-:]\s*", rest)
+                return name[:a] + (rest[gap.end():] if gap else rest)
             if a == b and value:
                 # The segment is there and empty -- `PROD: 29Jun26 - x` has a
                 # client group matching nothing between the tag and the date.

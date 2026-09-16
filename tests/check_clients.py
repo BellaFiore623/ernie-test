@@ -443,6 +443,17 @@ def check_a_red_card_says_what_is_wrong_with_it():
                 "client_raw": "Thrasher", "thread_date": "2026-08-03"}),
             [], "a title that parses says nothing")
 
+    # An empty title. The tagless probe used to call back to the top of this
+    # function, which looked equivalent and was not: PREFIX_ONLY needs a
+    # character after the tag, so "" probes to "PROD: ", which does not parse
+    # either, which has no queue, which probes again -- for ever. Clearing
+    # the title box in typing mode took the editor down with a
+    # RecursionError. Found by driving the editor rather than by reading it.
+    for empty in ("", "   "):
+        c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
+                    "thread_date": None, "summary": None, "name": empty}),
+                ["No tag", "No date"], f"an empty title answers rather than loops: {empty!r}")
+
     # The editor's warning line is built from this too. There were two
     # vocabularies -- the card said "No date" and the editor said "no date
     # Ernie can read" about the same title -- which is how two accounts of

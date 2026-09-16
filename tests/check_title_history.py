@@ -339,6 +339,22 @@ def check_changing_one_field_changes_one_field() -> bool:
             "PROD: Acme - 29Jun26 - Trade show TOF",
             "an empty client segment gains a separator with the name")
 
+    # Emptying a field takes its separator with it. Found by clearing the
+    # Client box in a driven editor: the title kept the punctuation for
+    # something no longer there, `OPS:  - 04aug26 - x`, and that is what
+    # would have been saved as the thread's name.
+    n = "OPS: Trekk - 04aug26 - SSD0129 motor short"
+    c.equal(ex.replace_field(n, "client", ""),
+            "OPS: 04aug26 - SSD0129 motor short", "a cleared client leaves no gap")
+    c.equal(ex.replace_field(n, "summary", ""),
+            "OPS: Trekk - 04aug26", "and a cleared last field leaves no trailing dash")
+    c.equal(ex.replace_field(ex.replace_field(n, "client", ""), "client", "Trekk"),
+            n, "and putting it back gives exactly what was there")
+    for f in ("client", "summary"):
+        out = ex.replace_field(n, f, "")
+        c.ok(ex.parse_title(out).confidence in ("strict", "loose"),
+             f"what is left still parses after clearing {f}")
+
     # A title with no segments to swap is returned as it stands, which is
     # what lets the editor say so instead of guessing.
     c.equal(ex.replace_field("ENG: Retired bots", "client", "Acme"),

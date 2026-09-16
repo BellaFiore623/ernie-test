@@ -986,11 +986,31 @@ def title_problems(c) -> list:
     # costs one parse of a string already in hand.
     if not (c.get("queue") or ex.PREFIX_ONLY.match(raw)):
         t = ex.parse_title(f"{ex.QUEUES_OFFERED[0]}: {raw}")
-        c = dict(c, queue=t.queue, client_raw=t.client_raw,
-                 thread_date=t.date.isoformat() if t.date else None,
-                 summary=t.summary, confidence=t.confidence)
-        return ["No tag"] + title_problems(c)
+        # `t.queue or ...` and a call to the half below rather than back to
+        # the top. Recursing looked equivalent and was not: PREFIX_ONLY needs
+        # at least one character after the tag, so an *empty* title probes to
+        # `PROD: `, which does not parse either, which has no queue, which
+        # probes again -- for ever. Clearing the title box in typing mode
+        # took the editor down with a RecursionError.
+        return ["No tag"] + _title_problems_after_tag(dict(
+            c, queue=t.queue or ex.QUEUES_OFFERED[0], client_raw=t.client_raw,
+            thread_date=t.date.isoformat() if t.date else None,
+            summary=t.summary, confidence=t.confidence), raw)
 
+    return _title_problems_after_tag(c, raw)
+
+
+def _title_problems_after_tag(c, raw) -> list:
+    """Everything that can be judged once a tag is known to be there.
+
+    Split from `title_problems` so the tagless probe is one step rather than
+    a call back to the top, which is what made an empty title loop.
+    """
+    # The probe can land on a title that parses perfectly -- one missing only
+    # its tag -- and then there is nothing else to report. This guard lived
+    # at the top of the caller, which the probe path no longer goes through.
+    if (c.get("confidence") or "") == "strict":
+        return []
     out = []
     dated = bool(c.get("thread_date") or "")
 
