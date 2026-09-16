@@ -889,7 +889,11 @@ class DateBox(QDateEdit):
     # is drawn into that space instead. An arrow says "a list drops down
     # here", which is not what happens and not what somebody is looking for
     # when they want to set a date.
-    ARROW_W = 24
+    ARROW_W = 30
+    # The field carries a 1px border and a 5px corner radius, so the widget's
+    # outer edge is not where the button ends. Measured from there the glyph
+    # rode into the rounded corner and looked like it was falling off.
+    EDGE = 3
 
     def paintEvent(self, e):
         super().paintEvent(e)
@@ -899,8 +903,8 @@ class DateBox(QDateEdit):
         pa.setRenderHint(QPainter.Antialiasing, True)
         pa.setPen(pen)
         # A calendar: a page, a torn-off header, and two rings above it.
-        w, h = 12, 12
-        x = self.width() - self.ARROW_W + (self.ARROW_W - w) // 2
+        w, h = 13, 13
+        x = self.width() - self.EDGE - self.ARROW_W + (self.ARROW_W - w) // 2
         y = (self.height() - h) // 2 + 1
         pa.drawRoundedRect(x, y, w, h, 2, 2)
         pa.drawLine(x + 1, y + 4, x + w - 1, y + 4)
