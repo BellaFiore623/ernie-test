@@ -250,6 +250,20 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 
 - Archived means done: a keepalive bot pings live threads every three days,
   so nothing goes quiet by accident.
+- **Unarchiving a thread reopens its card, and the guard asks what *caused*
+  the unarchive.** A bot posting into an archived thread unarchives it as a
+  side effect -- a keepalive ping, Ernie's own correction going back into a
+  thread it closed -- and neither is a person reopening the work. The test
+  was "is the newest message a bot", and Ernie posts "closed this thread in
+  Bert" and **then** archives, so its own message is the newest one in every
+  thread it has ever closed. `thread_reopened` was therefore unreachable for
+  all of them: **zero events in five months** across both boards, which read
+  as nobody ever reopening a ticket. Found when a thread closed in Bert and
+  reopened from Discord's thread menu left the card closed with nothing
+  said. What makes a bot message the cause is arriving **since the last
+  sync of that thread**; one already sitting there while it was archived
+  explains nothing. `tests/check_reopen.py` holds the two apart on timing
+  alone.
 - A thread archived in Discord closes its card, and Ernie has to go looking
   for it: an archived thread is not in the active listing, so
   `reconcile_closures()` asks Discord about each open card that has gone

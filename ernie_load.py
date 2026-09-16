@@ -99,19 +99,43 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
 
     # Detect an archive/unarchive flip before we overwrite the flag. A reopen
     # means someone revived finished work, and Ernie should say so in-thread.
-    was = con.execute("SELECT archived FROM threads WHERE thread_id=?",
-                      (tid,)).fetchone()
+    was = con.execute(
+        "SELECT archived, last_synced_at FROM threads WHERE thread_id=?",
+        (tid,)).fetchone()
     now_archived = int(bool(meta.get("archived")))
     if was is not None and was["archived"] == 1 and now_archived == 0:
-        # A keepalive bot posting into an archived thread unarchives it as a
-        # side effect. That is not a reopen. Only count it if the newest
-        # message came from a human.
-        newest = con.execute(
-            """SELECT is_bot FROM messages WHERE thread_id=?
-               ORDER BY created_at DESC LIMIT 1""", (tid,)).fetchone()
-        if newest is not None and newest["is_bot"]:
-            con.execute("UPDATE threads SET archived=0 WHERE thread_id=?", (tid,))
+        # A bot posting into an archived thread unarchives it as a side
+        # effect -- a keepalive ping, or Ernie's own correction going back
+        # into a thread it had closed. Neither is somebody reopening the
+        # ticket, and neither should put the card back.
+        #
+        # **The test used to be "is the newest message a bot", and it
+        # swallowed every reopen that mattered.** Ernie posts "closed this
+        # thread in Bert" and *then* archives, so its own message is the
+        # newest one in every thread it has ever closed -- making
+        # `thread_reopened` unreachable for all of them. Zero in five months
+        # across both boards, which read as nobody ever reopening a ticket
+        # and was really the guard eating them. Found when a thread closed in
+        # Bert and reopened in Discord left the card closed with nothing
+        # said.
+        #
+        # What makes a bot message the *cause* is arriving since we last
+        # looked at this thread. One that was already sitting there while the
+        # thread was archived explains nothing about why it is open now.
+        caused = con.execute(
+            """SELECT is_bot FROM messages
+                WHERE thread_id=? AND datetime(created_at) > datetime(?)
+                ORDER BY created_at DESC LIMIT 1""",
+            (tid, was["last_synced_at"])).fetchone()
+        if caused is not None and caused["is_bot"]:
+            # The flag goes too: the thread is open, so Ernie is no longer
+            # the reason it was shut, and leaving it set hides a later
+            # closure from reconcile_closures.
+            con.execute("UPDATE threads SET archived=0, archived_by_ernie=0 "
+                        "WHERE thread_id=?", (tid,))
             return tid
+        con.execute("UPDATE threads SET archived_by_ernie=0 WHERE thread_id=?",
+                    (tid,))
         stats["reopened"] = stats.get("reopened", 0) + 1
         con.execute(
             """INSERT OR IGNORE INTO events
