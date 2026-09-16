@@ -301,10 +301,61 @@ def check_a_title_with_no_client_keeps_its_whole_date() -> bool:
     return c.report()
 
 
+def check_changing_one_field_changes_one_field() -> bool:
+    """A title is spliced, never rebuilt.
+
+    The editor used to compose the whole string from the parsed parts, so
+    picking a client normalised everything it passed on the way: `04aug26`
+    came back `04Aug26`, `Thrasher-07Aug26-` gained its spaces, an ISO date
+    became `13Jul26`. Measured across the mirrors, **513 of production's
+    1,164 titles** differ from their own recomposition -- and each rewrite is
+    a real thread rename, two per ten minutes on a budget shared between both
+    machines, posting a system message into a customer thread, for a field
+    nobody edited.
+
+    So `replace_field` swaps the bytes of one named group and copies the rest
+    through untouched. The strongest form of that is the check below: putting
+    a field back to the value it already has may not alter the title at all.
+    """
+    c = Check("changing one field changes one field")
+
+    # The awkward shapes, each with something the parser would have tidied.
+    for name in ("OPS: Trekk - 04aug26 - SSD0129 motor short",
+                 "OPS: Thrasher-07Aug26- EReel-1023 Unknown Issue",
+                 "PROD: MBE - 2026-7-13 - System Sub",
+                 "PROD: Rockton - 8Jun26 -  3-Month Sub"):
+        t = ex.parse_title(name)
+        c.equal(ex.replace_field(name, "client", t.client_raw), name,
+                f"the same client leaves it alone: {name!r}")
+        out = ex.replace_field(name, "client", "Bill Patterson Construction")
+        c.ok("Bill Patterson Construction" in out, "a new client goes in")
+        # Everything that was not the client is still exactly as it was.
+        c.equal(out.replace("Bill Patterson Construction", t.client_raw), name,
+                "and nothing else moved")
+
+    # A client segment that matched nothing still needs its separator, or the
+    # name butts against the date.
+    c.equal(ex.replace_field("PROD: 29Jun26 - Trade show TOF", "client", "Acme"),
+            "PROD: Acme - 29Jun26 - Trade show TOF",
+            "an empty client segment gains a separator with the name")
+
+    # A title with no segments to swap is returned as it stands, which is
+    # what lets the editor say so instead of guessing.
+    c.equal(ex.replace_field("ENG: Retired bots", "client", "Acme"),
+            "ENG: Retired bots", "a title with no client slot is untouched")
+    c.equal(ex.replace_field("", "client", "Acme"), "", "and so is an empty one")
+
+    # The date guard parse_title uses, so an impossible date is not a segment.
+    c.equal(ex.replace_field("PROD: 32Jun26 - bad day", "client", "Acme"),
+            "PROD: 32Jun26 - bad day", "a date that will not parse is not a match")
+    return c.report()
+
+
 CHECKS = (check_a_rename_becomes_the_revision_it_was,
           check_it_cannot_change_what_the_board_shows,
           check_a_familiar_name_still_gets_its_own_date,
           check_only_renames_count,
           check_running_it_twice_changes_nothing,
           check_a_thread_with_no_title_row_is_left_alone,
-          check_a_title_with_no_client_keeps_its_whole_date)
+          check_a_title_with_no_client_keeps_its_whole_date,
+          check_changing_one_field_changes_one_field)

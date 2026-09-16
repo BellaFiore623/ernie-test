@@ -21,7 +21,7 @@ import sys
 import time
 import urllib.parse
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import httpx
 
@@ -30,7 +30,7 @@ import httpx
 # agreement.
 import ernie_extract as ex
 import ernie_version
-from PySide6.QtCore import (QUrl, 
+from PySide6.QtCore import (QUrl, QDate, 
     QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize,
     QStringListModel, Qt, QThread, QTimer, Signal,
 )
@@ -39,7 +39,8 @@ from PySide6.QtGui import (QDesktopServices,
     QPalette, QPen, QPixmap, QPolygonF,
 )
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QCompleter, QDialog, QDialogButtonBox,
+    QApplication, QCheckBox, QComboBox, QCompleter, QDateEdit, QDialog,
+    QDialogButtonBox,
     QFormLayout, QGridLayout,
     QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout,
@@ -834,6 +835,29 @@ def needs_triage(c) -> bool:
 _DATE_RX = re.compile(ex._DATE_TOKEN, re.IGNORECASE)
 
 
+def compose_title(queue, client, date, summary) -> str:
+    """The four fields as the one string Discord actually holds.
+
+    Written out three times before this -- in `_suggest_title`, in
+    `_queue_picked`, and in the template a new ticket starts from -- which is
+    three places for the shape to drift and no way to check it once.
+
+    The round trip is what matters: a title that parses has to survive
+    `compose(*parse(title))` unchanged, or touching any field quietly
+    rewrites something nobody asked to change. Not hypothetical -- `04aug26`
+    becoming `04Aug26` was measured at 29 production cards, each one a real
+    thread rename posting a system message into a customer thread, and it is
+    why composing is never the *only* path to a title.
+    """
+    out = f"{(queue or '').strip()}:"
+    for part in ((client or "").strip(),
+                 title_stamp(date) if date else "",
+                 (summary or "").strip()):
+        if part:
+            out += f" {part} -"
+    return out.rstrip(" -")
+
+
 def title_takes_client(title: str) -> bool:
     """Whether picking a client can reach this title at all.
 
@@ -1003,6 +1027,12 @@ FIELD_LABELS = {"client_override": "the client", "title": "the thread title"}
 
 _MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+# Qt's date control cannot be empty, so its floor stands for "no date" and
+# the field says so with setSpecialValueText. Any real ticket date is above
+# it by a century.
+NO_DATE = QDate(1900, 1, 1)
 
 
 def title_stamp(d):
@@ -3279,17 +3309,40 @@ class Card(QFrame):
             self.f_queue.addItem(here, here)
         self.f_queue.setCurrentIndex(max(self.f_queue.findData(here), 0))
 
+        # A real date control, not another text box. The date is what places
+        # the client -- with none, the parser cannot tell a client from a
+        # summary -- so typing it freely would move the parsing problem here
+        # rather than remove it.
+        self.f_date = QDateEdit()
+        self.f_date.setCalendarPopup(True)
+        self.f_date.setDisplayFormat("d MMM yyyy")
+        # Qt has no empty date, so the floor stands for one. A title with no
+        # date has to be able to say so rather than claim some default.
+        self.f_date.setMinimumDate(NO_DATE)
+        self.f_date.setSpecialValueText("\u2014 none \u2014")
+        self.f_date.setStyleSheet(field())
+        d_date = ex.parse_title(d.get("name") or "").date
+        self.f_date.setDate(QDate(d_date.year, d_date.month, d_date.day)
+                            if d_date else NO_DATE)
+
+        self.f_desc = QLineEdit(ex.parse_title(d.get("name") or "").summary or "")
+        self.f_desc.setStyleSheet(field())
+
         # textEdited fires only for typing, so rebuilding the suggestion below
         # doesn't count as the person taking the title over.
         self.f_title.textEdited.connect(self._title_edited)
         self.f_title.textChanged.connect(self._check_title)
         self.f_queue.currentIndexChanged.connect(self._queue_picked)
         self.f_client.currentTextChanged.connect(self._suggest_title)
+        self.f_date.dateChanged.connect(self._date_picked)
+        self.f_desc.textEdited.connect(self._desc_typed)
         self._check_title()
 
         form.addRow("Thread title", title_holder)
         form.addRow("Tag", self.f_queue)
         form.addRow("Client", client_holder)
+        form.addRow("Date", self.f_date)
+        form.addRow("Description", self.f_desc)
         form.addRow("Work items", self.f_work)
 
         # Only when starting one. Ernie opens the thread, so it posts a line
@@ -3362,53 +3415,113 @@ class Card(QFrame):
         lab.setText(note)
         lab.setVisible(bool(note))
 
-    def _suggest_title(self, _text=None):
-        """Keep the title in step with the client, until someone types in it.
-        """
-        if getattr(self, "_title_touched", True):
+    def _set_title(self, text):
+        """Write the title without the write coming back as an edit."""
+        if text == self.f_title.text():
             return
-        # Rebuild from whatever the box holds now, not from the stored title:
-        # otherwise a queue just chosen from the dropdown gets overwritten the
-        # moment the client is edited.
-        t = ex.parse_title(self.f_title.text().strip())
-        if not title_takes_client(self.f_title.text()):
-            return                  # nothing dependable to rebuild from
-        client = self.f_client.text().strip() or t.client_raw or ""
-        self.f_title.setText(
-            f"{t.queue}: {client} - {title_stamp(t.date)} - {t.summary or ''}")
+        self._syncing = True
+        try:
+            self.f_title.setText(text)
+        finally:
+            self._syncing = False
+
+    def _put(self, field, value):
+        """Splice one field into the title and leave every other byte alone.
+
+        Never rebuilds. The editor used to compose the whole title from the
+        parsed parts, so picking a client also normalised the date and the
+        spacing -- `04aug26` became `04Aug26` -- and 513 of production's
+        1,164 titles differ from their own recomposition. Each of those is a
+        real thread rename at two per ten minutes, posting a system message
+        into a customer thread, for a field nobody edited.
+        """
+        if getattr(self, "_syncing", False):
+            return
+        self._set_title(ex.replace_field(self.f_title.text(), field, value))
+
+    def _fields_from_title(self, t):
+        """The other direction: what the title says, in the fields.
+
+        A field that has focus is left alone. Somebody typing into it is
+        mid-thought, and the title is being rebuilt from what they have typed
+        so far -- pushing the half-parsed answer back at them fights the
+        typing rather than helping it.
+        """
+        self._syncing = True
+        try:
+            if hasattr(self, "f_queue") and not self.f_queue.hasFocus():
+                want = t.queue or ""
+                if self.f_queue.currentData() != want:
+                    self.f_queue.blockSignals(True)
+                    self.f_queue.setCurrentIndex(
+                        max(self.f_queue.findData(want), 0))
+                    self.f_queue.blockSignals(False)
+            if hasattr(self, "f_client") and not self.f_client.hasFocus():
+                want = t.client_raw or ""
+                if self.f_client.text() != want:
+                    self.f_client.blockSignals(True)
+                    self.f_client.setText(want)
+                    self.f_client.blockSignals(False)
+            if hasattr(self, "f_date") and not self.f_date.hasFocus():
+                want = (QDate(t.date.year, t.date.month, t.date.day)
+                        if t.date else NO_DATE)
+                if self.f_date.date() != want:
+                    self.f_date.blockSignals(True)
+                    self.f_date.setDate(want)
+                    self.f_date.blockSignals(False)
+            if hasattr(self, "f_desc") and not self.f_desc.hasFocus():
+                want = t.summary or ""
+                if self.f_desc.text() != want:
+                    self.f_desc.blockSignals(True)
+                    self.f_desc.setText(want)
+                    self.f_desc.blockSignals(False)
+        finally:
+            self._syncing = False
+
+    def _date_picked(self, qd):
+        if qd == NO_DATE:
+            return          # a title has no way to say "no date" but blank
+        self._put("date", title_stamp(date(qd.year(), qd.month(), qd.day())))
+
+    def _desc_typed(self, text):
+        self._put("summary", text.strip())
+
+    def _suggest_title(self, _text=None):
+        """Keep the title in step with the client."""
+        self._put("client", self.f_client.text().strip())
 
     def _queue_picked(self, _index):
         """Put the chosen queue into the title, keeping whatever else is there."""
         q = self.f_queue.currentData()
         if not q:
             return
-        t = ex.parse_title(self.f_title.text().strip())
+        cur = self.f_title.text().strip()
+        t = ex.parse_title(cur)
         if t.confidence in ("strict", "loose"):
-            self.f_title.setText(
-                f"{q}: {t.client_raw} - {title_stamp(t.date)} - {t.summary or ''}")
-        elif t.confidence == "prefix_only":
-            self.f_title.setText(f"{q}: {t.summary or ''}".strip())
-        else:
-            # Nothing parseable to keep, so lay out the standard shape from the
-            # fields.
-            client = self.f_client.text().strip() or "Client"
-            today = datetime.now(timezone.utc).date()
-            self.f_title.setText(
-                f"{q}: {client} - {title_stamp(today)} - what it's about")
+            self._put("queue", q)
+            return
+        # No date, so there are no segments to splice -- but there is still
+        # text somebody typed, and the tag goes on the front of it. This used
+        # to lay out `TAG: Client - today - what it's about` over the top,
+        # which threw away whatever was there: picking a tag on
+        # `Thrasher - Trade show TOF` lost the lot. Losing what somebody typed
+        # is the worse failure, and the card already says what is still
+        # missing.
+        m = ex.PREFIX_ONLY.match(cur)
+        rest = m.group("rest") if m else cur
+        self._set_title(f"{q}: {rest}".rstrip())
 
     def _check_title(self, _text=None):
         # The note under the Client box depends on the title as well as
         # the box, so editing the title has to re-ask it.
         self._say_client()
         t = ex.parse_title(self.f_title.text().strip())
-        # Keep the dropdown showing whatever the title actually says, including
-        # when the person types a different prefix by hand.
-        if hasattr(self, "f_queue"):
-            want = t.queue or ""
-            if self.f_queue.currentData() != want:
-                self.f_queue.blockSignals(True)
-                self.f_queue.setCurrentIndex(max(self.f_queue.findData(want), 0))
-                self.f_queue.blockSignals(False)
+        # Every field shows whatever the title actually says, including when
+        # the person types a different prefix by hand. Both directions are
+        # live, so somebody who would rather type never has to look at the
+        # fields and somebody who would rather pick never has to type.
+        if not getattr(self, "_syncing", False):
+            self._fields_from_title(t)
         if t.confidence in ("strict", "loose"):
             self.title_state.setText(
                 f"<span style='color:{T.OK_FG}'>✓</span> "
