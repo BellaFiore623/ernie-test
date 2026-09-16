@@ -650,16 +650,13 @@ def check_the_feed_can_be_resized() -> bool:
          "and neither can be collapsed away to nothing by dragging")
 
     fit = _method("_fit_feed")
-    # Rows are still held to one height -- that is a different question, and
-    # what stops an undo shifting the list. It is the panel that must not be.
+    # Rows are still held to one height -- a different question, and what
+    # stops an undo shifting the list. It is the panel that must not be.
     #
-    # **Not even folded.** This used to require exactly one setFixedHeight,
-    # on the folded branch, on the grounds that a folded feed is not something
-    # to drag open. Both halves of that were wrong in the same way the side
-    # panels were wrong before them: a fixed widget gives the handle nothing
-    # to move, and the handle is still sitting right there against the
-    # caption. Folded is a *minimum* now, with the maximum left open so the
-    # handle can pull it back out.
+    # Not even folded, which is the rule the side panels already follow: a
+    # fixed widget gives the handle nothing to move, and the handle sits
+    # right there against the caption. Folded is a minimum with the maximum
+    # left open, so a drag can pull it back out.
     fixed = [n for n in ast.walk(fit)
              if isinstance(n, ast.Call)
              and getattr(n.func, "attr", None) == "setFixedHeight"
@@ -697,18 +694,12 @@ def check_the_feed_can_be_resized() -> bool:
     c.ok("_folded_height" in body,
          "taking the pane down to the spine when the feed is folded")
 
-    # **And the spine is measured, not counted.** FEED_FOLDED was 30, chosen
-    # when the control on that header was a caret in an 11px label -- about
-    # 14px, which fitted inside the panel's 6 and 8 of margin with two to
-    # spare. The 24px fold button that replaced it did not, so the panel was
-    # pinned eight pixels shorter than its own contents and the button was
-    # clipped along its top edge. Reported as the collapse button being cut
-    # off, and cut off at every window size, which is the signature of a
-    # fixed height: wrong by the same amount everywhere.
-    #
-    # "A hand-counted fixed height clips in silence" is the reasoning at the
-    # top of _fit_feed about the rows. This is that same sentence one layout
-    # up, so the answer is the same one: ask the caption.
+    # The spine is measured, not counted. FEED_FOLDED was a hand-counted 30,
+    # sized for a caret in an 11px label; the 24px fold button that replaced
+    # it did not fit, so the panel was pinned shorter than its own contents
+    # and the button was clipped -- at every window size, which is the
+    # signature of a fixed height. `_folded_height()` asks the caption and
+    # keeps FEED_FOLDED as a floor.
     folded = _method("_folded_height")
     c.ok(folded is not None, "the folded height is worked out, not written down")
     fbody = ast.get_source_segment(src, folded) or "" if folded else ""

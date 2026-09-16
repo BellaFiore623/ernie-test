@@ -368,20 +368,14 @@ def main() -> None:
     # question asked of it is always "what did *this* start do".
     if log is not None:
         say("\n=== " + time.strftime("%Y-%m-%d %H:%M:%S") + " ===")
-    # **Create the database before anything can race for it.**
-    # `ernie_api.db()` opens read-only -- `mode=ro` cannot create a file that
-    # is not there -- and the API, the sync and the outbox threads all start
-    # in the same instant. On a machine that has never run this there is no
-    # file yet, so whoever arrives first loses: the API dies on a database
-    # that does not exist, or the sync cannot take the write lock
-    # `schema.sql` wants because a reader already has the file open. Both
-    # failures land in a thread, so the board opens, empty, and stays empty
-    # with the traceback in a log.
-    #
-    # Every installation meets this exactly once, on its first run -- which
-    # is the worst possible place for it, and the one case that testing
-    # against a database you already have can never reach. Found on a real
-    # first install, five runs in a row, after the build shipped.
+    # Create the database before anything can race for it. `ernie_api.db()`
+    # opens `mode=ro`, which cannot create a missing file, and the API, sync
+    # and outbox threads all start in the same instant -- so on a machine
+    # that has never run this, whoever arrives first loses: the API dies on a
+    # database that is not there, or the sync cannot take the write lock
+    # `schema.sql` wants because a reader already holds the file. Both land
+    # in a thread, so the board opens empty and stays empty with the
+    # traceback in a log. Every install meets it exactly once, on first run.
     load.connect(db).close()
 
     say(f"ernie_app {ernie_version.describe()}")
@@ -401,18 +395,14 @@ def main() -> None:
         if not outbox_client.writes_allowed:
             say("           nothing will post: set ALLOW_DISCORD_WRITES to "
                 "this guild id to go live")
-    # **Registering the watched channels belongs to `ernie_sync.main()`, and
-    # nothing here was calling it.** `ernie_app` runs `ernie_sync.run()`
-    # directly, one layer below the CLI that reads CARD_CHANNEL_IDS and
-    # HISTORY_CHANNEL_IDS into `watched_channels` -- so on every machine this
-    # was developed on it was already right, because the rows were put there
-    # by `run.sh` months ago. On a database that has never seen the CLI, the
-    # sync watches nothing, finds nothing, and the board stays empty for
-    # ever. No error: there is genuinely nothing to report about a list of
-    # channels that is legitimately empty.
+    # Registering the watched channels belongs to `ernie_sync.main()`, and
+    # this runs `ernie_sync.run()` directly -- one layer below the CLI that
+    # reads CARD_CHANNEL_IDS and HISTORY_CHANNEL_IDS into `watched_channels`.
+    # Without it a database that has never seen the CLI watches nothing,
+    # finds nothing, and the board stays empty for ever, with no error to
+    # report: an empty channel list is legitimately empty.
     #
-    # On the main thread, before any loop starts, for the same reason the
-    # database is opened there.
+    # On the main thread, before any loop, like the database open above.
     if sync_client is not None:
         con = load.connect(db)
         try:

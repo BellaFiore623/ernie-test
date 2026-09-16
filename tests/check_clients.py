@@ -460,14 +460,15 @@ def check_a_red_card_says_what_is_wrong_with_it():
                     "thread_date": None, "summary": None, "name": empty}),
                 ["No title"], f"an empty title answers rather than loops: {empty!r}")
 
-    # It is also refused at save, rather than discovered in the outbox:
-    # Discord will not take a nameless thread, so it would have gone out,
-    # come back 4xx, burned its five attempts and settled on the card as
-    # "Not sent" for something answerable the moment it was typed.
-    # The dash in the Tag dropdown is an entry, and an entry is something you
-    # can pick, so picking it has to do what it says. It used to return
-    # early: the tag stayed in the title and the dropdown snapped back to it
-    # on the next pass, which reads as the control being broken.
+    # Refused at save too, rather than discovered in the outbox: Discord will
+    # not take a nameless thread, so it would go out, come back 4xx, burn its
+    # five attempts and settle on the card as "Not sent" -- for something
+    # answerable the moment it was typed.
+
+    # The dash in the Tag dropdown is an entry, and an entry is something
+    # you can pick, so picking it takes the tag off rather than returning
+    # early -- which left the tag in the title and the dropdown snapping back
+    # to it on the next pass.
     picked = inspect.getsource(bert.Card._queue_picked)
     # Picking it clears the tag rather than doing nothing: the clearing
     # call is the evidence, since a bare `return` leaves no trace to

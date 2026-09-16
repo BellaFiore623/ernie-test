@@ -29,19 +29,16 @@ import pathlib
 # other place that names a version imports this one.
 VERSION = "0.9.4"
 
-# The oldest Bert this Ernie will work with. **Raised by hand, on a release
-# that actually breaks something** -- not automatically, and not to match
-# VERSION. Everything between this and VERSION is a Bert that is behind and
-# still perfectly able to work, which is most of them: routes are added far
-# more often than they change shape, and Bert already survives a missing
-# `/stats` or `/clients/roster` without failing the poll the board depends
-# on.
+# The oldest Bert this Ernie will work with. Raised by hand, on a release
+# that actually breaks something -- never automatically, and never to match
+# VERSION. Everything between the two is a Bert that is behind and still
+# perfectly able to work, which is most of them: routes are added far more
+# often than they change shape, and Bert survives a missing `/stats` or
+# `/clients/roster` without failing the poll the board depends on.
 #
-# The alternative was refusing anything that is not exactly VERSION, and it
-# is the wrong rule for this project: `describe()` carries the commit, people
-# run from source, and every push would lock the other laptop out of a board
-# it can read perfectly well. This way "you cannot use Bert unless it is up
-# to date" is true when somebody decides it needs to be.
+# Refusing anything that is not exactly VERSION would lock the other laptop
+# out on every push, with people running from source. This way "you cannot
+# use Bert unless it is up to date" is true when somebody decides it is.
 MIN_BERT = "0.9.0"
 
 

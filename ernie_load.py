@@ -38,23 +38,19 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# **Columns added to a table that already exists somewhere.**
+# Columns added to a table that already exists somewhere.
 #
-# `schema.sql` is all CREATE TABLE IF NOT EXISTS, which creates tables and can
-# never alter one -- so a database made before a column was added simply never
-# grows it. From a checkout that is what `migrations/` is for: a script, run
-# by hand, by somebody with a shell.
-#
-# **A shipped exe has no shell**, and the person running it has an installer
-# and a Start-menu shortcut. Found the hard way, on the first release that
-# added a column after the build went out: the sync died with `no such column`
-# and the API refused to start, on a machine whose only repair tool was the
-# thing that would not start. Every future column would have done the same.
+# `schema.sql` is all CREATE TABLE IF NOT EXISTS: it creates tables and can
+# never alter one, so a database made before a column was added never grows
+# it. From a checkout that is what `migrations/` is for -- a script run by
+# hand -- and a shipped exe has no shell to run one in, so the sync dies with
+# `no such column` and the API refuses to start, on a machine whose only
+# repair tool is the thing that will not start.
 #
 # So the application adds them itself, on every open, idempotently. Only
-# columns added *after* the first shipped build belong here -- everything
-# before it is already in `schema.sql`, and a database new enough to be an
-# installed one was created from that.
+# columns added *after* the first shipped build belong here: everything
+# before it is in `schema.sql`, which is what any installed database was
+# created from.
 ADDED_COLUMNS = (
     ("release_seen", "minimum", "TEXT NOT NULL DEFAULT ''"),
 )
@@ -205,20 +201,17 @@ def load_messages(con: sqlite3.Connection, tid: str, msgs: list, stats: dict) ->
         if cur.rowcount:
             stats["messages_new"] += 1
         elif m.get("type") is not None:
-            # A row that was already here gets its `type` filled in, and only
-            # that. It is what makes a re-read a backfill: every message in
-            # the mirror was written before the column existed, and the type
-            # is not derivable from anything stored -- it can only be fetched
-            # again. Left to OR IGNORE alone those rows would stay NULL for
-            # ever however many times they were read, so the history before
-            # today would have been lost to a keyword.
+            # A row that is already here gets its `type` filled in, and only
+            # that. It is what makes a re-read a backfill: the type cannot be
+            # derived from anything stored, so a row written before the column
+            # existed can only be given one by fetching it again, and OR
+            # IGNORE alone would leave it NULL however often it was read.
             #
-            # Nothing else is touched. The mirror is append-only, and a name
-            # or a timestamp reading differently on a second fetch is Discord
-            # being mutable rather than us being wrong. The update is its own
-            # statement rather than an upsert clause because an upsert that
-            # updates still reports `rowcount` 1, which would have counted
-            # every backfilled row as a new message.
+            # Nothing else is touched, because the mirror is append-only and a
+            # name reading differently on a second fetch is Discord being
+            # mutable rather than us being wrong. Its own statement rather
+            # than an upsert clause: an upsert that *updates* still reports
+            # `rowcount` 1, and that counter is what says a message is new.
             con.execute(
                 "UPDATE messages SET type=? WHERE message_id=? AND type IS NULL",
                 (m.get("type"), mid))

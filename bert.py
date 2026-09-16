@@ -634,22 +634,16 @@ def build_standing(mine, theirs, floor, newest="", required=""):
     if not theirs and not newest:
         return "ok", ""
 
-    # **`floor` cannot answer this in the exe either**, and for the same
-    # reason `theirs` could not: it is this build's own MIN_BERT, compared
-    # against this build's own VERSION, and `check_version.py` keeps MIN_BERT
-    # at or below VERSION precisely so a release cannot lock everyone out. So
-    # in one process the blocked branch was structurally unreachable -- fully
-    # written, fully tested, and impossible to arrive at. `required` is the
-    # floor the release note sets, which is the only one outside this process.
+    # `required` is the floor the release note set, and the only one that
+    # comes from outside this process: MIN_BERT is this build's own, against
+    # this build's own VERSION, and check_version.py keeps it at or below --
+    # so in one process the blocked branch is unreachable by construction.
     #
-    # The guard is repeated here rather than trusted from the parser. That one
-    # runs where the note is read; this one runs where the board is taken
-    # away, and a floor ahead of a build nobody can download has no recovery
-    # in the field -- there is no newer build to install, and the boards that
-    # would have told somebody are the ones that went read-only.
-    # Obeyed only when a build that satisfies it is known to exist. Not
-    # knowing what can be downloaded is the same case as the floor being out
-    # of reach, and both resolve the same way: leave the board alone.
+    # Refused here as well as in the parser. That one runs where the note is
+    # read; this runs where the board is taken away, and a floor ahead of a
+    # build nobody can download has no recovery in the field. So it is obeyed
+    # only when a build satisfying it is known to exist -- not knowing what
+    # can be downloaded is the same case, and resolves the same way.
     if required and newest and not ernie_version.is_older(newest, required):
         if not floor or ernie_version.is_older(floor, required):
             floor = required
@@ -714,21 +708,17 @@ class UpdateDialog(QDialog):
         head.setStyleSheet(f"color:{T.INK}; background:transparent;")
         said.addWidget(head)
 
-        # **Where it goes belongs in the sentence, not in the layout.** It
-        # was a line of its own under the buttons and there is no good place
-        # for it there: the two states put the buttons in opposite orders --
-        # blocked leads with *Get the new build* because that is the person
-        # who has to act -- so a caption under them sat beneath whichever
-        # button it was not describing, and moving it onto the row left it
-        # reading as a label for both.
+        # Where it goes belongs in the sentence rather than the layout: as a
+        # line under the buttons it has to pick a side, and the two states
+        # order those buttons oppositely, so it sat under whichever one it
+        # was not describing. As a parenthesis it is the last thing the
+        # paragraph says, which is what it is.
         #
-        # As a parenthesis it is simply the last thing the paragraph says,
-        # which is what it is: a note about what the button will do. The host
-        # comes off the address rather than being written down, because
-        # `BERT_UPDATE_URL` is published by Ernie exactly so the download can
-        # move without anybody rebuilding Bert -- "Google Drive" typed in
-        # here would become a lie the day it moves, and the kind nobody
-        # notices because the button still works.
+        # The host comes off the address rather than being written down.
+        # `BERT_UPDATE_URL` is published by Ernie precisely so the download
+        # can move without anybody rebuilding Bert, so "Google Drive" typed
+        # here becomes a lie the day it moves -- and the kind nobody notices,
+        # because the button still works.
         if url:
             # Named, because a bare "Opens ..." leaves the reader to work
             # out which of the two buttons it is about -- and the other one
@@ -5574,21 +5564,15 @@ class Bert(QMainWindow):
         board.setMaximumWidth(BOARD_MAX + BOARD_PAD * 2)
         self.scroll.setWidget(board)
 
-        # The column is centred by capping the *scroll area* and letting two
-        # spacers take the rest, not by centring the column inside a
-        # full-width scroll area. The difference is where the scrollbar ends
-        # up: left to fill the pane, the area keeps its bar at the pane's own
-        # edge, so with the running order folded the board sat 116px in from
-        # the left and its scrollbar sat 160px out to the right of it, hard
-        # against the figures panel and reading as though it belonged to
-        # them. This is the rule `feed_scroll` already follows for the same
-        # reason -- the cap goes on the scroll area so its bar comes to the
-        # cap with it.
+        # The cap goes on the *scroll area*, not on the column inside it, so
+        # the area's scrollbar comes to the cap with it. Left to fill the
+        # pane, the bar stays out at the pane's own edge -- with the running
+        # order folded it sits well right of the board it belongs to, hard
+        # against the figures panel. The rule `feed_scroll` already follows.
         #
-        # A stretch factor, **not** an alignment flag: `addWidget(scroll,
-        # alignment=...)` makes a scroll area take its own sizeHint, which is
-        # small, cap or no cap. With a factor it expands to the cap and the
-        # spacers split what is left, evenly, which is the centring.
+        # Added by stretch factor, never by an alignment flag: a scroll area
+        # added with one takes its own sizeHint, which is small, cap or no
+        # cap. With a factor it reaches the cap and the spacers centre it.
         self.board_holder = QWidget()
         self.board_holder.setObjectName("boardHolder")
         self.board_holder.setAttribute(Qt.WA_StyledBackground, True)
@@ -6415,22 +6399,14 @@ class Bert(QMainWindow):
                     if lab is not None:
                         need = lab.heightForWidth(max(lab.width(), 1))
                         lab.setMinimumHeight(need)
-                    # Never shorter than it was closed. A row with no Undo
-                    # button is smaller than the height they are all held to,
-                    # so letting it take its natural size pulled everything
-                    # below it upward -- opening a line to read four more
-                    # characters moved the list under the pointer. Opening
+                    # Never shorter than it was closed, and it keeps the
+                    # slack a closed row carries. A row with no Undo button is
+                    # smaller than the height they are all held to, so its
+                    # natural size pulls everything below it upward; and a
+                    # closed row's height comes from the taller Undo column
+                    # with the label top-aligned, so there is room under the
+                    # words an exactly-sized open row would lose. Opening one
                     # either changes nothing or adds the lines it needs.
-                    #
-                    # Plus the slack a closed row carries. A closed row is
-                    # _feed_row_h tall around one line of text -- the height
-                    # comes from the taller Undo column beside it, and the
-                    # label is top-aligned, so there is room under the words.
-                    # An open row set to exactly what its label needs has
-                    # none, and its last line sits that much closer to the
-                    # row below than every other line on the board does. It
-                    # reads as the row squeezing into the gap rather than the
-                    # list making space for it.
                     r.setMinimumHeight(max(self._feed_row_h, need + slack))
                     r.setMaximumHeight(UNCAPPED)
                 else:
