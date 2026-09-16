@@ -15,6 +15,8 @@ import pathlib
 
 from support import Check
 
+import inspect
+
 import bert
 
 
@@ -457,7 +459,51 @@ def check_the_missed_redraw_is_not_lost() -> bool:
     return c.report()
 
 
-CHECKS = (check_free_board, check_editor_holds, check_drag_still_holds,
+def check_a_closing_editor_asks_to_be_looked_at() -> bool:
+    """Saving an edit must not lose the card you were editing.
+
+    An open editor is roughly twice the height of the card under it --
+    measured, 276px against 138 on a ticket with three work items -- so while
+    it is open the view is usually somewhere *inside* it. `exit_edit` rebuilds
+    the card short, and the scroll anchor is only read afterwards, by which
+    time that pixel offset points at whatever fell into the space. Reported as
+    saving an edit and having to scroll around to find the ticket again.
+
+    `_focus_card` is the request, and it has to be honoured *after* the
+    anchor correction rather than before, or the correction undoes it.
+    """
+    c = Check("a closing editor asks to be looked at")
+
+    exit_src = inspect.getsource(bert.Card.exit_edit)
+    hold = inspect.getsource(bert.Bert._hold_scroll)
+
+    c.ok("_focus_card" in exit_src,
+         "the editor asks for its card on the way out")
+    c.ok("_focus_card" in hold,
+         "and the scroll handling knows about the request")
+
+    # Order is the whole of it: the anchor moves the bar, and the reveal has
+    # to come after that or it is immediately corrected away.
+    after_bar = hold.rsplit("bar.setValue", 1)[-1]
+    c.ok("_focus_card" in after_bar,
+         "honoured after the bars are put back, not before")
+    c.ok("self._focus_card = None" in hold or "_focus_card, None" in hold,
+         "and cleared once used, so it lands on one render rather than "
+         "pinning the view for ever")
+
+    # A quiet board renders nothing, so the request needs a way out.
+    c.ok("reveal" in exit_src,
+         "with a fallback for a board that had nothing to redraw")
+
+    c.equal(bert.Bert._focus_card if isinstance(
+                getattr(bert.Bert, "_focus_card", None), str) else None, None,
+            "and it is not a class attribute somebody could leave set")
+
+    return c.report()
+
+
+CHECKS = (check_a_closing_editor_asks_to_be_looked_at,
+          check_free_board, check_editor_holds, check_drag_still_holds,
           check_other_hold_reparks, check_stale_hold_dropped,
           check_render_keeps_your_place,
           check_the_place_is_a_card_not_a_number,

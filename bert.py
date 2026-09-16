@@ -3788,8 +3788,19 @@ class Card(QFrame):
         self._clear()
         self._paint()
         self._build_view()
+        # Come back to this card. The rebuild above has already halved its
+        # height, so whatever the view was looking at inside the editor is
+        # gone; without this the scrollbar keeps its number and lands on
+        # some other ticket entirely.
+        self.board._focus_card = self.thread_id
         # Redrawing is safe again now the editor is gone.
         self.board.apply_pending()
+        # apply_pending only renders when there is something to draw. With a
+        # quiet board nothing calls put_back, so nothing would consume the
+        # request.
+        if self.board._focus_card:
+            self.board._focus_card = None
+            QTimer.singleShot(0, lambda: self.board.reveal(self.thread_id))
 
     def _override(self) -> str:
         """What the Client box means as a client_override.
@@ -5475,6 +5486,10 @@ class Bert(QMainWindow):
         # A rebuild render() had to skip because an editor was open, so
         # closing it draws what was missed rather than waiting for a poll.
         self._bands_stale = False
+        # A card the next settled layout should land on, set by an
+        # editor closing. Outranks the scroll anchor for that one
+        # render, then clears itself.
+        self._focus_card = None
         self.sharing = None         # its sharing block, or None if solo
         self.health_at = 0.0        # when that payload arrived, so both ages
                                     # off it go on counting between polls
@@ -8012,6 +8027,19 @@ class Bert(QMainWindow):
                 if moved:
                     bar.setValue(
                         max(0, min(bar.value() + moved, bar.maximum())))
+
+            # An editor that has just closed asks to be looked at, and that
+            # outranks the anchor. Closing one halves the card -- measured at
+            # 276px down to 138 on a ticket with three work items -- and while
+            # it was open the view was somewhere inside it, so the pixel the
+            # anchor restores now points at whatever fell into that space.
+            # Reported as saving an edit and having to go and find the card.
+            #
+            # Last, because it has to beat the correction above rather than be
+            # undone by it.
+            if self._focus_card:
+                tid, self._focus_card = self._focus_card, None
+                self.reveal(tid)
 
         # Not yet: the layout hasn't settled, so maximum() is still the old one.
         QTimer.singleShot(0, put_back)
