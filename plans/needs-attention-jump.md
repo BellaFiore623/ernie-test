@@ -84,26 +84,27 @@ Which of these to take is the whole design; the code is small either way.
    is the same discourtesy by another route. Suggest the control does nothing
    while an editor is open, and says why on hover.
 
-## The caveat that may matter more than the feature
+## The caveat, raised and answered
 
-Two of the three cards on the board today can never be fixed.
-`ENG: Retired bots` and `ENG: Orange Cable Recall - Client list` are holding
-threads rather than customer tickets. They have no date and no client because
-there is no date and no client, so they will wear the red edge for ever and
-this control will cycle you back to them every time.
+Two of the three cards looked unfixable: `ENG: Retired bots` and
+`ENG: Orange Cable Recall - Client list` are holding threads rather than
+customer tickets, with no date and no client, so they would wear the red edge
+for ever and this control would cycle back to them every time.
 
 A control that keeps pointing at something nobody can act on is a nag, and a
 nag is a thing people learn to click past -- which costs the real one its
-signal. So either:
+signal.
 
-- something that dismisses a card from the set, which means a new column and a
-  decision about whether dismissal survives a retitle; or
-- accept that the board has threads that are not tickets, and give them a way
-  to say so. That is the larger and probably better answer, and it is not this
-  plan.
+Answered 2026-09-16, and against the suggestion: Julian's position is that
+every thread should carry the proper title format and the ENG ones are not an
+exception. They stay flagged until somebody retitles them. So there is no
+dismissal to build and no "not a ticket" state to invent -- the three cards
+are three cards to fix, and the control is pointing at exactly what it should
+be pointing at.
 
-Worth deciding which before building, because the first is cheap and the
-second makes this control unnecessary for two of its three current uses.
+Which also means the count is expected to reach nought, and the control is
+expected to disappear. That is the design working rather than a state nobody
+thought about.
 
 ## Verification
 
