@@ -3477,12 +3477,12 @@ class Card(QFrame):
         form.addRow("Description", self.f_desc)
         form.addRow("Work items", self.f_work)
 
-        if self._entry == "typing":
-            for w in (self.f_queue, client_holder, self.f_date, self.f_desc):
-                lab = form.labelForField(w)
-                if lab is not None:
-                    lab.hide()
-                w.hide()
+        # Kept, because hiding a row is easy and putting it back needs to know
+        # what was hidden. The mode can change under an open editor.
+        self._guided_rows = [(form.labelForField(w), w) for w in
+                             (self.f_queue, client_holder, self.f_date,
+                              self.f_desc)]
+        self._show_guided_rows(self._entry == "guided")
         # Work items stay in both: they are not part of the title, and the
         # people who type titles still tick bubbles.
 
@@ -3555,6 +3555,28 @@ class Card(QFrame):
         note = "\n".join(x for x in lines if x)
         lab.setText(note)
         lab.setVisible(bool(note))
+
+    def _show_guided_rows(self, on):
+        for lab, w in getattr(self, "_guided_rows", []):
+            if lab is not None:
+                lab.setVisible(on)
+            w.setVisible(on)
+
+    def set_entry_mode(self, mode):
+        """Switch an already-open editor between typing and guided.
+
+        Settings can be opened while a card is being edited, and `render()`
+        deliberately spares the bands in that case -- so without this the
+        editor kept the mode it was built with and the change looked like it
+        had not taken. It costs a row of visibility and one `_check_title`,
+        because both modes are the same editor: nothing about what saving
+        does depends on which is showing.
+        """
+        if mode == getattr(self, "_entry", None) or not self.editing:
+            return
+        self._entry = mode
+        self._show_guided_rows(mode == "guided")
+        self._check_title()
 
     def _set_title(self, text):
         """Write the title without the write coming back as an edit."""
@@ -6647,6 +6669,12 @@ class Bert(QMainWindow):
             self.settings.pop("first_name", None)
             self.settings.pop("last_name", None)
             self.save_settings()
+            # An editor open right now was built in the old mode, and the
+            # render below spares the bands it lives in.
+            if self.editing_card:
+                w = self._card_widget(self.editing_card)
+                if w is not None and hasattr(w, "set_entry_mode"):
+                    w.set_entry_mode(vals.get("entry") or ENTRY_DEFAULT)
             # Only if the board is not already showing it -- after a preview
             # it is, and rebuilding again would be a second flicker for
             # nothing.

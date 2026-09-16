@@ -564,6 +564,18 @@ def check_the_entry_modes_are_one_editor_with_a_preference():
     c.ok("else:" in inspect.getsource(bert.Card._check_title),
          "and typing states its own case rather than inheriting guided's")
 
+    # Settings can be opened while a card is being edited, and render()
+    # deliberately spares the bands an editor lives in -- so an open editor
+    # kept the mode it was built with and the change looked like it had not
+    # taken. Both halves of applying a mode are re-runnable for that.
+    c.ok(hasattr(bert.Card, "set_entry_mode"),
+         "an open editor can be switched between the two")
+    c.ok(hasattr(bert.Card, "_show_guided_rows"),
+         "and the rows can be shown again, not only hidden")
+    settings_src = inspect.getsource(bert.Bert.open_settings)
+    c.ok("set_entry_mode" in settings_src,
+         "and accepting Settings tells whichever editor is open")
+
     # The condition the editor uses to decide whether the box is a preview is
     # the same one that decides whether a field can reach the title at all.
     for title, editable in (("PROD: Thrasher - 03Aug26 - x", False),
