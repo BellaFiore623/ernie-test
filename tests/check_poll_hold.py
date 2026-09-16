@@ -52,6 +52,9 @@ class FakeBert:
     def _tick_freshness(self):
         pass
 
+    def _tick_wal(self):
+        pass
+
     def _tick_invented(self):
         # Whether the figures include an invented past is a different
         # question from what on_loaded does with a payload, and it is checked

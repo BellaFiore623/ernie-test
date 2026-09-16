@@ -154,6 +154,65 @@ def mark(con, event_id: str, message_id: str | None) -> None:
         " VALUES (?,?,?)", (event_id, message_id, now_iso()))
 
 
+def claim(con, event_id: str) -> None:
+    """Take a line out of `pending` before posting it, not after.
+
+    The order used to be post, then record, then commit -- and the comment
+    said "a failure halfway repeats nothing", which is true of a failure
+    *between* lines and false of one inside a line. When the database was
+    locked, `mark()` raised after the message had already reached Discord,
+    nothing was written, and `pending()` handed the same event back on the
+    next pass. It posted the same completion **seven times** into a channel
+    whose whole job is to be a durable record.
+
+    So the row goes in first, with a NULL message_id, which is enough to take
+    the event out of `pending()`. `retracted()` already requires
+    `message_id IS NOT NULL`, so a claimed-but-unrecorded line is skipped by
+    the strike-through path rather than breaking it.
+
+    This is `post_one`'s shape, one channel along: claim, write, record.
+    """
+    con.execute(
+        "INSERT OR REPLACE INTO changelog_sent (event_id, message_id, sent_at)"
+        " VALUES (?,NULL,?)", (event_id, now_iso()))
+    con.commit()
+
+
+def release(con, event_id: str) -> bool:
+    """Undo a claim whose post never landed, so the line is tried again.
+
+    The one case that must not be got wrong: if this fails too -- the lock
+    that broke the write is usually still there -- the line is left claimed
+    and will never be posted. That is a lost line rather than a duplicated
+    one, which is the better of the two for a record, and it is reported
+    rather than swallowed.
+    """
+    try:
+        con.execute("DELETE FROM changelog_sent WHERE event_id=? "
+                    "AND message_id IS NULL", (event_id,))
+        con.commit()
+        return True
+    except Exception as err:
+        print(f"  changelog: {event_id[:8]} claimed but neither posted nor "
+              f"released -- {err}. That line will not be logged.",
+              file=sys.stderr)
+        return False
+
+
+def unresolved(con, limit: int = BATCH) -> list:
+    """Claims that never got a message id.
+
+    Either the post failed and the release failed with it, or the recording
+    failed after a successful post. The two are not tellable apart from here,
+    which is exactly why they are reported for a person to look at instead of
+    being retried -- retrying is how the duplicates happened.
+    """
+    return con.execute(
+        "SELECT event_id, sent_at FROM changelog_sent "
+        "WHERE message_id IS NULL ORDER BY sent_at LIMIT ?",
+        (limit,)).fetchall()
+
+
 def retracted(con, limit: int = BATCH) -> list:
     """
     Lines already posted that have since been undone.
@@ -229,16 +288,40 @@ def drain(d: Discord, cid: str, con) -> dict:
             break
 
     for e in pending(con):
+        # Claimed before the post, so a failure anywhere after this cannot
+        # hand the same event back next pass. See claim().
+        try:
+            claim(con, e["event_id"])
+        except Exception as err:
+            print(f"  changelog: {e['event_id'][:8]} could not be claimed "
+                  f"-- {err}", file=sys.stderr)
+            failed += 1
+            break                 # nothing posted, so nothing to undo
         try:
             msg = d.write("POST", f"/channels/{cid}/messages", content=render(e))
-            mark(con, e["event_id"], msg.get("id"))
-            con.commit()          # per line: a failure halfway repeats nothing
-            sent += 1
         except Exception as err:
             print(f"  changelog: {e['event_id'][:8]} failed -- {err}",
                   file=sys.stderr)
+            release(con, e["event_id"])
             failed += 1
             break                 # channel is unhappy; try again next pass
+        try:
+            mark(con, e["event_id"], msg.get("id"))
+            con.commit()
+        except Exception as err:
+            # The message is in Discord. The claim stands, so it cannot be
+            # posted twice; what is lost is the id a later strike-through
+            # would have edited.
+            print(f"  changelog: {e['event_id'][:8]} posted but its id was "
+                  f"not recorded -- {err}. It cannot be struck through.",
+                  file=sys.stderr)
+        sent += 1
+
+    for row in unresolved(con):
+        print(f"  changelog: {row['event_id'][:8]} claimed at "
+              f"{row['sent_at'][:19]} with no message id -- it may or may not "
+              f"have been posted, so it is left alone", file=sys.stderr)
+
     return {"sent": sent, "failed": failed, "struck": struck}
 
 

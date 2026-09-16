@@ -37,6 +37,7 @@ import check_version                          # noqa: E402
 import check_state
 import check_closures
 import check_close_rule
+import check_wal
 import check_sync_beats                                           # noqa: E402
 
 MODULES = {"app": check_app,
@@ -54,6 +55,7 @@ MODULES = {"app": check_app,
            "beats": check_sync_beats,
            "closures": check_closures,
            "closerule": check_close_rule,
+           "wal": check_wal,
            "msgtype": check_message_type,
            "titles": check_title_history,
            "retry": check_outbox_retry}

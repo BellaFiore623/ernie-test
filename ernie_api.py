@@ -532,6 +532,30 @@ def root():
 
 
 @app.get("/health")
+def wal_state() -> dict:
+    """How big the write-ahead log is against the database it belongs to.
+
+    A reader that never lets go pins the WAL, the WAL stops checkpointing and
+    grows without bound, and writers start timing out -- and until they do,
+    nothing says a word. It has happened twice: 6.59 MB against 4.58 MB the
+    first time, 33 MB against 4.68 MB the second, where it took a Complete
+    four and a half minutes to reach a thread and made the change log post
+    one line seven times.
+
+    Reported rather than judged here: `ratio` is the number, and what counts
+    as too big is Bert's to decide and a person's to act on. A WAL larger
+    than its own database is the shape to watch, since a healthy one
+    checkpoints back to nothing every few seconds.
+    """
+    try:
+        main = os.path.getsize(DB)
+        wal = os.path.getsize(DB + "-wal") if os.path.exists(DB + "-wal") else 0
+    except OSError:
+        return None
+    return {"db_bytes": main, "wal_bytes": wal,
+            "ratio": round(wal / main, 2) if main else 0.0}
+
+
 def health():
     """Is Ernie alive, and how stale is the mirror?"""
     con = db()
@@ -678,6 +702,9 @@ def health():
             "synced_at": done["finished_at"] if done else None,
             "syncing": bool(last and not last["finished_at"]),
             "board_size": board,
+            # Reported on every poll, because the failure it describes is
+            # silent right up to the moment the board stops.
+            "wal": wal_state(),
             "sharing": sharing,
             # Reported even when sharing is None: a machine that could read none
             # of the channel has applied nothing, so it has no state_sync rows to

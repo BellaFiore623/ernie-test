@@ -600,6 +600,31 @@ def card_skin(data, editing=False):
     return tint, edge, 1
 
 
+def wal_standing(wal: dict | None) -> str:
+    """What to say about the write-ahead log: "", "watch" or "act".
+
+    A healthy WAL fills and empties every few seconds, so it never gets near
+    the size of the database. One that keeps growing means a reader is
+    holding a snapshot and it cannot be checkpointed -- and the part nobody
+    sees is that writers then start timing out, so a ticket can look closed
+    on the board and never reach its thread.
+
+    Larger than its own database is the line. Past twice the size is the
+    difference between something to keep an eye on and something to do
+    something about, and the something is restarting the stack.
+
+    Pure, and fails quiet: an Ernie too old to report `wal` says nothing,
+    which must never become a warning about a field that is simply absent.
+    """
+    if not wal:
+        return ""
+    size = wal.get("db_bytes") or 0
+    bytes_ = wal.get("wal_bytes") or 0
+    if not size or bytes_ <= size:
+        return ""
+    return "act" if bytes_ > size * 2 else "watch"
+
+
 def build_standing(mine, theirs, floor, newest="", required=""):
     """Whether this Bert is behind, and how far. Answers (state, sentence).
 
@@ -5518,6 +5543,16 @@ class Bert(QMainWindow):
         self.demo.hide()
         outer.addWidget(self.demo)
 
+        # A write-ahead log that has stopped checkpointing, which is the one
+        # failure here that takes the whole board down and says nothing on
+        # the way. Its own strip for the reason the others have one: a board
+        # can be showing demo data, be a build behind, and have a runaway WAL
+        # all at once, and none of those may paint over another.
+        self.wal = QLabel()
+        self.wal.setAlignment(Qt.AlignCenter)
+        self.wal.hide()
+        outer.addWidget(self.wal)
+
         # Its own strip rather than a second use of the banner: a save must not
         # paint over "can't reach Ernie" and then hide it on the way out.
         self.toast = QLabel()
@@ -6802,6 +6837,7 @@ class Bert(QMainWindow):
         # early, and a board holding a parked payload is still a board showing
         # invented figures.
         self._tick_invented()
+        self._tick_wal()
 
         # The card outlives the click by a poll or two; drop the toast the
         # moment it is genuinely off the board rather than on a timer.
@@ -6854,6 +6890,48 @@ class Bert(QMainWindow):
             f"background:{T.AMBER_BG}; color:{T.AMBER_FG}; padding:7px;"
             f" font-size:12px;")
         self.demo.show()
+
+    def _tick_wal(self):
+        """Say when the write-ahead log has stopped checkpointing.
+
+        A healthy WAL fills and empties every few seconds. One that keeps
+        growing means a reader is holding a snapshot so it cannot be
+        checkpointed -- and the symptom nobody sees is that writers then
+        start timing out: a Complete that never reaches its thread, a change
+        log posting the same line over and over. It has happened twice,
+        at 6.59 MB against a 4.58 MB database and at 33 MB against 4.68 MB,
+        and both times the first sign was somebody noticing Ernie had gone
+        quiet.
+
+        Bigger than the database it belongs to is the line, because a WAL
+        that checkpoints never gets near it. Amber there, and red past twice
+        the size, which is the difference between something to watch and
+        something to act on -- and acting on it is restarting the stack.
+        """
+        w = (self.health or {}).get("wal") or {}
+        standing = wal_standing(w)
+        if not standing:
+            self.wal.hide()
+            return
+        wal, size = w.get("wal_bytes") or 0, w.get("db_bytes") or 0
+        mb = wal / 1048576
+        bad = standing == "act"
+        self.wal.setText(
+            f"The database's write-ahead log has grown to {mb:.1f} MB, "
+            f"larger than the database. Changes may stop reaching Discord.")
+        self.wal.setToolTip(
+            "A WAL that cannot be checkpointed keeps growing, and writers "
+            "start timing out -- so a ticket can look closed here and never "
+            "reach its thread." + chr(10) + chr(10) +
+            "Something is holding a read connection open. Restarting the "
+            "stack clears it." + chr(10) + chr(10) +
+            f"WAL {mb:.1f} MB against a database of "
+            f"{size / 1048576:.1f} MB.")
+        self.wal.setStyleSheet(
+            f"background:{T.RED_BG if bad else T.AMBER_BG};"
+            f" color:{T.RED_FG if bad else T.AMBER_FG}; padding:7px;"
+            f" font-size:12px;")
+        self.wal.show()
 
     def _card_widget(self, tid):
         for band in self.bands.values():

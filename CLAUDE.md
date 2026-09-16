@@ -30,7 +30,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `run.sh` | Starts the whole stack as four processes, for working from source. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
-| `tools/q.py` | Ad-hoc SQL helper. `python tools/q.py "SELECT ..." ernie-test.db` |
+| `tools/q.py` | Ad-hoc SQL helper, **read-only unless `--write`**. `python tools/q.py "SELECT ..." ernie-test.db` |
 | `tools/backfill_message_types.py` | Fetches Discord's message `type` for rows written before the column existed. Read-only against Discord, writes one column, resumable. |
 | `tools/rebuild_title_history.py` | Writes each recovered rename as the title revision it was. No network. Cannot change what the board shows today. |
 | `tools/backfill_closers.py` | Puts names on closures recorded before View Audit Log was granted. Read-only against Discord, fills two NULLs, `--dry-run`. |
@@ -86,6 +86,24 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 - Keep sync transactions short. `ernie_sync` commits per thread. Bert
   writes to the same database, and a long transaction causes
   `database is locked`.
+- **The WAL is reported, because the failure is silent until the board
+  stops.** A reader that never lets go pins the write-ahead log, SQLite
+  cannot checkpoint it, it grows without bound, and writers begin timing out
+  -- and nothing says a word until something people are waiting on stops
+  arriving. Twice now: 6.59 MB against 4.58 MB, and **33 MB against
+  4.68 MB**, the second time costing a Complete four and a half minutes to
+  reach its thread and posting one change-log line seven times.
+  `ernie_api.wal_state()` puts it in `/health` on every poll and
+  `bert.wal_standing()` is the pure decision -- silent while the WAL is
+  smaller than its database, amber past that, red past twice it, and silent
+  again for an Ernie too old to send the field. Restarting the stack clears
+  it; a checkpoint with nothing running took 33 MB to nothing instantly.
+  **What holds it is still unidentified.** The API, the sync, the outbox and
+  Bert-shaped polling were each probed with a writer attempting
+  `wal_checkpoint(TRUNCATE)`, which reports when a reader blocks it, and none
+  of them ever did. The diagnostic tooling pointed at the live database is
+  the candidate that could not be cleared, which is why `tools/q.py` is
+  read-only now.
 - **Never hard-delete from the mirror.** Discord is mutable, so
   `thread_titles` and `message_revisions` are append-only and deletions set
   `deleted_at`. Bert's own state (`cards`, `events`) is never overwritten by
@@ -687,6 +705,20 @@ changes worth interrupting somebody for; this gets all of them.
   rather than posted.
 - Nothing is logged until it has settled, because an event inside its undo
   window may still be cancelled.
+- **A line is claimed before it is posted, never after.** The order was post,
+  then record, then commit, under a comment saying "a failure halfway repeats
+  nothing" -- true of a failure *between* lines and false of one inside a
+  line. With the database locked, `mark()` raised after the message had
+  already reached Discord, so `pending()` handed the same event back every
+  pass: **one completion posted seven times** into a channel whose whole job
+  is to be a durable record. `claim()` writes the row with a NULL
+  `message_id` first, which is enough to take the event out of `pending()`;
+  `release()` gives it back if the post fails, so the fix for duplicates does
+  not quietly become lost lines. `retracted()` already required
+  `message_id IS NOT NULL`, so a claimed-but-unrecorded line is skipped by
+  the strike-through path, and `unresolved()` reports it rather than retrying
+  -- retrying is what caused the duplicates. This is `post_one`'s claim,
+  write, record, one channel along.
 
 The one-machine rule is liftable and `plans/changelog-per-machine.md` says
 how. The rest: `docs/discord.md`.
