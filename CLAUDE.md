@@ -256,6 +256,17 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   missing and closes only what comes back `archived: true`. Absence is the
   question, never the answer -- a listing short for any other reason would
   otherwise close the whole board in one pass.
+- **A thread Ernie archived itself is not evidence of anything**, and
+  `threads.archived_by_ernie` is what says which is which. The case is undo:
+  Close in Bert completes the card and the outbox archives the thread, and
+  undoing afterwards clears `completed_at` while the thread stays archived
+  until the correction posts into it. In that window an open card sits on a
+  missing thread, which is exactly the shape of a human closure -- so
+  `reconcile_closures` closed it again, as a *Discord* closure, attributed to
+  nobody and stamped with Ernie's own archive time. Silent until closures
+  were announced, so it read as a card refusing to come back from an undo.
+  The flag is cleared when the outbox unarchives to post, or the skip becomes
+  a blind spot and a real closure never reaches the board.
 - The thread is told who closed it, and only one machine may tell it.
   `ANNOUNCE_CLOSURES` is off unless set, for the reason
   `CHANGELOG_CHANNEL_ID` is: every stack notices the same archived thread and

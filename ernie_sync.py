@@ -470,11 +470,29 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
     the log no longer reaches back that far, the closure is recorded with no
     name rather than not recorded at all.
     """
+    # A thread Ernie archived itself is not evidence that somebody closed it
+    # in Discord, and `archived_by_ernie` has recorded which is which all
+    # along -- nothing read it.
+    #
+    # The case is undo. Pressing Close in Bert completes the card and the
+    # outbox archives the thread; undoing it afterwards clears
+    # `completed_at` and puts the card back, but the thread stays archived
+    # until the correction message posts into it, which is what unarchives
+    # it. In that window the card is open and its thread is missing from the
+    # listing, so this closed it again -- as a *Discord* closure, stamped
+    # with Ernie's own archive_timestamp and attributed to nobody.
+    #
+    # Silent before closures were announced, which is why it went unnoticed:
+    # it read as the card simply refusing to come back. Seen once it had a
+    # voice, as a second message in the thread 73 seconds after the first
+    # saying it had been closed in Discord when it had been closed in Bert
+    # and then taken back.
     gone = [r["thread_id"] for r in con.execute(
         """SELECT c.thread_id FROM cards c
            JOIN threads t USING (thread_id)
            JOIN watched_channels w ON w.channel_id = t.parent_id
-           WHERE c.completed_at IS NULL AND w.generate_cards = 1""")
+           WHERE c.completed_at IS NULL AND w.generate_cards = 1
+             AND t.archived_by_ernie = 0""")
         if r["thread_id"] not in active]
     if not gone:
         return

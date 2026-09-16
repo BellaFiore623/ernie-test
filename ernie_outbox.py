@@ -246,7 +246,12 @@ def post_one(con, d: Discord, event) -> str:
         if row and row["archived"]:
             # Unarchiving an open thread is the same as unarchiving it once.
             d.write("PATCH", f"/channels/{tid}", archived=False, retry_5xx=True)
-            con.execute("UPDATE threads SET archived=0 WHERE thread_id=?", (tid,))
+            # The flag goes with it. It says "we are the reason this thread is
+            # archived", so leaving it set on a thread that is now open makes
+            # a later human archive invisible to reconcile_closures, which
+            # skips threads carrying it.
+            con.execute("UPDATE threads SET archived=0, archived_by_ernie=0 "
+                        "WHERE thread_id=?", (tid,))
 
         if rename_to and "renamed" not in done:
             d.write("PATCH", f"/channels/{tid}", name=rename_to)

@@ -17,6 +17,7 @@ close half the board in one pass.
 """
 
 import contextlib
+import inspect
 import os
 import sqlite3
 
@@ -640,6 +641,90 @@ def check_the_feed_line_says_who_when_it_knows() -> bool:
     return c.report()
 
 
+def check_ernies_own_archive_is_not_a_discord_closure() -> bool:
+    """Undo, and the phantom closure it used to leave behind.
+
+    Pressing Close in Bert completes the card and the outbox archives the
+    thread. Undoing it afterwards clears `completed_at` and puts the card
+    back -- but the thread stays archived until the correction message posts
+    into it, which is what unarchives it. In that window the card is open and
+    its thread is missing from the active listing, which is the exact shape
+    of somebody archiving a thread by hand.
+
+    So this closed the card again, as a Discord closure, stamped with
+    Ernie's own archive_timestamp and attributed to nobody. Silent until
+    closures were announced, which is why it went unnoticed for so long: it
+    read as the card refusing to come back from an undo. It was seen as a
+    second message in a customer thread 73 seconds after the first, saying
+    the ticket was closed in Discord when it had been closed in Bert and
+    then taken back.
+
+    `threads.archived_by_ernie` had recorded which was which the whole time
+    and nothing read it.
+    """
+    c = Check("Ernie's own archive is not a Discord closure")
+
+    with Board() as b:
+        one, two = board_with_two(b)
+        # Closed in Bert, archived by the outbox, then undone: the card is
+        # open again and the thread is still archived.
+        b.con.execute("UPDATE threads SET archived=1, archived_by_ernie=1 "
+                      "WHERE thread_id=?", (one,))
+        b.con.commit()
+
+        d = Answers({one: archived_at(WHEN)})
+        stats = {}
+        with announcing(True):
+            S.reconcile_closures(b.con, d, {two}, stats)
+
+        c.equal(d.asked, [],
+                "it is not even asked about -- Ernie archived it, so its "
+                "absence from the listing says nothing about anybody")
+        c.equal(stats.get("closed_in_discord", 0), 0, "and nothing is closed")
+        c.equal(b.con.execute("SELECT completed_at FROM cards WHERE "
+                              "thread_id=?", (one,)).fetchone()["completed_at"],
+                None, "the card stays on the board, where the undo put it")
+        c.equal(b.con.execute("SELECT COUNT(*) FROM events WHERE "
+                              "verb='completed'").fetchone()[0], 0,
+                "and no second closure message is queued for the thread")
+
+    return c.report()
+
+
+def check_a_thread_ernie_reopened_is_watched_again() -> bool:
+    """The flag has to come off, or the skip above becomes a blind spot.
+
+    The outbox unarchives a thread to post into it -- every message goes
+    into an open thread, whatever state it ends up in. If the flag survived
+    that, a thread Ernie had once archived would be skipped by
+    `reconcile_closures` for ever, and a real closure by a real person would
+    never reach the board.
+    """
+    c = Check("a thread Ernie reopened is watched again")
+
+    src = inspect.getsource(outbox.post_one)
+    unarchive = src.split("archived=False")[1][:400]
+    c.ok("archived_by_ernie=0" in unarchive,
+         "unarchiving to post clears the flag, so the thread is watched "
+         "again from that moment")
+
+    with Board() as b:
+        one, two = board_with_two(b)
+        b.con.execute("UPDATE threads SET archived=1, archived_by_ernie=0 "
+                      "WHERE thread_id=?", (one,))
+        b.con.commit()
+
+        d = Answers({one: archived_at(WHEN)})
+        stats = {}
+        with announcing(False):
+            S.reconcile_closures(b.con, d, {two}, stats)
+        c.equal(stats.get("closed_in_discord"), 1,
+                "a thread archived by somebody else still closes its card, "
+                "which is the half that must keep working")
+
+    return c.report()
+
+
 CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_absence_is_the_question_never_the_answer,
           check_a_thread_it_cannot_read_is_never_declared_finished,
@@ -655,4 +740,6 @@ CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_the_feed_line_says_who_when_it_knows,
           check_it_still_closes_when_the_audit_log_is_shut,
           check_it_never_attributes_a_closure_to_ernie,
-          check_the_audit_log_is_asked_once_and_only_when_needed)
+          check_the_audit_log_is_asked_once_and_only_when_needed,
+          check_ernies_own_archive_is_not_a_discord_closure,
+          check_a_thread_ernie_reopened_is_watched_again)
