@@ -61,8 +61,19 @@ STRICT = re.compile(
 )
 
 # Tier 2: date present somewhere, separators loose or absent.
+#
+# The client is `.*?` and not `.+?`, because a title with no client at all is
+# a shape people type -- and one that must match at least one character eats
+# the first digit of the date to satisfy itself. `PROD: 29Jun26 - Trade show`
+# parsed as client "2" and date 9 Jun, which is not a missing client, it is
+# the wrong date, silently, twenty days out. Non-greedy means the engine
+# tries the empty client first, so the date claims the digits it is entitled
+# to and a real client still wins by backtracking.
+#
+# STRICT does not need this: its separator between client and date is
+# mandatory, so a bare date cannot be split across the two groups.
 LOOSE = re.compile(
-    rf"^{_PREFIX}(?P<client>.+?)\s*[-:]?\s*(?P<date>{_DATE_TOKEN})\s*[-:]?\s*(?P<summary>.*)$",
+    rf"^{_PREFIX}(?P<client>.*?)\s*[-:]?\s*(?P<date>{_DATE_TOKEN})\s*[-:]?\s*(?P<summary>.*)$",
     re.IGNORECASE,
 )
 

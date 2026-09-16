@@ -25,6 +25,7 @@ from support import PARENT, Board, Check, iso
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
 
 import ernie_api as api             # noqa: E402
+import ernie_extract as ex          # noqa: E402
 import rebuild_title_history as R   # noqa: E402
 
 
@@ -260,9 +261,50 @@ def check_a_thread_with_no_title_row_is_left_alone() -> bool:
     return c.report()
 
 
+def check_a_title_with_no_client_keeps_its_whole_date() -> bool:
+    """A missing client must not be paid for out of the date.
+
+    LOOSE's client group was `.+?`, which has to match at least one character
+    -- so a title with no client at all satisfied it with the first digit of
+    the date. `PROD: 29Jun26 - Trade show TOF` parsed as client "2" and date
+    the 9th of June: not a missing client, a *wrong date*, twenty days out,
+    with nothing on the card to say so. Found when somebody edited a title in
+    the sandbox to take the client out.
+
+    It is `.*?` now. Non-greedy means the engine tries the empty client first,
+    so the date claims the digits that belong to it, and a real client still
+    wins by backtracking -- including one that starts with a digit, which is
+    the case that would break a cruder fix.
+
+    STRICT never had it: the separator between its client and its date is
+    mandatory, so a bare date cannot be split across the two groups.
+    """
+    c = Check("a missing client does not eat the date")
+
+    for name, date_want in (("PROD: 29Jun26 - Trade show TOF", "2026-06-29"),
+                            ("PROD: 08Sep26 - something", "2026-09-08"),
+                            ("OPS: 1Jan26 - x", "2026-01-01")):
+        t = ex.parse_title(name)
+        c.equal(str(t.date), date_want, f"{name!r} keeps its date")
+        c.equal(t.client_raw or "", "", "and reports no client rather than a digit")
+
+    # The half that would break if the fix were a blunter one.
+    for name, client, date_want in (
+            ("PROD: Edge AI Solutions - 29Jun26 - Trade show TOF",
+             "Edge AI Solutions", "2026-06-29"),
+            ("PROD: 3M Company - 08Sep26 - x", "3M Company", "2026-09-08"),
+            ("OPS: 4 Rivers - 1Jan26 - x", "4 Rivers", "2026-01-01")):
+        t = ex.parse_title(name)
+        c.equal(t.client_raw, client, f"{client!r} still parses as the client")
+        c.equal(str(t.date), date_want, "with the right date")
+
+    return c.report()
+
+
 CHECKS = (check_a_rename_becomes_the_revision_it_was,
           check_it_cannot_change_what_the_board_shows,
           check_a_familiar_name_still_gets_its_own_date,
           check_only_renames_count,
           check_running_it_twice_changes_nothing,
-          check_a_thread_with_no_title_row_is_left_alone)
+          check_a_thread_with_no_title_row_is_left_alone,
+          check_a_title_with_no_client_keeps_its_whole_date)
