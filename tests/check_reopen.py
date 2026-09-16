@@ -372,6 +372,65 @@ def check_the_wait_does_not_swallow_a_real_reopen() -> bool:
     return c.report()
 
 
+def check_the_clock_is_dropped_wherever_a_thread_is_archived() -> bool:
+    """A clock left running on an archived thread defeats the whole wait.
+
+    `load_thread` clears it when it sees the thread shut -- but an archived
+    thread is not in the active listing, so `load_thread` never runs for it
+    again. Both of the places that archive a thread do it directly:
+    `ernie_outbox.post_one` after posting, and
+    `ernie_sync.reconcile_closures` when it closes a card.
+
+    Seen live: after a Discord closure the thread sat archived carrying a
+    clock from the outbox's own post window, and the next unarchive fired a
+    reopen in four seconds instead of waiting the thirty. It was a real
+    reopen that time. The next one might be Ernie posting again.
+    """
+    c = Check("the clock is dropped wherever a thread is archived")
+
+    import inspect
+    import ernie_outbox as outbox
+    import ernie_sync as sync
+
+    after_post = inspect.getsource(outbox.post_one).split("in ARCHIVES")[1]
+    after_post = after_post.split("elif verb in UNARCHIVES")[0]
+    c.ok("seen_open_at=NULL" in after_post,
+         "the outbox drops it when it re-archives after posting")
+
+    closing = inspect.getsource(sync.reconcile_closures).split("archived=1")[1][:300]
+    c.ok("seen_open_at=NULL" in closing,
+         "and reconcile_closures drops it when it closes a card")
+
+    # And the effect. A clock that survives an archive measures the wrong
+    # episode: the thread shuts, sits archived for an hour, and the next
+    # time anything opens it -- Ernie posting included -- the wait is
+    # already spent. Note the rule this does *not* claim: a thread that has
+    # genuinely been open for an hour with a closed card is a reopen
+    # somebody made and we missed, and it should fire.
+    with Board() as b:
+        tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
+                              synced_at=iso(-300))
+        with announcing(True):
+            load.load_thread(b.con, now_open(tid), {})   # clock starts
+        b.con.commit()
+        c.ok(b.con.execute("SELECT seen_open_at FROM threads WHERE "
+                           "thread_id=?", (tid,)).fetchone()[0] is not None,
+             "the clock starts when the thread is first seen open")
+
+        b.con.execute("UPDATE threads SET archived=1, seen_open_at=NULL "
+                      "WHERE thread_id=?", (tid,))       # as the outbox does
+        b.con.commit()
+
+        with announcing(True):
+            load.load_thread(b.con, now_open(tid), {})   # opened again
+        b.con.commit()
+        c.equal(reopened(b, tid), 0,
+                "and after an archive the next opening starts its own wait "
+                "rather than inheriting the last one")
+
+    return c.report()
+
+
 CHECKS = (check_a_thread_ernie_closed_can_be_reopened,
           check_ernies_own_announcement_never_explains_the_unarchive,
           check_the_reopen_message_is_behind_the_one_machine_switch,
@@ -379,4 +438,5 @@ CHECKS = (check_a_thread_ernie_closed_can_be_reopened,
           check_a_person_posting_reopens_it,
           check_the_guard_asks_about_the_window_not_the_last_message,
           check_ernie_posting_into_a_closed_thread_is_not_a_reopen,
-          check_the_wait_does_not_swallow_a_real_reopen)
+          check_the_wait_does_not_swallow_a_real_reopen,
+          check_the_clock_is_dropped_wherever_a_thread_is_archived)

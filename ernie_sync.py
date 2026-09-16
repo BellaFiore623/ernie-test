@@ -516,9 +516,12 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
 
     for tid, when in closed.items():
         who = by.get(tid)
+        # seen_open_at goes too -- see the outbox, which archives the
+        # other way round. A clock left running on an archived thread
+        # lets the next unarchive skip the wait.
         con.execute(
-            "UPDATE threads SET archived=1, last_synced_at=? WHERE thread_id=?",
-            (now(), tid))
+            "UPDATE threads SET archived=1, last_synced_at=?, "
+            "seen_open_at=NULL WHERE thread_id=?", (now(), tid))
         con.execute(
             "UPDATE cards SET completed_at=?, completed_by=?, updated_at=? "
             "WHERE thread_id=?", (when, who, now(), tid))

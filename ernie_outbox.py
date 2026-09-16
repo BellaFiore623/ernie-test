@@ -276,9 +276,14 @@ def post_one(con, d: Discord, event) -> str:
         # Now put it where it belongs.
         if verb in ARCHIVES:
             d.write("PATCH", f"/channels/{tid}", archived=True, retry_5xx=True)
+                # and the reopen clock with it: an archived thread is
+                # not in the active listing, so `load_thread` never
+                # runs for it again and a clock left set here would
+                # still be running the next time it opens -- letting
+                # the next unarchive skip the wait entirely.
             con.execute(
-                "UPDATE threads SET archived=1, archived_by_ernie=1 WHERE thread_id=?",
-                (tid,))
+                "UPDATE threads SET archived=1, archived_by_ernie=1, "
+                "seen_open_at=NULL WHERE thread_id=?", (tid,))
         elif verb in UNARCHIVES:
             con.execute(
                 "UPDATE threads SET archived=0, archived_by_ernie=0 WHERE thread_id=?",
