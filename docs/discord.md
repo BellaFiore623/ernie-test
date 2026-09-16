@@ -122,8 +122,6 @@ rules and points here for the why.
 
 ## The status message in the thread
 
-## The status message in the thread
-
 The board knows what a ticket still needs and the thread is where the work is
 discussed, and the two only met by somebody opening Bert. `ernie_status.py`
 puts what is left where the conversation is: band, what is still to do, what
@@ -343,8 +341,6 @@ has been done, when it last moved and who moved it.
 
 ## The state channel
 
-## The state channel
-
 So two people on two machines share one board without either hosting the
 other's API. Priority, rank, work items and completion live in
 `#ernie-state` (`STATE_CHANNEL_ID`), one message per card, edited in place.
@@ -471,8 +467,6 @@ other's API. Priority, rank, work items and completion live in
 
 ## The change log
 
-## The change log
-
 A durable record of every change, in its own channel, for looking back at
 rather than reading as it goes. Customer threads only hear the handful of
 changes worth interrupting somebody for; this gets all of them.
@@ -527,8 +521,6 @@ changes worth interrupting somebody for; this gets all of them.
   happened while the logger was down. `--backfill` asks for the history.
 - Nothing reads it back. Deleting the channel and unsetting the variable
   leaves nothing behind but a table nothing looks at.
-
-## How fast Discord reaches the board
 
 ## How fast Discord reaches the board
 
