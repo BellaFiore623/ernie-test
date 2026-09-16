@@ -505,6 +505,43 @@ def check_a_pick_that_cannot_reach_the_title_says_so():
     return c.report()
 
 
+def check_the_entry_modes_are_one_editor_with_a_preference():
+    """Guided and typing write the same title through the same splice.
+
+    The preference hides controls; it does not change what saving does. That
+    is what keeps it one code path with a preference on top rather than two
+    editors to keep in step -- and it is why a warning written for one is
+    already true of the other.
+
+    The rule that makes guided safe is that the preview is not permanent. A
+    title the fields cannot express is one only the box can repair, and on
+    production those are 3 of 47 open cards -- every one of them a card
+    already flagged red. A preview that stayed read-only would lock somebody
+    out of exactly the titles the mode exists to prevent.
+    """
+    c = Check("the entry modes are one editor with a preference")
+
+    c.equal(set(bert.ENTRY_MODES), {"guided", "typing"}, "two modes")
+    c.equal(bert.ENTRY_DEFAULT, "guided", "guided is what a fresh install gets")
+    for m in bert.ENTRY_MODES:
+        c.ok(bert.ENTRY_LABEL.get(m), f"{m} has a label somebody can read")
+
+    # The condition the editor uses to decide whether the box is a preview is
+    # the same one that decides whether a field can reach the title at all.
+    for title, editable in (("PROD: Thrasher - 03Aug26 - x", False),
+                            ("PROD: 29Jun26 - x", False),
+                            ("ENG: Retired bots", True),
+                            ("Thrasher - Trade show TOF", True),
+                            ("", True)):
+        preview = ex.parse_title(title).confidence in ("strict", "loose")
+        c.equal(not preview, editable,
+                f"the box is {'yours' if editable else 'a preview'}: {title!r}")
+        # And it agrees with the half that splices.
+        c.equal(bert.title_takes_client(title), preview,
+                "which is the same question a picked client asks")
+    return c.report()
+
+
 def check_the_editor_offers_the_roster_and_still_takes_anything():
     """A customer exists before Jira hears about them.
 
@@ -1146,6 +1183,7 @@ CHECKS = (check_one_candidate_is_taken_and_two_are_not,
     check_an_untouched_client_box_invents_no_override,
     check_a_red_card_says_what_is_wrong_with_it,
     check_a_pick_that_cannot_reach_the_title_says_so,
+    check_the_entry_modes_are_one_editor_with_a_preference,
     check_the_editor_offers_the_roster_and_still_takes_anything,
     check_no_jira_means_no_change,
     check_a_missing_key_is_judged_by_what_it_is,

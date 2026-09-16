@@ -442,6 +442,16 @@ THEME_LABEL = {"system": "Follow the desktop", "light": "Light", "dark": "Dark"}
 # only the fallback when the key is absent.
 THEME_DEFAULT = "dark"
 
+# How the editor asks for a title. `guided` shows the tag, client, date and
+# description and keeps the title as a preview; `typing` shows the title box
+# and nothing else, for the people who have been typing these into Discord
+# for years. Both write the same title and both get the same warnings, so
+# neither is the safe one and neither is the quick one -- it is a preference.
+ENTRY_MODES = ("guided", "typing")
+ENTRY_LABEL = {"guided": "Guided \u2014 pick the tag, client and date",
+               "typing": "Typing \u2014 one box, as in Discord"}
+ENTRY_DEFAULT = "guided"
+
 
 class Theme:
     """The active palette, reached by name.
@@ -1313,9 +1323,16 @@ class SettingsDialog(QDialog):
         # changes what is stored and changes nothing to look at, so there is
         # nothing to preview and no reason to make the dialog blink.
         self.theme.currentIndexChanged.connect(self._preview)
+        self.entry = Combo()
+        for key in ENTRY_MODES:
+            self.entry.addItem(ENTRY_LABEL[key], key)
+        mode = current.get("entry", ENTRY_DEFAULT)
+        self.entry.setCurrentIndex(
+            ENTRY_MODES.index(mode) if mode in ENTRY_MODES else 0)
         form = QFormLayout()
         form.addRow("Your name", self.who)
         form.addRow("Theme", self.theme)
+        form.addRow("Ticket entry", self.entry)
         note = QLabel("Your name is added to thread updates so the team can see "
                       "who made each change. Changes are blocked until it's "
                       "set.")
@@ -1349,7 +1366,8 @@ class SettingsDialog(QDialog):
 
     def values(self):
         return {"name": self.who.text().strip(),
-                "theme": self.theme.currentData()}
+                "theme": self.theme.currentData(),
+                "entry": self.entry.currentData()}
 
 
 class Api:
@@ -3345,6 +3363,21 @@ class Card(QFrame):
         form.addRow("Description", self.f_desc)
         form.addRow("Work items", self.f_work)
 
+        # Which of the two this person asked for. Both write the same title
+        # through the same splice and both get the same warnings underneath,
+        # so this hides controls rather than changing what saving does --
+        # which is what keeps it one code path with a preference on top
+        # rather than two editors to keep in step.
+        self._entry = (self.board.settings.get("entry") or ENTRY_DEFAULT)
+        if self._entry == "typing":
+            for w in (self.f_queue, client_holder, self.f_date, self.f_desc):
+                lab = form.labelForField(w)
+                if lab is not None:
+                    lab.hide()
+                w.hide()
+        # Work items stay in both: they are not part of the title, and the
+        # people who type titles still tick bubbles.
+
         # Only when starting one. Ernie opens the thread, so it posts a line
         # saying who it was for -- this is the message they would have typed
         # into it themselves, and is optional because plenty of tickets are
@@ -3522,6 +3555,25 @@ class Card(QFrame):
         # fields and somebody who would rather pick never has to type.
         if not getattr(self, "_syncing", False):
             self._fields_from_title(t)
+        # Guided keeps the title as a preview -- there is nothing to type
+        # when four fields are writing it. Except when they cannot: a title
+        # the fields have no way to express is one only the box can repair,
+        # and three of production's 47 open cards are exactly that, all of
+        # them the red ones. So the box comes back precisely when it is
+        # needed, and somebody who chose guided never has to learn that a
+        # preference exists to fix a broken title.
+        if getattr(self, "_entry", ENTRY_DEFAULT) == "guided":
+            preview = t.confidence in ("strict", "loose")
+            if self.f_title.isReadOnly() != preview:
+                self.f_title.setReadOnly(preview)
+                self.f_title.setStyleSheet(
+                    field() + (f"color:{T.MUTED};" if preview else ""))
+                self.f_title.setToolTip(
+                    "Built from the fields below. It becomes editable if they "
+                    "cannot express the title." if preview else
+                    "The fields below cannot express this title, so it is "
+                    "yours to repair.")
+
         if t.confidence in ("strict", "loose"):
             self.title_state.setText(
                 f"<span style='color:{T.OK_FG}'>✓</span> "
