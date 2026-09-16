@@ -770,6 +770,11 @@ from source -- four processes, four logs, restart one without the others.
   makes any threads still waiting, and publishes once more.
 - A blocked outbox says so rather than vanishing. Read-only is a legitimate
   way to run, so it is reported, never refused.
+- **The outbox's two beats are about frequency, not blocking.** All five
+  things run on one thread, so a long publish still stops the drain. The
+  first pass is therefore a fast one -- it used to be full, and a restart
+  spent 4m46s publishing before it posted anything anybody was waiting on --
+  and a full pass drains again at the end rather than going to sleep.
 
 The beat split, the installer, the program and board directories, and what
 going live took: `docs/releases.md`.

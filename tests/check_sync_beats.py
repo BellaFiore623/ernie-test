@@ -273,7 +273,127 @@ def check_the_outbox_drains_faster_than_it_publishes() -> bool:
     return c.report()
 
 
-CHECKS = (check_the_outbox_drains_faster_than_it_publishes,
+class Publishes:
+    """Stands in for the three publishes, recording that it was asked."""
+
+    def __init__(self, order, name):
+        self.order, self.name = order, name
+
+    def publish(self, *a, **kw):
+        self.order.append(self.name)
+        return {"posted": 0, "edited": 0}
+
+    def tick(self, *a, **kw):
+        self.order.append(self.name)
+        return {"sent": 0, "struck": 0}
+
+
+class Writer:
+    writes_allowed = True
+
+
+def outbox_pass(interval, stop_after):
+    """Run the outbox loop with everything stubbed. Returns the call order.
+
+    `stop_after` is how many drains to allow before asking it to stop, which
+    is how a loop with no exit condition is made to have one.
+    """
+    import os
+    import ernie_outbox as ob
+
+    order = []
+    stop = threading.Event()
+    keep = {k: getattr(ob, k) for k in ("drain", "make_threads", "pending",
+                                        "stuck", "ernie_state", "ernie_status",
+                                        "ernie_changelog")}
+    env = {k: os.environ.get(k) for k in ("STATE_CHANNEL_ID",
+                                          "CHANGELOG_CHANNEL_ID")}
+
+    def fake_drain(con, d):
+        order.append("drain")
+        if order.count("drain") >= stop_after:
+            stop.set()
+        return {"sent": 0, "skipped": 0, "failed": 0}
+
+    try:
+        os.environ["STATE_CHANNEL_ID"] = "chan-1"
+        os.environ["CHANGELOG_CHANNEL_ID"] = "chan-2"
+        ob.drain = fake_drain
+        ob.make_threads = lambda con, d: {"made": 0, "failed": 0}
+        ob.pending = lambda con: 0
+        ob.stuck = lambda con: []
+        ob.ernie_state = Publishes(order, "state")
+        ob.ernie_status = Publishes(order, "status")
+        ob.ernie_changelog = Publishes(order, "changelog")
+        ob.run(None, Writer(), "nowhere.db", interval=interval, fast=0.01,
+               stop=stop)
+        return order
+    finally:
+        for k, v in keep.items():
+            setattr(ob, k, v)
+        for k, v in env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def check_a_restart_drains_before_it_publishes() -> bool:
+    """The first pass is a fast one, and that is the whole of this.
+
+    It used to be full -- `next_full = 0.0` -- so starting the stack did the
+    state channel, the status embeds and the change log before it ever
+    called `drain()`. Nobody is waiting on any of those three; they edit in
+    place and announce nothing.
+
+    Measured on a 51-card sandbox: the first pass took **4m46s**, and a Close
+    pressed 18 seconds into it sat behind the whole of it. Reported as Ernie
+    saying nothing when a ticket was closed in Bert, which is exactly what it
+    looks like from the board -- and every restart had this window, because
+    the first pass was full unconditionally.
+    """
+    c = Check("a restart drains before it publishes")
+
+    # A long interval, so the first pass cannot be a full one by arriving late.
+    order = outbox_pass(interval=3600, stop_after=1)
+
+    c.equal(order, ["drain"],
+            "the first pass drains and does nothing else")
+    for slow in ("state", "status", "changelog"):
+        c.ok(slow not in order,
+             f"{slow} is not published before the first drain")
+
+    return c.report()
+
+
+def check_a_long_publish_is_followed_by_a_drain() -> bool:
+    """The other half: the publishes still block, so the pass drains again.
+
+    The beat split made the three publishes less *frequent*, 30s against 5s.
+    It never stopped them **blocking**, because all five things run on one
+    thread -- so a publish that takes four minutes is four minutes in which
+    nothing posts, and without this the change then waits out a whole fast
+    beat on top.
+    """
+    c = Check("a long publish is followed by a drain")
+
+    # interval 0, so every pass is a full one.
+    order = outbox_pass(interval=0, stop_after=2)
+
+    c.equal(order, ["drain", "state", "status", "changelog", "drain"],
+            "a full pass drains, publishes, and drains again")
+    c.ok(order.index("drain") < order.index("state"),
+         "the cheap half still goes first")
+    c.ok(order[-1] == "drain",
+         "and the pass ends on the half somebody is waiting for, so nothing "
+         "queued during a publish waits out the beat as well")
+
+    return c.report()
+
+
+CHECKS = (check_a_restart_drains_before_it_publishes,
+          check_a_long_publish_is_followed_by_a_drain,
+          check_the_outbox_drains_faster_than_it_publishes,
           check_the_loop_stops_when_asked,
           check_a_fast_pass_skips_what_a_fast_pass_is_for_skipping,
           check_the_loop_holds_its_beat,

@@ -544,16 +544,13 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
 
     `stop` is a `threading.Event`.
     """
-    next_full = 0.0        # the first pass is a full one
-    while True:
-        if stop is not None and stop.is_set():
-            return
-        t0 = time.time()
-        # `once` does everything, because a single pass asked for by hand is
-        # asking for the whole job rather than the cheap half of it.
-        full = once or t0 >= next_full
-        if full:
-            next_full = t0 + interval
+    def fast_half():
+        """Post what is due and make the threads tickets are waiting on.
+
+        The half somebody is watching, and the reason it is a function is
+        that a pass runs it twice: once at the top, and again after the
+        publishes, which can take minutes.
+        """
         try:
             c = drain(con, d)
             m = make_threads(con, d)
@@ -577,6 +574,28 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
             raise
         except Exception as e:
             print(f"[{now()[:19]}] drain failed: {e}", file=sys.stderr)
+
+    # The first pass is a fast one. It used to be full, so a restart did all
+    # three publishes -- the state channel, the status embeds, the change log
+    # -- before ever calling `drain()`, and nobody is waiting on any of them.
+    # Measured on a 51-card sandbox: the first pass took 4m46s, and a Close
+    # pressed 18 seconds into it sat behind the whole of it with nothing on
+    # the board or in the log to say why.
+    #
+    # Every restart hit this, because the first pass was unconditionally
+    # full. A person restarting the stack and then using it is not an edge
+    # case; it is the ordinary morning.
+    next_full = time.time() + interval
+    while True:
+        if stop is not None and stop.is_set():
+            return
+        t0 = time.time()
+        # `once` does everything, because a single pass asked for by hand is
+        # asking for the whole job rather than the cheap half of it.
+        full = once or t0 >= next_full
+        if full:
+            next_full = t0 + interval
+        fast_half()
 
         if full:
             # SQLite -> Discord, so it goes through the one process allowed to
@@ -622,6 +641,18 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
 
         if once:
             return
+
+        # Again, because the publishes can take minutes and anything queued
+        # while they ran has been waiting behind them. The beat split made
+        # them less frequent; it never stopped them blocking, since all five
+        # things run on one thread. Without this a change queued during a
+        # publish waits out the publish *and* then a whole fast beat.
+        #
+        # It costs one SELECT against `v_outbox_due` on a quiet board, and
+        # only after a pass that actually published something.
+        if full:
+            fast_half()
+
         # From the top of the pass, not the end of it.
         if _pause(stop, fast - (time.time() - t0)):
             return

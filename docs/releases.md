@@ -307,6 +307,31 @@ from source -- four processes, four logs, restart one without the others.
   whole job rather than the cheap half of it. `next_full` is a wall clock and
   the sleep is measured from the top of the pass, both for the reasons the
   sync gives.
+- **The split made the publishes less frequent; it did not stop them
+  blocking.** All five things still run on one thread, so a publish that
+  takes four minutes is four minutes in which nothing posts. Two things
+  follow from that, and both were found the same way -- a Close pressed in
+  Bert with Ernie saying nothing in the thread.
+  **The first pass is a fast one.** It was full unconditionally
+  (`next_full = 0.0`), so starting the stack did all three publishes before
+  ever calling `drain()`. Measured on a 51-card sandbox: **4m46s**, with a
+  Close pressed 18 seconds in sitting behind the whole of it, `attempts` at
+  0, nothing in the log, and the card saying *Pushing to Discord…*. Every
+  restart had that window, and a person restarting the stack and then using
+  it is the ordinary morning rather than an edge case. `next_full` starts at
+  `now + interval`, so the publishes are 30 seconds late and nobody is
+  waiting on them.
+  **And a full pass drains again at the end of it**, rather than going
+  straight to sleep, so a change queued while the publishes ran does not
+  then wait out a whole fast beat as well. It costs one `SELECT` against
+  `v_outbox_due`, and only after a pass that published. `fast_half()` is
+  that half written once and called twice; `tests/check_sync_beats.py`
+  holds the order by running the loop with every publish stubbed and reading
+  back what it asked for, in sequence.
+  **Still open:** 4m46s for one publish pass on a 51-card board is slow on
+  its own account, with no rate limits in the log to explain it. Worth its
+  own look -- the two fixes above stop it holding anybody up, which is not
+  the same as it being right.
 - **A blocked outbox says so; it does not vanish.** `run()` used to answer a
   refused write with `sys.exit`, which is right in a CLI and wrong on a
   thread: `SystemExit` there is swallowed by `threading` without a word, so
