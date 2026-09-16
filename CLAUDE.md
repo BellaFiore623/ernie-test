@@ -281,8 +281,10 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   were announced, so it read as a card refusing to come back from an undo.
   The flag is cleared when the outbox unarchives to post, or the skip becomes
   a blind spot and a real closure never reaches the board.
-- The thread is told who closed it, and only one machine may tell it.
-  `ANNOUNCE_CLOSURES` is off unless set, for the reason
+- The thread is told who closed it **and who reopened it**, and only one
+  machine may tell it. `ANNOUNCE_CLOSURES` gates both, because both are
+  things that happened to the thread in Discord and every stack sees them.
+  It is off unless set, for the reason
   `CHANGELOG_CHANNEL_ID` is: every stack notices the same archived thread and
   writes its own closure row, so two switched on tell the thread twice. A
   pass finding more than `ANNOUNCE_MAX` closed at once records them silently

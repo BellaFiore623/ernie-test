@@ -423,24 +423,11 @@ def who_archived(d: Discord, guild_id: str, wanted: set) -> dict:
     return found
 
 
-def announce_closures() -> bool:
-    """Whether this machine tells the thread when somebody closed it in Discord.
-
-    Off unless `ANNOUNCE_CLOSURES` is set, and only one machine may set it.
-    Every stack runs its own sync, so every stack notices the same archived
-    thread and writes its own `completed` row -- which costs nothing while
-    those rows never post, and puts the message in the thread twice the
-    moment they do. The state channel does not settle it: a card is skipped
-    below only once `completed_at` is set, the pull is on the 60s beat and
-    this runs on the 5s one, so the local close wins the race nearly every
-    time.
-
-    The one-machine rule `CHANGELOG_CHANNEL_ID` already follows, expressed
-    the same way -- a line somebody uncomments on purpose rather than a thing
-    to remember.
-    """
-    return (os.environ.get("ANNOUNCE_CLOSURES", "").strip().lower()
-            in ("1", "true", "yes", "on"))
+# The one-machine switch, and it gates reopens as well as closures -- both
+# are "what happened to this thread in Discord", and every stack sees both.
+# Defined in ernie_load because `load_thread` needs it too and the import
+# runs that way; named here for the readers that already say so.
+announce_closures = load.announce_thread_changes
 
 
 def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:

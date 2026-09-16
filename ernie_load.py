@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sqlite3
 import sys
@@ -32,6 +33,24 @@ WITNESSED_WITHIN_S = 600   # a thread Ernie watched appear was created moments
                            # thread from four months ago is not news -- it is a
                            # first sync writing a line per thread into the feed
                            # and the change log.
+
+
+def announce_thread_changes() -> bool:
+    """Whether this machine tells a thread what happened to it in Discord.
+
+    Covers both halves of the same fact: somebody archived the thread, and
+    somebody unarchived it. Off unless `ANNOUNCE_CLOSURES` is set, and only
+    one machine may set it -- every stack runs its own sync, every stack sees
+    the same flip, and every stack writes its own event. Those rows cost
+    nothing while they never post, and tell the thread twice the moment they
+    do.
+
+    It lives here rather than in `ernie_sync` because `load_thread` needs it
+    and the import runs the other way. `ernie_sync.announce_closures` is this
+    function.
+    """
+    return (os.environ.get("ANNOUNCE_CLOSURES", "").strip().lower()
+            in ("1", "true", "yes", "on"))
 
 
 def now() -> str:
@@ -137,12 +156,19 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
         con.execute("UPDATE threads SET archived_by_ernie=0 WHERE thread_id=?",
                     (tid,))
         stats["reopened"] = stats.get("reopened", 0) + 1
+        # Told, or recorded and silent. A reopen is the other half of a
+        # closure -- something that happened to this thread in Discord, seen
+        # by every stack watching it -- so it is behind the same one-machine
+        # switch, for the same reason: two boards announcing it tell the
+        # customer thread twice. NULL still reopens the card everywhere; what
+        # the switch decides is who says so.
         con.execute(
             """INSERT OR IGNORE INTO events
                (event_id, occurred_at, thread_id, verb, old_value, new_value,
                 dispatch_after)
                VALUES (?,?,?,?,?,?,?)""",
-            (str(uuid.uuid4()), ts, tid, "thread_reopened", "archived", "active", ts),
+            (str(uuid.uuid4()), ts, tid, "thread_reopened", "archived",
+             "active", ts if announce_thread_changes() else None),
         )
         con.execute(
             "UPDATE cards SET completed_at=NULL, completed_by=NULL, updated_at=? "

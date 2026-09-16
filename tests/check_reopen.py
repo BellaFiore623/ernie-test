@@ -21,12 +21,31 @@ arrived **since we last looked**. One already sitting there while the thread
 was archived explains nothing about why it is open now.
 """
 
+import contextlib
+import os
 import sqlite3
 
 from support import Board, Check, PARENT, iso
 
 import ernie_extract as ex
 import ernie_load as load
+
+
+@contextlib.contextmanager
+def announcing(on: bool):
+    """ANNOUNCE_CLOSURES set or not, restored afterwards."""
+    before = os.environ.get("ANNOUNCE_CLOSURES")
+    if on:
+        os.environ["ANNOUNCE_CLOSURES"] = "1"
+    else:
+        os.environ.pop("ANNOUNCE_CLOSURES", None)
+    try:
+        yield
+    finally:
+        if before is None:
+            os.environ.pop("ANNOUNCE_CLOSURES", None)
+        else:
+            os.environ["ANNOUNCE_CLOSURES"] = before
 
 
 def archived_thread(b, *, last_message_at, is_bot, synced_at):
@@ -74,7 +93,8 @@ def check_a_thread_ernie_closed_can_be_reopened() -> bool:
     with Board() as b:
         tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
                               synced_at=iso(-300))
-        load.load_thread(b.con, now_open(tid), {})
+        with announcing(True):
+            load.load_thread(b.con, now_open(tid), {})
         b.con.commit()
 
         c.equal(reopened(b, tid), 1,
@@ -174,7 +194,51 @@ def check_the_guard_asks_about_the_window_not_the_last_message() -> bool:
     return c.report()
 
 
+def check_the_reopen_message_is_behind_the_one_machine_switch() -> bool:
+    """A reopen is the other half of a closure, and is gated with it.
+
+    Every stack runs its own sync and every stack sees the same flip, so two
+    of them announcing it tell the customer thread twice -- the problem
+    ANNOUNCE_CLOSURES exists for. `thread_reopened` had an unconditional
+    dispatch since it was written and simply never fired, so nobody met it.
+
+    What the switch decides is who *says so*. The card comes back on every
+    board either way, because that is board state rather than an
+    announcement.
+    """
+    c = Check("the reopen message is behind the one-machine switch")
+
+    for on in (True, False):
+        with Board() as b:
+            tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
+                                  synced_at=iso(-300))
+            with announcing(on):
+                load.load_thread(b.con, now_open(tid), {})
+            b.con.commit()
+
+            row = b.con.execute(
+                "SELECT dispatch_after FROM events WHERE thread_id=? AND "
+                "verb='thread_reopened'", (tid,)).fetchone()
+            c.equal(reopened(b, tid), 1,
+                    f"switched {'on' if on else 'off'}, the reopen is still "
+                    f"recorded")
+            c.equal(b.con.execute("SELECT completed_at FROM cards WHERE "
+                                  "thread_id=?", (tid,)).fetchone()[0], None,
+                    "and the card still comes back -- that is board state, "
+                    "not an announcement")
+            if on:
+                c.ok(row["dispatch_after"] is not None,
+                     "and the thread is told")
+            else:
+                c.equal(row["dispatch_after"], None,
+                        "and nothing is queued, so a second stack watching "
+                        "the same flip stays quiet")
+
+    return c.report()
+
+
 CHECKS = (check_a_thread_ernie_closed_can_be_reopened,
+          check_the_reopen_message_is_behind_the_one_machine_switch,
           check_a_bot_ping_is_still_not_a_reopen,
           check_a_person_posting_reopens_it,
           check_the_guard_asks_about_the_window_not_the_last_message)
