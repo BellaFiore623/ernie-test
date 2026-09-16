@@ -3449,6 +3449,19 @@ class Card(QFrame):
 
         # textEdited fires only for typing, so rebuilding the suggestion below
         # doesn't count as the person taking the title over.
+        # Which of the two this person asked for. Both write the same title
+        # through the same splice and both get the same warnings underneath,
+        # so this hides controls rather than changing what saving does --
+        # which is what keeps it one code path with a preference on top
+        # rather than two editors to keep in step.
+        #
+        # Read before anything asks. It used to be set after the rows were
+        # added, and `_check_title()` runs during the wiring below -- so the
+        # first pass saw the default, guided, and made the box read-only in
+        # typing mode too. Nothing put it back, because the branch that would
+        # have was the one being skipped.
+        self._entry = (self.board.settings.get("entry") or ENTRY_DEFAULT)
+
         self.f_title.textEdited.connect(self._title_edited)
         self.f_title.textChanged.connect(self._check_title)
         self.f_queue.currentIndexChanged.connect(self._queue_picked)
@@ -3464,12 +3477,6 @@ class Card(QFrame):
         form.addRow("Description", self.f_desc)
         form.addRow("Work items", self.f_work)
 
-        # Which of the two this person asked for. Both write the same title
-        # through the same splice and both get the same warnings underneath,
-        # so this hides controls rather than changing what saving does --
-        # which is what keeps it one code path with a preference on top
-        # rather than two editors to keep in step.
-        self._entry = (self.board.settings.get("entry") or ENTRY_DEFAULT)
         if self._entry == "typing":
             for w in (self.f_queue, client_holder, self.f_date, self.f_desc):
                 lab = form.labelForField(w)
@@ -3702,6 +3709,15 @@ class Card(QFrame):
                     f"<span style='color:{T.RED_FG}'>\u2717</span> "
                     f"<span style='color:{T.MUTED}'>Now: {shown}</span>")
             self.title_was.setVisible(broken)
+        else:
+            # Stated, not assumed. A mode that is only "whatever the other one
+            # did not do" is one line away from inheriting it.
+            self.title_was.hide()
+            if self.f_title.isReadOnly():
+                self.f_title.setReadOnly(False)
+                self.f_title.setFrame(True)
+                self.f_title.setStyleSheet(field())
+                self.f_title.setToolTip("")
 
         guided = getattr(self, "_entry", ENTRY_DEFAULT) == "guided"
         ok = t.confidence in ("strict", "loose")

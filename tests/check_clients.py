@@ -551,6 +551,19 @@ def check_the_entry_modes_are_one_editor_with_a_preference():
     for m in bert.ENTRY_MODES:
         c.ok(bert.ENTRY_LABEL.get(m), f"{m} has a label somebody can read")
 
+    # The mode is read before anything asks which it is. It used to be set
+    # after the form rows, and _check_title runs during the wiring above it,
+    # so the first pass saw the default -- guided -- and made the box
+    # read-only in typing mode too. Nothing put it back, because the branch
+    # that would have was the one being skipped. Reported as typing mode
+    # losing its editable title box.
+    import inspect
+    src = inspect.getsource(bert.Card.enter_edit)
+    c.ok(src.index("self._entry = ") < src.index("self._check_title()"),
+         "the mode is known before the first _check_title")
+    c.ok("else:" in inspect.getsource(bert.Card._check_title),
+         "and typing states its own case rather than inheriting guided's")
+
     # The condition the editor uses to decide whether the box is a preview is
     # the same one that decides whether a field can reach the title at all.
     for title, editable in (("PROD: Thrasher - 03Aug26 - x", False),
