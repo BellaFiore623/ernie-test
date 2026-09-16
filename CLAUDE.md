@@ -219,6 +219,14 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 `messages.type`, the closure machinery and the audit-log attribution are in
 `docs/discord.md`.
 
+Two things wear the name "needs attention" and they are different sets: the
+`unassigned` band, which is every card nobody has triaged yet, and the red
+edge, which is `needs_triage()` and is about the title being unreadable. A
+card keeps the red edge wherever it is dragged, so the two sets overlap
+rather than nest -- on 2026-09-16, 23 in the band and 3 red, two of those
+three sitting in Medium. `plans/needs-attention-jump.md` turns on the
+distinction.
+
 ## Writes and undo
 
 Every change writes one row to `events`. That single table backs the
