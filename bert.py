@@ -885,6 +885,29 @@ class DateBox(QDateEdit):
     otherwise.
     """
 
+    # The drop-down keeps its hit area and loses its arrow; the glyph below
+    # is drawn into that space instead. An arrow says "a list drops down
+    # here", which is not what happens and not what somebody is looking for
+    # when they want to set a date.
+    ARROW_W = 24
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        pen = QPen(QColor(T.MUTED))
+        pen.setWidth(1)
+        pa = QPainter(self)
+        pa.setRenderHint(QPainter.Antialiasing, True)
+        pa.setPen(pen)
+        # A calendar: a page, a torn-off header, and two rings above it.
+        w, h = 12, 12
+        x = self.width() - self.ARROW_W + (self.ARROW_W - w) // 2
+        y = (self.height() - h) // 2 + 1
+        pa.drawRoundedRect(x, y, w, h, 2, 2)
+        pa.drawLine(x + 1, y + 4, x + w - 1, y + 4)
+        pa.drawLine(x + 3, y - 1, x + 3, y + 1)
+        pa.drawLine(x + w - 3, y - 1, x + w - 3, y + 1)
+        pa.end()
+
     def _wake(self):
         if self.date() == NO_DATE:
             self.setDate(QDate.currentDate())
@@ -3400,7 +3423,11 @@ class Card(QFrame):
         # that from meaning the calendar opens in 1900.
         self.f_date.setMinimumDate(NO_DATE)
         self.f_date.setSpecialValueText("\u2014 none \u2014")
-        self.f_date.setStyleSheet(field())
+        self.f_date.setStyleSheet(
+            field()
+            + f"QDateEdit::drop-down {{ border:none; background:transparent;"
+              f" width:{DateBox.ARROW_W}px; }}"
+              f"QDateEdit::down-arrow {{ image:none; width:0; height:0; }}")
         d_date = ex.parse_title(d.get("name") or "").date
         self.f_date.setDate(QDate(d_date.year, d_date.month, d_date.day)
                             if d_date else NO_DATE)
