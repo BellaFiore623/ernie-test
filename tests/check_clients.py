@@ -290,9 +290,13 @@ class _Box:
 class _Editor:
     """Card's two text fields, without a QApplication to build one under."""
 
-    def __init__(self, title, client):
+    def __init__(self, title, client, opened_with=None, had=""):
         self.f_title = _Box(title)
         self.f_client = _Box(client)
+        # What the box was seeded with, and what the card already held. The
+        # editor sets both; an override turns on telling them apart.
+        self._client_opened_with = client if opened_with is None else opened_with
+        self._edit_base = {"client_override": had}
 
 
 def check_picking_a_client_does_not_vouch_for_the_card():
@@ -317,13 +321,73 @@ def check_picking_a_client_does_not_vouch_for_the_card():
     c.ok(bert.needs_triage(card), "an unreadable card stays red")
 
     # Typing a client the title does not mention is still the acknowledgement
-    # it always was, and still clears the red.
-    said = override(_Editor("nonsense title", "Thrasher"))
+    # it always was, and still clears the red. `opened_with` is empty because
+    # this is the case where somebody *typed* the name -- the editor opened on
+    # a card that had none, which is what makes it a decision rather than a
+    # box nobody touched.
+    said = override(_Editor("nonsense title", "Thrasher", opened_with=""))
     c.equal(said, "Thrasher", "a client the title lacks is still an override")
     c.ok(not bert.needs_triage({"priority": "high", "queue": "PROD",
                                 "issues": ["title_none"],
                                 "client_override": said}),
          "and that one clears the red, as it always did")
+    return c.report()
+
+
+def check_an_untouched_client_box_invents_no_override():
+    """The box is seeded from the card, so leaving it alone decides nothing.
+
+    Take the client out of a title and the box goes on holding whatever the
+    old title parsed to. That used to be written back as an override -- "the
+    parsed client is wrong, use this instead" -- which nobody had asked for,
+    on a card whose owner had edited only the title. Worse, the override then
+    re-seeded the box it came from, so every later save wrote it again and it
+    could never clear. Reported from the sandbox as a card that would not stop
+    saying `Edge AI Solutions` after the client was taken out of its title.
+
+    Three answers, and only the middle one worked before:
+
+      untouched   whatever the card already had, which is usually nothing
+      changed     the new name, because that is a decision
+      emptied     nothing, because that is also a decision
+    """
+    c = Check("an untouched client box invents no override")
+    override = bert.Card._override
+
+    # The case that was wrong. The title no longer names a client; the box
+    # still holds the one the old title parsed to.
+    e = _Editor("PROD: 29Jun26 - Trade show TOF", "Edge AI Solutions",
+                opened_with="Edge AI Solutions", had="")
+    c.equal(override(e), "", "an untouched box writes no override")
+
+    # An override the card already carries survives somebody opening the
+    # editor and saving something else.
+    e = _Editor("nonsense title", "Thrasher",
+                opened_with="Thrasher", had="Thrasher")
+    c.equal(override(e), "Thrasher", "one already there is kept")
+
+    # Typing a different name is a decision, and still writes.
+    e = _Editor("nonsense title", "Bravo Environmental",
+                opened_with="Thrasher", had="Thrasher")
+    c.equal(override(e), "Bravo Environmental", "a name just typed is written")
+
+    # Emptying the box is a decision too, and clears it.
+    e = _Editor("nonsense title", "", opened_with="Thrasher", had="Thrasher")
+    c.equal(override(e), "", "an emptied box clears it")
+
+    # And the title catching up retires it, which the order of the checks in
+    # _override is what preserves.
+    e = _Editor("PROD: Thrasher - 03Aug26 - x", "Thrasher",
+                opened_with="Thrasher", had="Thrasher")
+    c.equal(override(e), "", "a title that now says it retires the override")
+
+    # The whole point: the red edge stays on a card nobody vouched for.
+    card = {"priority": "high", "queue": "PROD", "issues": ["title_loose"],
+            "client_override": override(
+                _Editor("PROD: 29Jun26 - Trade show TOF", "Edge AI Solutions",
+                        opened_with="Edge AI Solutions", had=""))}
+    c.ok(bert.needs_triage(card),
+         "so a card with an unreadable title is still asking for somebody")
     return c.report()
 
 
@@ -965,6 +1029,7 @@ CHECKS = (check_one_candidate_is_taken_and_two_are_not,
     check_reconciling_twice_changes_nothing,
     check_a_retired_client_still_names_its_cards,
     check_picking_a_client_does_not_vouch_for_the_card,
+    check_an_untouched_client_box_invents_no_override,
     check_the_editor_offers_the_roster_and_still_takes_anything,
     check_no_jira_means_no_change,
     check_a_missing_key_is_judged_by_what_it_is,

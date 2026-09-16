@@ -3378,6 +3378,25 @@ class Card(QFrame):
         t = ex.parse_title(self.f_title.text().strip())
         if ex.normalise_client(typed) == ex.normalise_client(t.client_raw or ""):
             return ""
+        # Untouched. The box was *seeded* from the card, so a name still
+        # sitting in it is not a decision anybody made in this editor -- and
+        # an override is a decision. Take the client out of a title and the
+        # box goes on holding what the old title parsed to, which used to be
+        # written back as "the parsed client is wrong, use this instead": an
+        # override out of nothing, on a card whose owner had only edited the
+        # title. It then re-seeded the box it came from and could never clear.
+        #
+        # So an untouched box answers with whatever the card already had,
+        # which is usually nothing and must not become something. Emptying
+        # the box is still a decision and still clears it, and the title
+        # check above still comes first, so an override the title has caught
+        # up with is retired rather than preserved.
+        #
+        # The same guard `client_note` uses, on the half that writes.
+        if client_squash(typed) == client_squash(
+                getattr(self, "_client_opened_with", "") or ""):
+            base = getattr(self, "_edit_base", None) or {}
+            return base.get("client_override") or ""
         return typed
 
     def is_dirty(self):
