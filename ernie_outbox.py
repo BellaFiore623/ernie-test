@@ -78,7 +78,7 @@ def describe(e) -> str:
     """
     verb, old, new = e["verb"], e["old_value"], e["new_value"]
     if verb == "completed":
-        return "marking this complete"
+        return "closing this thread"
     if verb == "priority_changed":
         if new == "critical":
             return "making this critical"
@@ -112,7 +112,10 @@ def render(event, original=None) -> str | None:
             if event["actor_name"]:
                 return f"**{who}** closed this thread in Discord."
             return "This thread was closed in Discord."
-        return f"**{who}** marked this complete in Bert."
+        # The same sentence with the place swapped. "Complete" is the word
+        # for a work item -- one bubble on the card -- and using it for the
+        # ticket as well made the two read as the same act.
+        return f"**{who}** closed this thread in Bert."
     if verb in ("reopened", "thread_reopened"):
         if verb == "thread_reopened":
             return "This thread was reopened, so it's back on the Bert board."

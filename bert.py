@@ -3052,13 +3052,37 @@ class Card(QFrame):
         self.edit_btn.setStyleSheet(btn_css())
         self.edit_btn.clicked.connect(self.enter_edit)
 
+        # Close, not Complete. Completing is what happens to a work item --
+        # one bubble, one tick -- and a ticket leaving the board is a
+        # different act on a different thing. Sharing the word made the two
+        # read as the same one.
+        #
         # Qt puts a button's icon on the left, always.
-        self.done_btn = QPushButton("Complete ")
+        self.done_btn = QPushButton("Close ")
         self.done_btn.setLayoutDirection(Qt.RightToLeft)
         self.done_btn.setStyleSheet(btn_css())
         self.done_btn.setIcon(tick_icon(T.OK_FG))
         self.done_btn.setIconSize(QSize(12, 12))
         self.done_btn.clicked.connect(lambda: self.board.complete(self.thread_id))
+
+        # Not while there is work left on it. A card is a list of what is
+        # still to do, so closing one with bubbles on it says the ticket is
+        # finished while the card says it is not.
+        #
+        # The bubbles are drawn directly above this button, so the disabled
+        # control sits beside the reason for it; the tooltip carries what to
+        # do about it, both of which are one click in the editor.
+        #
+        # The server refuses it as well, because this half can go stale: the
+        # board is up to five seconds behind, and the other machine can add
+        # an item inside that window.
+        if items:
+            n = len(items)
+            self.done_btn.setEnabled(False)
+            self.done_btn.setToolTip(
+                f"{n} thing{'' if n == 1 else 's'} still to do on this "
+                f"ticket. Tick them off, or remove them in the editor, "
+                f"then close it.")
 
         age, chips = self._fit_foot(d)
         if age:
@@ -7408,13 +7432,25 @@ class Bert(QMainWindow):
         except Conflict as e:
             self._clear_toast()
             d = e.detail
+            if d.get("code") == "work_outstanding":
+                # Reachable with the button disabled, which is why it is
+                # handled rather than trusted away: the board is up to five
+                # seconds behind the server.
+                left = d.get("items") or []
+                lines = [d.get("message", "This ticket still has work on it.")]
+                lines += [""] + [f"\u2022  {b}" for b in left]
+                lines += ["", d.get("hint", "")]
+                QMessageBox.information(self, "Still to do",
+                                        "\n".join(lines).strip())
+                self.refresh()
+                return
             QMessageBox.information(
                 self, "Already closed",
                 f"{d.get('message', 'Someone already closed this.')}\n\n"
                 f"{moments_ago(d.get('at'))}".strip())
         except Exception as e:
             self._clear_toast()
-            QMessageBox.warning(self, "Couldn't complete that card", str(e))
+            QMessageBox.warning(self, "Couldn't close that ticket", str(e))
         else:
             self.completing.add(tid)
             # Take it off the board now, even with an editor open: an open

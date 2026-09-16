@@ -107,6 +107,12 @@ rules and points here for the why.
   Bert phrases the line off, so an unnamed closure says "closed in Discord"
   rather than running the usual fallback, which would have read "Ernie closed
   it" -- certainly wrong, Ernie being the one party that definitely did not.
+- **Complete is the word for a work item; close is for a ticket.** Pressing
+  the card's button posts `X closed this thread in Bert`, which is this
+  sentence with the place swapped -- and the ticket cannot be closed at all
+  while work items are outstanding, which `ernie_api.guard_work_done` holds.
+  That guard is Bert's alone: archiving in Discord closes the card whatever
+  is left on it, because Discord is the source of truth.
 - **The thread is told, and only one machine may tell it.** It was silent for
   a long time on the reasoning `started` follows -- it happened in Discord
   already, so saying so there is Ernie telling the room what it just watched

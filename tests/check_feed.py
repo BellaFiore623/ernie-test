@@ -512,8 +512,11 @@ def check_a_narrow_window_keeps_the_controls() -> bool:
     # away the only sign that there is more of it.
     src = ast.dump(render)
     c.ok("FEED_MORE_W" in src, "the chevron has a column of its own")
-    body = _bert_src()
-    c.ok("body += " not in body,
+    # Read off `_render_feed` alone. It used to grep the whole of bert.py,
+    # so any local called `body` anywhere in 8,000 lines failed a rule about
+    # this one function -- and the rule is about the line being built here,
+    # not about a name being unavailable in the rest of the file.
+    c.ok("body += " not in ast.unparse(render),
          "and is not appended to the line it would be clipped with")
 
     return c.report()

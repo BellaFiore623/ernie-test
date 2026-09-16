@@ -176,6 +176,26 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   editor sets `removed_at`, and undo needs both rows still there. The editor
   sends `work_add` / `work_remove`, not the whole list, so two people adding
   different items merge instead of colliding.
+- **Complete is the word for a work item; close is the word for a ticket.**
+  One bubble and one tick against the whole ticket leaving the board: two
+  acts on two different things, and they shared a word. The card's button
+  says **Close**, and the thread is told `X closed this thread in Bert` —
+  the same sentence as the Discord closure with the place swapped.
+- **A ticket with work still on it cannot be closed from Bert.** A card is a
+  list of what is left, so closing one with bubbles on it says the ticket is
+  finished while the card says it is not. `guard_work_done` refuses it and
+  names what is in the way; Bert disables the button and puts the reason in
+  its tooltip, which reads because the bubbles are drawn directly above it.
+  Both ways out are one click in the editor — tick it off, or take it off
+  the card with the ✕ — and a guard that counted every row rather than the
+  open ones would make a ticket uncloseable for ever, which is what
+  `tests/check_close_rule.py` holds.
+  **It holds in Bert only, and that is not a gap.** Archiving a thread in
+  Discord closes its card whatever the work items say, because Discord is
+  the source of truth: 21 of production's closures arrived exactly that way,
+  against **0** ever pressed in Bert with work outstanding. So the rule
+  forbids something nobody has done, and it is "Bert will not let you"
+  rather than "it cannot happen".
 - A retired queue is parsed, never offered. `QUEUES` is every prefix a
   title may legitimately start with and drives `_PREFIX`, so nothing may be
   taken out of it because it fell out of use: the titles already in the mirror

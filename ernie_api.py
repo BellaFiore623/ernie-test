@@ -489,6 +489,32 @@ def open_items(con, thread_id: str) -> list[dict]:
            ORDER BY position""", (thread_id,)))
 
 
+def guard_work_done(items, doing: str = "close"):
+    """Refuse to close a ticket that still has work on it.
+
+    A card is a list of what is left to do, so closing one with bubbles still
+    on it says the ticket is finished while the board says it is not. There
+    is always a way through and both are one click in the editor: tick a
+    bubble off, or take it off the card with the X.
+
+    Bert disables its own button in this state, and this is the half that
+    does not depend on a board being up to date -- the other machine can add
+    an item between a poll and a click.
+
+    It cannot hold on the Discord side and is not meant to. Archiving a
+    thread closes its card whatever the work items say, because Discord is
+    the source of truth; 21 of production's closures arrived that way. This
+    is "Bert will not let you", not "it cannot happen".
+    """
+    if items:
+        n = len(items)
+        conflict("work_outstanding",
+                 f"This ticket still has {n} thing{'' if n == 1 else 's'} "
+                 f"to do.",
+                 items=[i["body"] for i in items], doing=doing,
+                 hint="Tick them off or remove them in the editor first.")
+
+
 def guard_open(card, doing: str = "change"):
     """Refuse to touch a card somebody has already closed."""
     if card["completed_at"]:
@@ -1453,10 +1479,14 @@ def complete(thread_id: str, body: ActorBody):
         # The flag is acted on by make_threads the moment the thread exists,
         # so nothing is lost and nothing has to be remembered.
         draft = con.execute(
-            "SELECT draft_id FROM new_threads WHERE draft_id=? "
+            "SELECT draft_id, work_json FROM new_threads WHERE draft_id=? "
             "AND posted_at IS NULL AND complete_on_arrival = 0",
             (thread_id,)).fetchone()
         if draft:
+            # A draft's items are the list typed into the editor, none of
+            # which can be ticked yet -- there is no card to tick them on.
+            guard_work_done([{"body": b} for b in
+                             json.loads(draft["work_json"] or "[]")])
             con.execute(
                 "UPDATE new_threads SET complete_on_arrival=1, completed_by=? "
                 "WHERE draft_id=?", (actor, thread_id))
@@ -1470,6 +1500,7 @@ def complete(thread_id: str, body: ActorBody):
 
         card = load_card(con, thread_id)
         guard_open(card, "close")
+        guard_work_done(open_items(con, thread_id))
 
         ts = now_iso()
         con.execute(
