@@ -3103,9 +3103,16 @@ class Card(QFrame):
         # The server refuses it as well, because this half can go stale: the
         # board is up to five seconds behind, and the other machine can add
         # an item inside that window.
+        #
+        # **Only the count is set here; `set_writable` is what disables the
+        # button.** Calling setEnabled(False) at this point looked right and
+        # did nothing: `set_writable` runs at the end of this function and
+        # again on every change of connection state, and it was handing the
+        # button straight back. Reported as the button not being greyed out
+        # while the warning behind it worked perfectly.
+        self._work_left = len(items)
         if items:
-            n = len(items)
-            self.done_btn.setEnabled(False)
+            n = self._work_left
             self.done_btn.setToolTip(
                 f"{n} thing{'' if n == 1 else 's'} still to do on this "
                 f"ticket. Tick them off, or remove them in the editor, "
@@ -3921,8 +3928,16 @@ class Card(QFrame):
         self.board.finish_item(self.thread_id, item_id)
 
     def set_writable(self, ok):
+        """The one place that decides whether a card's buttons work.
+
+        Closing needs two things: a board that can write at all, and a ticket
+        with nothing left on it. Both live here, because this runs after
+        `_build_view` has placed the buttons and again whenever the
+        connection changes -- so a rule applied anywhere else is undone the
+        next time it runs.
+        """
         if self.done_btn is not None:        # None while the editor is open
-            self.done_btn.setEnabled(ok)
+            self.done_btn.setEnabled(ok and not getattr(self, "_work_left", 0))
             self.edit_btn.setEnabled(ok)
         if self.work is not None:
             self.work.set_enabled(ok)

@@ -197,24 +197,43 @@ def check_a_draft_is_held_to_the_same_rule() -> bool:
 def check_bert_disables_the_button_rather_than_hiding_the_rule() -> bool:
     """The client half: the control is dead, and it says why on hover.
 
+    **And exactly one place decides it.** The first attempt called
+    `setEnabled(False)` where the button is built, which looked right and did
+    nothing: `set_writable` runs at the end of `_build_view` and again on
+    every change of connection state, and it was handing the button straight
+    back with `setEnabled(ok)`. Reported as the button not being greyed out
+    while the dialog behind it worked perfectly -- which is the signature of
+    a rule applied somewhere that a later line overwrites.
+
+    So `_build_view` records how much is left and writes the tooltip, and
+    `set_writable` is the only caller of `setEnabled` on that button. This
+    reads both ends, because one of them being right was never the problem.
+
     Read off the source, because a widget built with no QApplication aborts
-    the process rather than raising -- the rule these checks have always
-    followed.
+    the process rather than raising.
     """
     c = Check("Bert disables the button rather than hiding the rule")
 
-    src = inspect.getsource(bert.Card._build_view)
+    build = inspect.getsource(bert.Card._build_view)
+    writable = inspect.getsource(bert.Card.set_writable)
 
-    c.ok("setEnabled(False)" in src,
-         "the close button is disabled when something is outstanding")
-    c.ok("setToolTip" in src.split("done_btn = ")[1][:1500],
-         "and carries the reason, since a dead control that says nothing "
-         "is the thing being avoided")
-
-    # The list it branches on is the one the card is already drawing, so the
-    # disabled button and the bubbles above it can never disagree.
-    c.ok("if items:" in src,
+    c.ok("_work_left" in build,
+         "_build_view records how much is still to do")
+    c.ok("setToolTip" in build.split("done_btn = ")[1][:1600],
+         "and gives the button its reason, since a dead control that says "
+         "nothing is the thing being avoided")
+    c.ok("if items:" in build,
          "keyed on the same list the card draws its bubbles from")
+
+    # The regression: nothing may enable or disable that button except the
+    # one function that runs last.
+    c.ok("done_btn.setEnabled" not in build,
+         "and _build_view never touches setEnabled itself -- set_writable "
+         "runs after it and would undo it")
+    c.ok("_work_left" in writable,
+         "set_writable is where the rule actually applies")
+    c.ok(writable.count("done_btn.setEnabled") == 1,
+         "and it is the single place that decides")
 
     return c.report()
 
