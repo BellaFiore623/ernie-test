@@ -834,6 +834,21 @@ def needs_triage(c) -> bool:
 _DATE_RX = re.compile(ex._DATE_TOKEN, re.IGNORECASE)
 
 
+def title_takes_client(title: str) -> bool:
+    """Whether picking a client can reach this title at all.
+
+    `_suggest_title` rebuilds the client segment, and there is only a segment
+    to rebuild once the date has marked where it ends -- the same anchoring
+    `title_problems` turns on. Below that the pick lands nowhere: the card
+    changes, because the name is saved as a `client_override`, and the thread
+    title does not, which reads as the dropdown being broken.
+
+    Stated once so the editor can act on it and say it in the same breath,
+    rather than one of them drifting from the other.
+    """
+    return ex.parse_title(title or "").confidence in ("strict", "loose")
+
+
 def title_problems(c) -> list:
     """What is actually wrong with this card's title, in words.
 
@@ -3331,8 +3346,19 @@ class Card(QFrame):
         lab = getattr(self, "client_state", None)
         if lab is None:
             return
-        note = client_note(self.f_client.text(), self.board.roster,
-                           getattr(self, "_client_opened_with", ""))
+        lines = [client_note(self.f_client.text(), self.board.roster,
+                             getattr(self, "_client_opened_with", ""))]
+        # A pick that cannot reach the title has to say so. Silence reads as
+        # the dropdown being broken -- the card updates, because the name is
+        # saved as an override, and the thread title sits there unchanged.
+        # Only once there is something to place, and only while the title is
+        # still the editor's to rebuild.
+        if (self.f_client.text().strip()
+                and not getattr(self, "_title_touched", True)
+                and not title_takes_client(self.f_title.text())):
+            lines.append("The title has nowhere to put a client yet \u2014 give it "
+                         "a tag and a date and it will follow.")
+        note = "\n".join(x for x in lines if x)
         lab.setText(note)
         lab.setVisible(bool(note))
 
@@ -3345,7 +3371,7 @@ class Card(QFrame):
         # otherwise a queue just chosen from the dropdown gets overwritten the
         # moment the client is edited.
         t = ex.parse_title(self.f_title.text().strip())
-        if t.confidence not in ("strict", "loose"):
+        if not title_takes_client(self.f_title.text()):
             return                  # nothing dependable to rebuild from
         client = self.f_client.text().strip() or t.client_raw or ""
         self.f_title.setText(
@@ -3371,6 +3397,9 @@ class Card(QFrame):
                 f"{q}: {client} - {title_stamp(today)} - what it's about")
 
     def _check_title(self, _text=None):
+        # The note under the Client box depends on the title as well as
+        # the box, so editing the title has to re-ask it.
+        self._say_client()
         t = ex.parse_title(self.f_title.text().strip())
         # Keep the dropdown showing whatever the title actually says, including
         # when the person types a different prefix by hand.

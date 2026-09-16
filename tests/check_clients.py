@@ -464,6 +464,47 @@ def check_a_red_card_says_what_is_wrong_with_it():
     return c.report()
 
 
+def check_a_pick_that_cannot_reach_the_title_says_so():
+    """Picking a client rebuilds the title's client segment -- when there is
+    one to rebuild.
+
+    There is only a segment once the date has marked where it ends, the same
+    anchoring title_problems turns on. Below that the pick lands nowhere: the
+    card changes, because the name is saved as a client_override, and the
+    thread title sits there unchanged. Reported as picking Bill Patterson
+    Construction over `Thrasher - Trade show TOF` and watching the title not
+    move.
+
+    The editor cannot make it reach -- there is nowhere in that title to put a
+    client, and composing one from the fields was measured and rejected. What
+    it can do is stop being silent about it, which is what the note under the
+    box now carries.
+    """
+    c = Check("a pick that cannot reach the title says so")
+    takes = bert.title_takes_client
+
+    for t in ("PROD: Thrasher - 29Jun26 - Trade show TOF",
+              "PROD: 29Jun26 - Trade show TOF",
+              "OPS: Thrasher 3 Aug 2026 gasket"):
+        c.ok(takes(t), f"a dated title takes a client: {t!r}")
+
+    for t in ("Thrasher - Trade show TOF",
+              "PROD: Thrasher - Trade show TOF",
+              "ENG: Retired bots",
+              ""):
+        c.ok(not takes(t), f"an undated one does not: {t!r}")
+
+    # The two halves agree: the titles a pick cannot reach are exactly the
+    # ones title_problems is still asking for a date on.
+    for t in ("PROD: Thrasher - Trade show TOF", "ENG: Retired bots"):
+        said = bert.title_problems({"confidence": "prefix_only", "queue": "X",
+                                    "client_raw": None, "thread_date": None,
+                                    "name": t})
+        c.ok(any("date" in s.lower() for s in said),
+             f"and the card is asking for the date that would fix it: {said}")
+    return c.report()
+
+
 def check_the_editor_offers_the_roster_and_still_takes_anything():
     """A customer exists before Jira hears about them.
 
@@ -1104,6 +1145,7 @@ CHECKS = (check_one_candidate_is_taken_and_two_are_not,
     check_picking_a_client_does_not_vouch_for_the_card,
     check_an_untouched_client_box_invents_no_override,
     check_a_red_card_says_what_is_wrong_with_it,
+    check_a_pick_that_cannot_reach_the_title_says_so,
     check_the_editor_offers_the_roster_and_still_takes_anything,
     check_no_jira_means_no_change,
     check_a_missing_key_is_judged_by_what_it_is,
