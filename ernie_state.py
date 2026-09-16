@@ -54,37 +54,27 @@ SUMMARY_HEARTBEAT_S = 600   # how stale "last checked" may get before a rewrite
 # neither cards nor summary and `publish()` never has it in the list it prunes.
 # Which is to say it is already safe where it sits; this only has to read it.
 RELEASE_MARK = "**Release**"
-# **How forgiving the opener is, and why it can afford to be.** The note is
-# read off a *pin*, and pinning is a deliberate act -- nobody pins a message
-# by accident, so the message itself does not have to carry the whole burden
-# of proving it was meant. What this must still refuse is somebody *talking*
-# about a release in a pinned message, which is why the word has to start the
-# message rather than merely appear in it.
+# How forgiving the opener is, and why it can afford to be. The note is read
+# off a *pin*, and pinning is deliberate, so the text does not have to carry
+# the whole burden of proving it was meant. What it must still refuse is
+# somebody *talking* about a release in a pinned message, which is why the
+# word has to start it.
 #
-# So: any amount of markdown or whitespace, the word in any case, any of the
-# obvious endings, and any punctuation after it. `**Release** 0.9.1`,
-# `Release 0.9.1`, `# Released: 0.9.1` and `__release__ 0.9.1` all read.
-# Written after the first note posted by hand rather than by a script turned
-# out to say `Release 0.9.1` -- no asterisks -- and the channel went quiet.
+# So: any markdown, any case, any of the obvious endings, any punctuation
+# after. `**Release** 0.9.1`, `Release 0.9.1`, `# Released: 0.9.1` and
+# `__release__ 0.9.1` all read -- a person writes this, not a script.
 RELEASE_OPENER = re.compile("^[ *_#>`~-]*release[sd]?(?![a-z])[ *_#>`~:,.-]*", re.I)
-# A version is digits and dots, and it is the **first** thing after the word
-# rather than merely somewhere after it. Searching loosely is what made
-# `Release v0.9.1` read as `9.1`: a word boundary does not fall between `v`
-# and `0`, so the match began at the `9`. Worth being careful about precisely
-# because the git tags are `v0.9.0` and `v0.9.1`, and the release recipe
-# writes the tag two lines above the note -- so typing the `v` is the natural
-# slip rather than an odd one.
+# A version is digits and dots, and it has to start where the marker left
+# off rather than turn up somewhere after it. A loose search reads
+# `Release v0.9.1` as `9.1`, because no word boundary falls between `v` and
+# `0` -- and the `v` is the natural thing to type, since the git tags carry
+# one and the release recipe writes the tag two lines above the note. So the
+# `v` is allowed and swallowed.
 #
-# **It failed in both directions and neither said anything.** `v0.9.1` gave
-# `9.1`, far ahead of any real build, so every board was told to fetch
-# something that does not exist and went on saying so until somebody edited
-# the note. `v1.0.0` gave `0.0`, behind everything, so a genuine release
-# announced nothing at all -- the note up, looking right, and nobody told.
-#
-# So the `v` is allowed and swallowed, and the number has to start where the
-# marker left off. Everything downstream stays forgiving: `as_tuple` reads an
-# unparseable version as 0, so anything still getting past this can only make
-# a board look ahead, which is a silent no-op rather than a wrong answer.
+# Strict here and forgiving downstream, which is the safe way round:
+# `as_tuple` reads an unparseable version as 0, so anything getting past this
+# can only make a board look ahead -- a silent no-op rather than a wrong
+# answer.
 RELEASE_VERSION = re.compile(r"^[vV]?(\d+(?:\.\d+)+)\b")
 # The optional second number: `**Release** 0.9.1 minimum 0.9.1`, which sends
 # anything older than 0.9.1 read-only instead of merely telling it to update.

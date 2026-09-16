@@ -289,24 +289,17 @@ def post_one(con, d: Discord, event) -> str:
     except GuildMismatch:
         raise                                  # config problem, not a bad row
     except httpx.TransportError as e:
-        # **Discord was never reached, so nothing about this row was tried.**
-        # `attempts` is what decides a row has been given up on, and giving up
-        # is a statement about the *change* -- a message Discord will not
-        # accept, a thread that no longer exists. An outage says nothing about
-        # any particular row and the same thing about all of them.
-        #
-        # Measured before this: a client pointed at a dead host burned all
-        # five attempts in five passes and the row left `v_outbox_due` for
-        # good, reported as `stuck`. On the 5s drain beat that is **25
-        # seconds** of Discord being unreachable to strand every queued
-        # change permanently, with the board blaming the card. The beat split
-        # made this sharper -- it used to take two and a half minutes -- which
-        # is what turned a hazard into one worth fixing now.
+        # Discord was never reached, so nothing about this row was tried.
+        # `attempts` decides a row has been given up on, and giving up is a
+        # statement about the *change* -- a message Discord will not accept, a
+        # thread that no longer exists. An outage says nothing about any
+        # particular row and the same thing about all of them, and five
+        # counted passes on the 5s beat is 25 seconds of it to strand every
+        # queued change for good.
         #
         # A TransportError is precisely "no HTTP response happened". Anything
-        # that got an answer, including a 4xx, still counts: Discord replied
-        # about this request, so the attempt was real. The error is still
-        # recorded, so `last_error` says what is wrong while it is wrong.
+        # that got an answer, a 4xx included, still counts. `last_error` is
+        # recorded either way, so it says what is wrong while it is wrong.
         con.execute(
             """UPDATE events SET claimed_at=NULL, last_error=?
                 WHERE event_id=?""",
@@ -385,18 +378,15 @@ def make_threads(con, d: Discord) -> dict:
                             "WHERE draft_id=?", (tid, row["draft_id"]))
                 con.commit()
 
-            # The card is written before the two messages rather than after
-            # them, so a message that fails still leaves the ticket on the
-            # board where somebody put it -- and recorded here at all rather
-            # than left to the sync, which would bring the card back a cycle
-            # later and in unassigned, losing the band the + was pressed in.
-            # The sync reconciles these rows on its next pass anyway; they
-            # are written the way it writes them.
+            # Before the two messages, so a message that fails still leaves
+            # the ticket on the board where somebody put it -- and written
+            # here rather than left to the sync, which would bring the card
+            # back a cycle later in unassigned, losing the band the + was
+            # pressed in. The sync reconciles these rows on its next pass.
             #
-            # Guarded on the card not existing yet, because a retry reaches
-            # this a second time: the work items are a plain INSERT with a
-            # fresh uuid each, so running it twice would give the ticket every
-            # bubble twice.
+            # Guarded on the card not existing yet: a retry reaches this
+            # again, and the work items are a plain INSERT with a fresh uuid
+            # each, so a second run gives the ticket every bubble twice.
             ts = now()
             if not con.execute("SELECT 1 FROM cards WHERE thread_id=?",
                                (tid,)).fetchone():
@@ -413,18 +403,14 @@ def make_threads(con, d: Discord) -> dict:
                 # came up grey with "unknown client" the moment its thread
                 # existed.
                 load.record_title(con, tid, row["title"], ts)
-                # Where the board has been showing it. rank is the order and
-                # the only one, so it has to say what the board says -- MAX
-                # plus a step put the card at the bottom of the band, and a
-                # ticket somebody had just written slid away from them as soon
-                # as it became real.
+                # Where the board has been showing it. Rank is the order and
+                # the only one, so it has to say what the board says.
                 #
-                # The draft carries its own rank now, because it can be
-                # dragged while it waits: recomputing the band's edge here
-                # would take a ticket somebody had moved down into Medium and
-                # put it back at the top. A row written before that column
-                # existed has none, and falls back to the edge it would have
-                # been given.
+                # The draft's own rank, never a recomputed band edge: a draft
+                # can be dragged while it waits, and recomputing here would
+                # take a ticket somebody moved down into Medium and put it
+                # back at the top. A row written before that column existed
+                # has none and falls back to the edge.
                 rank = row["rank"]
                 if rank is None:
                     edge = con.execute(

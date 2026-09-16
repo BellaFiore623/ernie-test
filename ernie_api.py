@@ -247,42 +247,30 @@ def clean_url(raw):
     return raw if scheme in ("http", "https") else ""
 
 
-# **The retagging worth counting, and only it.** The question was how much
-# production work turns out to be operations, which is a pair of numbers:
-# PROD to OPS, and back the other way. Four tags make twelve possible pairs
-# and all twelve were reported -- so the two that answer the question shared
-# a 244px panel with ENG to PROD and CS to ENG, which nobody asked about and
-# which are a handful of rows each. The noise pushed the signal down the
-# block and then off the bottom of `STATS_MOVES_SHOWN`.
+# The retagging worth counting, and only it: PROD to OPS and back, which is
+# the pair the panel was asked for. Four tags make twelve possible pairs, and
+# the ten nobody asked about are a handful of rows each that crowd the two
+# that answer the question out of a 244px panel.
 #
-# Filtered in the **query**, not in the drawing. Counting everything and
-# showing two would leave a block whose rows do not make its own total, and
-# a figure that does not add up is the first one somebody stops believing --
-# the same rule `Other` exists for in the tally. Here there is no `Other` to
-# write, because the pairs nobody asked about are not counted at all.
+# Filtered in the query, never in the drawing. Counting everything and
+# showing two leaves a block whose rows do not make its own total, and a
+# figure that does not add up is the first one somebody stops believing --
+# the rule `Other` exists for in the tally.
 #
-# A pair taken out of here stops being counted; it is not deleted from
-# anything. `thread_titles` is append-only and still holds every rename, so
-# widening this again is one line and no backfill.
+# Widening it again is one line and no backfill: `thread_titles` is
+# append-only and still holds every rename.
 TAG_MOVES_COUNTED = (("PROD", "OPS"), ("OPS", "PROD"))
 
-# **What invented history is prefixed with.** `tools/fake_stats_data.py`
-# gives the sandbox a year of plausible past so the figures panel can be
-# looked at and judged -- on a fresh database the whole panel reads
-# `[0, 0, 0, 0, 0, 0, 0]`, which shows nobody what it is for.
+# What invented history is prefixed with. `tools/fake_stats_data.py` gives
+# the sandbox a plausible past so the figures panel can be judged -- a fresh
+# database draws `[0, 0, 0, 0, 0, 0, 0]`, which shows nobody what it is for.
 #
-# That tool is careful: it refuses production, everything it adds carries
-# this prefix so `--clear` takes exactly it, and everything invented is
-# *closed*, so nothing sits on the board pretending to be a live ticket with
-# no Discord thread behind it. The one thing it could not do is say so --
-# **nothing on the board could tell you which you were looking at**. Run it
-# for a demo, forget to clear it, and the figures are believed a month later;
-# or somebody screenshots the window and it turns up in a meeting as real.
-# So `/health` reports it and Bert says so across the top of the window.
+# The prefix is what makes the invention visible: `/health` reports it and
+# Bert says so across the top of the window, so a demo board nobody cleared
+# cannot be screenshotted and taken for real. It also scopes `--clear`.
 #
-# The prefix is here rather than in the tool because this is what reads it;
-# `tests/check_stats.py` holds the two together, the way `check_status.py`
-# holds a colour to bert's.
+# It lives here rather than in the tool because this is what reads it;
+# `tests/check_stats.py` holds the two together.
 INVENTED_PREFIX = "fake-"
 
 REQUIRED_COLUMNS = {
@@ -644,21 +632,16 @@ def health():
 
         return {
             "ok": bool(last and not last["error"]),
-            # Which build is answering. Bert shows it, and the machine on the
-            # other end of #ernie-state has no other way to ask.
-            # The build, plus where a newer Bert comes from. **Published rather
-            # than built in**, so moving from GitHub to Bitbucket or anywhere
-            # else is one line in an env file and a restart of Ernie -- no new
-            # Bert, and nothing to re-distribute to somebody holding an exe.
-            # `newest` is what anybody should be on; `version` is what this Ernie
-            # happens to be. They are the same thing only from source, where a
-            # git pull is the update and the other end of the API is a second
-            # checkout. Absent when nothing has published one, and Bert fails
-            # open on that the way it does on every other field here.
-            # `newest` is what anybody should be on; `required` is the floor the
-            # release note set, when it set one, and is what sends an older board
-            # read-only rather than merely telling it to update. Both are absent
-            # when nothing has published them, and Bert fails open on that.
+            # Which build is answering, where a newer Bert comes from, and
+            # the floor an older one is held to. The address is published
+            # rather than built in, so moving the download is one line in an
+            # env file and a restart of Ernie -- nothing to re-distribute to
+            # somebody already holding an exe.
+            #
+            # `version` is what this Ernie happens to be; `newest` is what
+            # anybody should be on; `required` is the floor that sends an
+            # older board read-only. Each is absent when nothing has published
+            # it, and Bert fails open on every one.
             "build": {**ernie_version.payload(), "update_url": UPDATE_URL,
                       "newest": newest["version"] if newest else None,
                       "required": (newest["minimum"] or None) if newest else None},
@@ -709,16 +692,15 @@ def stats(ageing: int = 5, days: int = 28):
     """
     con = db()
     try:
-        # 1. Completed over the window. The trend is the point: a bare "this
-        #    month" throws away the shape, and the shape is what somebody
-        #    wants. It follows the selector, because a timeframe control that
-        #    visibly does nothing to the biggest block on the panel is a
-        #    control nobody believes -- reported exactly that way.
+        # 1. Completed over the window. The trend is the point -- a bare
+        #    "this month" throws away the shape, which is what somebody
+        #    wants -- and it follows the selector, because a timeframe control
+        #    that does nothing to the biggest block on the panel is one
+        #    nobody believes.
         #
-        #    The bucket comes from the window rather than being fixed, or
-        #    seven days is one bar and a year is 365. Between four and twelve
-        #    is a shape the eye reads; the thresholds are what put every
-        #    offered window inside that.
+        #    The bucket comes from the window, or seven days is one bar and a
+        #    year is 365. The thresholds put every offered window between four
+        #    and twelve bars, which is the range the eye reads as a shape.
         span = max(1, int(days))
         # Fourteen, not ten: at ten, a two-week window fell to weekly and
         # drew *two bars*, which is not a trend -- it is two numbers with a
@@ -791,25 +773,16 @@ def stats(ageing: int = 5, days: int = 28):
                     "median_days": round(median, 1),
                     "slowest_days": round(spans[-1], 1)}
 
-        # 4. Open tickets with no build or return raised against them. Only
-        #    230 of 889 threads ever get one, so this is invisible today and
-        #    is the one number here somebody can act on directly.
-        # There was a fourth: open tickets with no Build Request or Return
-        # raised against them. It was dropped after Julian read the panel --
-        # a figure nobody acts on is furniture, and it is the same standard
-        # the other three earn their place by. The query goes with it rather
-        # than being left to run every refresh for a field nothing reads.
         # 4. How much there is, how much arrived and how much left, split by
         #    the tag. Three questions in one block because they are read
         #    together -- "twelve open, nine in, seven out" is a sentence, and
         #    the same three numbers on three separate screens is not.
         #
-        #    **Open is a level; created and closed are flows.** Open is what
-        #    is on the plate *now* and does not move with the window, which
-        #    is why it is labelled so in the panel. Windowing it would answer
-        #    "opened in the last four weeks and still open", which is a
-        #    different and much less useful question -- the backlog somebody
-        #    is carrying does not start at the beginning of the window.
+        #    Open is a level; created and closed are flows, and the labels say
+        #    so. Open is what is on the plate *now* and does not move with the
+        #    window: windowing it would answer "opened in the last four weeks
+        #    and still open", which is a different and much less useful
+        #    question.
         since = f"-{max(1, int(days))} days"
         # datetime() on both sides. Python writes ISO8601 with a T and
         # SQLite's datetime('now') uses a space, so a raw string compare is
@@ -852,37 +825,20 @@ def stats(ageing: int = 5, days: int = 28):
             for k in ("open", "created", "closed"):
                 tally[k].setdefault(q, 0)
 
-        # 5. Tickets that changed tag while they were open -- PROD to OPS,
-        #    mostly, which is the pair Julian asked about: work that starts as
-        #    production and turns into operations.
+        # 5. Tickets that changed tag while they were open -- PROD to OPS
+        #    and back, which is the pair the panel was asked for.
         #
-        #    **`thread_titles` already records this, so nothing new is
-        #    stored.** The tag *is* the title's prefix, the table is
-        #    append-only, and every revision carries the queue the parser read
-        #    off it -- so a tag change is already a row, with the time on it.
-        #    The two routes considered instead were a tag history written into
-        #    `#ernie-state` (which could only start counting from today) and
-        #    the other bot's log channel; neither is needed.
+        #    Nothing new is stored for it: the tag is the title's prefix,
+        #    `thread_titles` is append-only, and every revision carries the
+        #    queue the parser read off it, so a tag change is already a row
+        #    with a time on it. Cards only -- `#customer-support` is mirrored
+        #    with `generate_cards = 0`, so a retitle there is not a ticket
+        #    changing hands. Only the pairs in TAG_MOVES_COUNTED; the note
+        #    there says why the filter is here rather than in the drawing.
         #
-        #    Discord's rename system messages are in the mirror too and were
-        #    the obvious source. They were measured and rejected: 573 of
-        #    production's messages have content that parses as a title and 550
-        #    of those were written by people, and `messages` does not store
-        #    Discord's message `type`, so a rename cannot be told from
-        #    somebody pasting a title into the chat. A figure that invents
-        #    transitions is worse than no figure.
-        #
-        #    Cards only, because the panel is about the board -- and
-        #    `#customer-support` is mirrored for history with
-        #    `generate_cards = 0`, so its threads are not tickets anybody
-        #    tracks.
-        #
-        #    The honest limit, and it is the same one the state-channel route
-        #    would have had: this counts changes Ernie was watching for. A
-        #    database whose threads have one title row each has nothing to
-        #    report, which is production until it runs this build.
-        #    Only the pairs in TAG_MOVES_COUNTED -- see the note there for
-        #    why the filter is here rather than in the drawing.
+        #    It counts what the mirror holds, so a database whose threads have
+        #    one title row each has nothing to report until something
+        #    reconstructs the history. Reasoning: docs/discord.md.
         pair_sql = " OR ".join(f"(was = :f{i} AND queue = :t{i})"
                                for i in range(len(TAG_MOVES_COUNTED)))
         pair_args = {"since": since}

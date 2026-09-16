@@ -413,15 +413,11 @@ DARK = {
 # decision and the desktop does not overrule it.
 THEMES = ("system", "light", "dark")
 THEME_LABEL = {"system": "Follow the desktop", "light": "Light", "dark": "Dark"}
-# What a board with no setting yet opens as. **Dark, not the desktop.** Light
-# was reported as tiring across four rounds by the person who uses this all
-# day, and dark is the one measured as restful -- mean luminance 0.012 with
-# 95% of the screen inside a single band, against light's 0.573 spread over
-# three. Following the desktop would hand a fresh install whichever the
-# machine happened to be set to, which is a coin toss on the question that
-# has taken the most work to answer. Both other choices are one dropdown away
-# in Settings, and anybody who has already chosen keeps their choice: this is
-# only the fallback when the key is absent.
+# What a board with no setting yet opens as: dark, not the desktop.
+# Following the desktop would hand a fresh install whichever the machine
+# happened to be set to, which is a coin toss on the question that has taken
+# the most work to answer. Only the fallback when the key is absent, so
+# anybody who has chosen keeps their choice. Measurements: docs/bert-ui.md.
 THEME_DEFAULT = "dark"
 
 # How the editor asks for a title. `guided` shows the tag, client, date and
@@ -2013,22 +2009,16 @@ def client_resolve(typed, roster, opened_with="") -> str:
         return ""
     if client_squash(typed) == client_squash(opened_with):
         return ""
-    # **The customer's own name stands; an alias does not.** `client_known`
-    # counts aliases, and that is right for the caution -- a spelling the
-    # board has used nine times is a name that resolves, and nagging about it
-    # every time is noise. It is exactly wrong here: **an alias is a wrong
-    # spelling that happens to resolve**, which is the thing this exists to
-    # correct.
+    # The customer's own name stands; an alias does not. `client_known`
+    # counts aliases, which is right for the caution -- a spelling the board
+    # has used nine times is a name that resolves -- and exactly wrong here,
+    # because an alias is a wrong spelling that happens to resolve, which is
+    # what this exists to correct. `reconcile_aliases` records one through
+    # the ticket's CR key, so a typo saved once makes itself a known
+    # spelling and every later one is left alone.
     #
-    # Found the hard way. Saving `bravon` once put it on a thread carrying
-    # Client CR PIP-2165, so `reconcile_aliases` resolved it **through the
-    # key** -- no strings compared, confidence 1.0 -- and `bravon` became a
-    # recorded alias of Bravo Environmental. The typo had taught the board
-    # that the typo was a spelling, and every later `bravon` was then left
-    # alone for being known. A feedback loop that makes a slip permanent.
-    #
-    # Correcting through an alias is also the *safest* case there is: an
-    # alias names one client outright, so there is nothing to guess.
+    # Correcting through an alias is the safest case there is: an alias names
+    # one client outright, so there is nothing to guess.
     if any(client_stands_for(typed, c.get("short_name")) for c in roster or []):
         return ""
     # Two, so "exactly one" can be told apart from "more than one".
@@ -3599,14 +3589,11 @@ class Card(QFrame):
         t = ex.parse_title(cur)
         if not q:
             # The dash is an entry, and an entry is something you can pick,
-            # so picking it has to do what it says. It used to return here --
-            # the tag stayed in the title and the dropdown snapped back to it
-            # on the next pass, which reads as the control being broken.
+            # so picking it takes the tag off rather than returning here.
             #
-            # Taking a tag off leaves a title nothing can parse, and that is
-            # allowed: the card says "No tag" and the fields are still there
-            # to put one back. It is refusing to do the visible thing that is
-            # not allowed.
+            # That leaves a title nothing can parse, which is allowed: the
+            # card says "No tag" and the fields are still there to put one
+            # back. Refusing the visible thing is what is not allowed.
             if t.confidence in ("strict", "loose"):
                 self._put("queue", "")
             else:
@@ -4741,15 +4728,12 @@ class Rail(QWidget):
         # still gets its turn.
         for band in BANDS:
             group = [c for c in self.cards if c["priority"] == band]
-            # An empty band is still named. It used to appear only while a
-            # drag was running, so a board with everything in one place showed
-            # a single heading at rest and four more the instant a card was
-            # picked up -- the list rearranging itself under you at the moment
-            # you were aiming at it, and nothing to aim at before that. The
-            # head already knows how to say "empty".
-            # Every band is named, the first one included: the word is a
-            # label rather than a separator, and "Needs Attention" at the top
-            # is the one people most need to see.
+            # Every band is named, empty or not, and the first one included.
+            # Drawing one only when it holds something rearranges the list
+            # under the pointer the moment a drag makes the empty ones
+            # reappear -- and an empty band is still a drop target carrying
+            # its own "+ New Ticket". The head already knows how to say
+            # "empty".
             shut = band in self.collapsed
             self.lay.addWidget(RailBandHead(band, len(group), shut, self))
             if shut:
@@ -5033,15 +5017,13 @@ class Stats(QWidget):
 
         self.body = QVBoxLayout()
         # A gutter down the right, and only the right. Every figure on this
-        # panel is right-aligned -- the counts in the tally, the number on a
-        # bar, the total -- so they all end at the same edge, and with no
-        # margin that edge is exactly where the scrollbar starts. Reported as
-        # the numbers running into it.
+        # panel is right-aligned, so they all end at one edge -- and with no
+        # margin that edge is where the scrollbar starts.
         #
         # It goes on the *body*, not the panel: the scroll area is what the
-        # bar belongs to, so padding outside it moves the bar too and leaves
-        # the gap in the same place. `FEED_GUTTER` is the same rule on the
-        # feed, for the same reason.
+        # bar belongs to, so padding outside it moves the bar along with the
+        # content and leaves the gap where it was. `FEED_GUTTER` is the same
+        # rule on the feed.
         self.body.setContentsMargins(0, 0, STATS_GUTTER, 0)
         self.body.setSpacing(9)
         self.holder = QWidget()
@@ -5546,13 +5528,12 @@ class Bert(QMainWindow):
         # The area around the column: the floor, like the space beside a
         # folded panel, so the column reads as a section standing on it.
         #
-        # Named and styled, not set through the palette. A palette set here is
-        # propagated over by the application palette apply_theme installs, so
-        # this quietly stayed the canvas colour and the strip beside the board
-        # was the same value as the board itself -- measured on a real window,
-        # #14181D where #0E1115 was asked for. The name is what keeps the rule
-        # off the cards: a bare `background:` on a scroll area cascades into
-        # every band and card inside it.
+        # Named and styled, never set through the palette -- a palette set on
+        # a viewport is overwritten by the application palette `apply_theme`
+        # installs, silently, leaving the strip the same value as the board.
+        # The object name is what keeps the rule off the cards: a bare
+        # `background:` on a scroll area cascades into every band and card
+        # inside it.
         vp = self.scroll.viewport()
         vp.setObjectName("boardBack")
         vp.setAttribute(Qt.WA_StyledBackground, True)
@@ -5617,15 +5598,14 @@ class Bert(QMainWindow):
         hold.setContentsMargins(0, 0, 0, 0)
         hold.setSpacing(0)
         # Two spacers whose widths are worked out rather than two stretches
-        # that split what is left evenly. Even is only centred while the two
-        # side panels are the same width: drag the running order wide and the
-        # figures narrow and the pane itself is off-centre, so a column
-        # centred *inside the pane* sits off-centre in the window. Both are
-        # widened by `_centre_board()` against the whole splitter.
+        # splitting what is left evenly. Even is centred only while the two
+        # side panels match: drag the running order wide and the figures
+        # narrow and the pane's own middle is not the window's, so a column
+        # centred inside the pane sits off-centre on screen. `_centre_board()`
+        # works them out against the whole splitter.
         #
-        # They also cannot carry stretch factors: with one each they split
-        # the pane three ways with the area and it never reached its cap --
-        # measured, the column stayed at its 463px minimum on a 1500px window.
+        # Neither may carry a stretch factor, or the three of them split the
+        # pane between themselves and the area never reaches its cap.
         self.board_pad_l = QWidget()
         self.board_pad_r = QWidget()
         for pad in (self.board_pad_l, self.board_pad_r):
@@ -5774,15 +5754,14 @@ class Bert(QMainWindow):
             self.chips[name] = chip
 
 
-        # **After both, and it clears both.** Only when something is on,
-        # because a control that does nothing is noise -- and this one says,
-        # in a word, what state the row is in.
+        # After both, and it clears both. Only when something is on, because
+        # a control that does nothing is noise.
         #
-        # It used to sit between the chips and the client box, which meant
-        # turning a chip on **pushed the dropdown 124px to the right**, under
-        # the pointer of somebody about to use it. Last in the row it moves
-        # nothing, and reading "stop narrowing" over the whole row is truer
-        # than having it speak for the chips alone.
+        # Last in the row so that turning a chip on moves nothing -- between
+        # the chips and the client box it shifted that dropdown out from
+        # under the pointer of somebody about to use it. "Stop narrowing"
+        # reading over the whole row is also truer than having it speak for
+        # the chips alone.
         self.clear_equip = QPushButton("Show all")
         self.clear_equip.setStyleSheet(btn_css())
         self.clear_equip.setCursor(Qt.PointingHandCursor)
@@ -6401,14 +6380,13 @@ class Bert(QMainWindow):
         shut = [r for r in rows if not getattr(r, "expanded", False)]
         tallest = max((r.sizeHint().height() for r in shut), default=0)
         # Held steady, and only ever upward. A row carrying an Undo button is
-        # taller than one that has lost it, so a height measured fresh every render
-        # drops the moment the last undoable row ages out of its window -- and
-        # the whole list slides up a few pixels while somebody is reading it.
+        # taller than one that has lost it, so a height measured fresh every
+        # render drops the moment the last undoable row ages out of its
+        # window -- and the whole list slides up while somebody is reading it.
         #
-        # This is the number that ran away when closed rows were allowed to
-        # wrap, and it only could because a wrapped label reported eight lines.
-        # Closed rows are one line now and check_feed holds them to it, so
-        # every value going in here is bounded by one line plus a button.
+        # Only safe because closed rows never wrap: a wrapped label reports a
+        # height at a width of its own, and this number only ever grows.
+        # check_feed holds them to one line.
         self._feed_row_h = max(getattr(self, "_feed_row_h", 0), tallest)
 
         # What a closed row leaves under its one line of text, so an opened
@@ -8148,13 +8126,10 @@ class Bert(QMainWindow):
             undo_col.setFixedWidth(FEED_UNDO_W)
             h.addWidget(undo_col, 0, Qt.AlignVCenter)
 
-            # **`renamed` belongs here and was simply missing.** The API has
-            # undone one all along -- it restores the old title, and once the
-            # rename has gone out it queues a rename back -- but Bert never
-            # offered the button, so a title change was the one thing on the
-            # feed that could not be taken back. Reported as there being no
-            # Undo beside a change still sending, which is exactly when it is
-            # free: inside the window nothing has left the machine.
+            # `renamed` belongs here: the API has always undone one, and
+            # inside the window it is free, because nothing has left the
+            # machine yet. check_feed reads this tuple off both ends, so the
+            # two cannot drift apart again.
             undoable = e["verb"] in ("completed", "priority_changed", "edited",
                                      "work_done", "renamed")
             if undoable and not e["undone_at"]:
