@@ -237,7 +237,62 @@ def check_the_reopen_message_is_behind_the_one_machine_switch() -> bool:
     return c.report()
 
 
+def check_ernies_own_announcement_never_explains_the_unarchive() -> bool:
+    """The hole the time window alone left, and it is the Discord-close path.
+
+    `reconcile_closures` stamps `last_synced_at` at the moment it closes a
+    card, so the announcement it triggers is posted *after* that stamp. A
+    bot message newer than the last sync is exactly what the window treats
+    as the cause -- so a thread closed in Discord would have its reopen
+    swallowed by Ernie's own "closed this thread in Discord".
+
+    Measured across the sandbox's archived threads before fixing it: four of
+    five would have been seen and the Discord-closed one would not.
+
+    `events.discord_message_id` records every message the outbox posted, so
+    Ernie can tell its own from a keepalive bot's with no new column and no
+    network.
+    """
+    c = Check("Ernie's own announcement never explains the unarchive")
+
+    with Board() as b:
+        # The announcement lands after the stamp, which is the trap.
+        tid = archived_thread(b, last_message_at=iso(-60), is_bot=True,
+                              synced_at=iso(-120))
+        b.con.execute(
+            """INSERT INTO events (event_id, occurred_at, thread_id, verb,
+                                   new_value, discord_message_id, posted_at)
+               VALUES ('ev-ann', ?, ?, 'completed', 'discord', 'm-1', ?)""",
+            (iso(-60), tid, iso(-60)))
+        b.con.commit()
+
+        with announcing(True):
+            load.load_thread(b.con, now_open(tid), {})
+        b.con.commit()
+
+        c.equal(reopened(b, tid), 1,
+                "a message Ernie posted is not why the thread is open, "
+                "however recent it is")
+        c.equal(b.con.execute("SELECT completed_at FROM cards WHERE "
+                              "thread_id=?", (tid,)).fetchone()[0], None,
+                "so the card comes back")
+
+    with Board() as b:
+        # Same timing, but the message is somebody else's bot: still a ping.
+        tid = archived_thread(b, last_message_at=iso(-60), is_bot=True,
+                              synced_at=iso(-120))
+        with announcing(True):
+            load.load_thread(b.con, now_open(tid), {})
+        b.con.commit()
+        c.equal(reopened(b, tid), 0,
+                "a bot message that is not ours still reads as the ping it "
+                "is, which is the half being protected")
+
+    return c.report()
+
+
 CHECKS = (check_a_thread_ernie_closed_can_be_reopened,
+          check_ernies_own_announcement_never_explains_the_unarchive,
           check_the_reopen_message_is_behind_the_one_machine_switch,
           check_a_bot_ping_is_still_not_a_reopen,
           check_a_person_posting_reopens_it,

@@ -141,9 +141,21 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
         # What makes a bot message the *cause* is arriving since we last
         # looked at this thread. One that was already sitting there while the
         # thread was archived explains nothing about why it is open now.
+        # And never Ernie's own message. The window above is not enough on
+        # its own: `reconcile_closures` stamps `last_synced_at` at the moment
+        # it closes a card, so the announcement it triggers lands *after*
+        # that stamp -- and a thread closed in Discord would have its reopen
+        # swallowed by Ernie's own "closed this thread in Discord". Measured
+        # across the sandbox's archived threads: four of five would have been
+        # seen, and the Discord-closed one would not.
+        #
+        # `events.discord_message_id` records every message the outbox has
+        # posted, so this needs no new column and no network.
         caused = con.execute(
             """SELECT is_bot FROM messages
                 WHERE thread_id=? AND datetime(created_at) > datetime(?)
+                  AND message_id NOT IN (SELECT discord_message_id FROM events
+                                          WHERE discord_message_id IS NOT NULL)
                 ORDER BY created_at DESC LIMIT 1""",
             (tid, was["last_synced_at"])).fetchone()
         if caused is not None and caused["is_bot"]:
