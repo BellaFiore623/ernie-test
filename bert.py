@@ -3566,10 +3566,18 @@ class Card(QFrame):
             preview = t.confidence in ("strict", "loose")
             if self.f_title.isReadOnly() != preview:
                 self.f_title.setReadOnly(preview)
+                # Not a disabled box -- no box. A frame around something
+                # nobody can type in is an invitation the control refuses,
+                # and the title here is the *result* of the fields rather
+                # than another thing to fill in. Frameless and unpainted it
+                # reads as the sentence it is, and stays selectable so it can
+                # still be copied out.
+                self.f_title.setFrame(not preview)
                 self.f_title.setStyleSheet(
-                    field() + (f"color:{T.MUTED};" if preview else ""))
+                    f"background:transparent; border:none; padding:0;"
+                    f" color:{T.INK}; font-size:13px;" if preview else field())
                 self.f_title.setToolTip(
-                    "Built from the fields below. It becomes editable if they "
+                    "Built from the fields below. You get it back if they "
                     "cannot express the title." if preview else
                     "The fields below cannot express this title, so it is "
                     "yours to repair.")
