@@ -18,6 +18,7 @@ import sys
 
 from support import Board, Check, iso
 
+import inspect
 import bert
 import ernie_extract as ex
 import ernie_api as api
@@ -472,7 +473,6 @@ def check_a_red_card_says_what_is_wrong_with_it():
     # one condition start disagreeing. It also named a half, and the parser
     # is ernie_extract.parse_title: Bert imports it, Ernie runs it, and whose
     # date-reading it is was never a question worth putting to a reader.
-    import inspect
     src = inspect.getsource(bert.Card._check_title)
     # Comments stripped: the reasoning above quotes the wording it replaced,
     # and a check that reads a comment as code is a check that fires at
@@ -580,7 +580,6 @@ def check_the_entry_modes_are_one_editor_with_a_preference():
     # read-only in typing mode too. Nothing put it back, because the branch
     # that would have was the one being skipped. Reported as typing mode
     # losing its editable title box.
-    import inspect
     src = inspect.getsource(bert.Card.enter_edit)
     c.ok(src.index("self._entry = ") < src.index("self._check_title()"),
          "the mode is known before the first _check_title")

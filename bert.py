@@ -975,7 +975,8 @@ def title_problems(c) -> list:
     # date" over an empty box is the software reading out what is absent
     # rather than saying what to do, and every other message here names one
     # thing to go and fix.
-    if not raw:
+    if not raw and not any(c.get(k) for k in
+                           ("queue", "client_raw", "thread_date", "summary")):
         return ["No title"]
 
     # Every pattern is anchored on the tag, so without one the parser never
