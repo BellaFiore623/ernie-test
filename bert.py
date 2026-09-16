@@ -828,6 +828,42 @@ def needs_triage(c) -> bool:
         return False
     return not (c.get("client_override") or "").strip()
 
+
+def title_problems(c) -> list:
+    """What is actually wrong with this card's title, in words.
+
+    The card used to say "Couldn't read this thread's title -- check the
+    client and details, then edit to fix" and say it to everybody, whatever
+    was wrong. Three cards can be red for three different reasons and read
+    identically, which tells somebody to go and look rather than what to do
+    when they get there.
+
+    Read off the parse rather than the issue code, because the code does not
+    know. `title_loose` means the shape was not the documented one; it does
+    not say which part was missing, and for the card this was written against
+    -- `PROD: 29Jun26 - Trade show TOF` -- the answer is the client and
+    nothing else. The parsed fields do know: queue, client_raw and
+    thread_date are each either there or not.
+
+    A list, because a title can be wrong in more than one way at once, and
+    saying only the first would be the same failure one step smaller.
+
+    Pure, over the payload, so the wording can be checked without a
+    QApplication -- which these checks never make.
+    """
+    if (c.get("confidence") or "") == "strict":
+        return []
+    out = []
+    if not (c.get("queue") or ""):
+        out.append("No tag")
+    if not (c.get("client_raw") or ""):
+        out.append("No client name")
+    if not (c.get("thread_date") or ""):
+        out.append("No date")
+    # Everything is present and it still did not parse strictly, so the shape
+    # is the complaint: the separators or the date's spelling.
+    return out or ["Non-standard title format"]
+
 def who_is_behind(their_v, our_v) -> str:
     """Which of the two machines has to update, said plainly.
 
@@ -2878,9 +2914,11 @@ class Card(QFrame):
         self.body.addLayout(head)
 
         if self.problem:
+            # What is wrong, not that something is. Joined rather than one
+            # row each: a card is a summary, and three rows of red would out-
+            # shout the ticket they are about.
             self.body.addWidget(warning_row(
-                "Couldn't read this thread's title \u2014 check the client and "
-                "details, then edit to fix.", T.RED_FG))
+                " \u00b7 ".join(title_problems(d)), T.RED_FG))
 
         if d.get("equipment"):
             row = QHBoxLayout()

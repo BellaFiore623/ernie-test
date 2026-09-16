@@ -391,6 +391,50 @@ def check_an_untouched_client_box_invents_no_override():
     return c.report()
 
 
+def check_a_red_card_says_what_is_wrong_with_it():
+    """Three cards red for three reasons used to read identically.
+
+    The card said "Couldn't read this thread's title -- check the client and
+    details, then edit to fix" to all of them, which tells somebody to go and
+    look rather than what to do when they get there.
+
+    Read off the parse, not the issue code: `title_loose` means the shape was
+    not the documented one and does not say which part was missing. For
+    `PROD: 29Jun26 - Trade show TOF` the answer is the client and nothing
+    else, and only the parsed fields know that.
+    """
+    c = Check("a red card says what is wrong with it")
+    tp = bert.title_problems
+
+    # The card this was written against. A date, a tag, no client.
+    c.equal(tp({"confidence": "loose", "queue": "PROD", "client_raw": "",
+                "thread_date": "2026-06-29"}),
+            ["No client name"], "a missing client is named, and only that")
+
+    # The tag parsed and nothing else did.
+    c.equal(tp({"confidence": "prefix_only", "queue": "ENG", "client_raw": None,
+                "thread_date": None}),
+            ["No client name", "No date"], "two things wrong, both said")
+
+    # Nothing parsed at all.
+    c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
+                "thread_date": None}),
+            ["No tag", "No client name", "No date"], "three things wrong")
+
+    # Everything is there and it still is not the documented shape, so the
+    # shape is the complaint and there is nothing more specific to say.
+    c.equal(tp({"confidence": "loose", "queue": "OPS", "client_raw": "Thrasher",
+                "thread_date": "2026-08-03"}),
+            ["Non-standard title format"], "an odd shape says so")
+
+    # A title that reads properly has nothing to report, which is what keeps
+    # the row off every card on the board.
+    c.equal(tp({"confidence": "strict", "queue": "OPS",
+                "client_raw": "Thrasher", "thread_date": "2026-08-03"}),
+            [], "a title that parses says nothing")
+    return c.report()
+
+
 def check_the_editor_offers_the_roster_and_still_takes_anything():
     """A customer exists before Jira hears about them.
 
@@ -1030,6 +1074,7 @@ CHECKS = (check_one_candidate_is_taken_and_two_are_not,
     check_a_retired_client_still_names_its_cards,
     check_picking_a_client_does_not_vouch_for_the_card,
     check_an_untouched_client_box_invents_no_override,
+    check_a_red_card_says_what_is_wrong_with_it,
     check_the_editor_offers_the_roster_and_still_takes_anything,
     check_no_jira_means_no_change,
     check_a_missing_key_is_judged_by_what_it_is,
