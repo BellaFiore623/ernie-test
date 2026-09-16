@@ -676,6 +676,19 @@ other's API. Priority, rank, work items and completion live in
 
 - One message per card, not one document, so two people moving different
   cards never collide and no card can outgrow the 2000-character cap.
+- **A publish pass is bounded, `PUBLISH_MAX` card messages at a time.** A
+  card message carries its position in the band and `positions()` is computed
+  across the whole board, so closing one ticket shifts everything below it
+  and genuinely changes the prose of dozens of messages -- that part is the
+  design working. Writing all of them in one pass is not: measured on a
+  49-card sandbox, **40 edits and 4m46s** at Discord's rate limit, and the
+  outbox is one thread, so `drain()` waited behind the lot and a Complete
+  took four minutes to reach its thread. Every other per-item job here
+  already has a budget -- `CLOSURE_CHECKS` 20, `RESCAN_PER_CYCLE` 12, the
+  change log's `BATCH` -- and this had none. Cards are taken in board order
+  and a written one is unchanged next pass, so the budget walks down the
+  board rather than starving the bottom of it, and the counts carry `left`
+  so a pass that wrote ten of forty does not read as one that finished.
 - Conflicts resolve three-way against `state_sync`, never by comparing the
   two machines' clocks. Both moved means the channel wins, and the losing
   change is named in the feed rather than vanishing.

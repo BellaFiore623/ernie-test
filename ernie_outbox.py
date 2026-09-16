@@ -605,8 +605,13 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
                 try:
                     s = ernie_state.publish(d, state_channel, db)
                     if s["posted"] or s["edited"]:
+                        # `left` is the board still catching up, which is a
+                        # normal state after a closure shifts every position
+                        # below it -- and worth saying, or a pass that wrote
+                        # ten of forty reads as a pass that finished.
+                        more = f", {s['left']} still to go" if s.get("left") else ""
                         print(f"[{now()[:19]}] state: posted {s['posted']}, "
-                              f"edited {s['edited']}")
+                              f"edited {s['edited']}{more}")
                 except Exception as e:
                     print(f"[{now()[:19]}] state publish failed: {e}",
                           file=sys.stderr)

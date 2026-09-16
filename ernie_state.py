@@ -131,6 +131,29 @@ class Card:
         }
 
 
+# Card messages written to the channel in one pass. Everything else in this
+# codebase that does per-item work against Discord has a budget --
+# CLOSURE_CHECKS is 20, RESCAN_PER_CYCLE is 12, the change log has BATCH --
+# and this had none: it wrote every changed card in one go.
+#
+# That is fine while one card moved and very much not fine otherwise. A card
+# message carries its position in the band, and `positions()` is computed
+# across the whole board, so closing one ticket shifts everything below it
+# and genuinely changes the prose of dozens of messages. Measured on a
+# 49-card sandbox: **40 edits in one pass, 4m46s**, at Discord's rate limit
+# -- and the outbox runs on one thread, so `drain()` waited behind all of it.
+# A Complete pressed during that took four minutes to reach its thread.
+#
+# Capped, a pass is a couple of seconds and the board converges over two or
+# three cycles instead of one. That is a trade the channel is already built
+# for: it is edited in place and reconciled, never published atomically, so a
+# pass that did half the work is a state it already handles.
+#
+# Cards are taken in board order and a written one is unchanged next pass, so
+# the cap walks down the board rather than starving the bottom of it.
+PUBLISH_MAX = 10
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -599,6 +622,7 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
     con = rw(db)
     bases = read_bases(con)
     counts = {"posted": 0, "edited": 0, "unchanged": 0, "deferred": 0}
+    written = 0        # against PUBLISH_MAX, so one pass cannot run for minutes
     skew = None
     try:
         for c in cards:
@@ -621,6 +645,12 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
                       file=sys.stderr)
                 continue
             known = state.get(c.thread_id)
+            # Out of budget for this pass. Counted rather than dropped, so
+            # the caller can say the board is still catching up instead of
+            # reporting a quiet pass that did not finish.
+            if written >= PUBLISH_MAX:
+                counts["left"] = counts.get("left", 0) + 1
+                continue
             sent = None
             if known is None:
                 if c.completed:
@@ -632,6 +662,7 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
                 sent = d.write("POST", f"/channels/{cid}/messages",
                                content=content)
                 counts["posted"] += 1
+                written += 1
             elif (same_state(known["payload"], c.payload())
                   and prose_of(known.get("content", "")) == prose_of(content)):
                 counts["unchanged"] += 1
@@ -649,6 +680,7 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
                                f"/channels/{cid}/messages/{known['message_id']}",
                                content=content, retry_5xx=True)
                 counts["edited"] += 1
+                written += 1
 
             if sent:
                 s = skew_seconds(sent)

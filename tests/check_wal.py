@@ -21,7 +21,7 @@ Each of these defends a different part of that:
 import pathlib
 import sqlite3
 
-from support import Board, Check
+from support import Board, Check, PARENT
 
 import bert
 import ernie_api as api
@@ -233,9 +233,124 @@ def check_the_sql_tool_cannot_write_by_accident() -> bool:
     return c.report()
 
 
+# -- a publish pass is bounded ----------------------------------------------
+
+class StateChannel:
+    """A state channel that remembers what was written to it.
+
+    It has to: the cap is about a board catching up across passes, and a
+    channel with no memory re-posts everything every time, which is not the
+    thing being measured.
+    """
+
+    def __init__(self):
+        self.writes = []
+        self.msgs = {}                       # message_id -> content
+
+    def write(self, method, path, **kw):
+        self.writes.append(method)
+        mid = path.rsplit("/", 1)[-1]
+        if method == "POST":
+            mid = str(1000000 + len(self.msgs) + 1)
+        self.msgs[mid] = kw.get("content", "")
+        return {"id": mid,
+                "timestamp": "2026-09-16T19:00:00.000000+00:00"}
+
+    def get(self, path, **kw):
+        if kw.get("before"):
+            return []
+        return [{"id": mid, "content": body}
+                for mid, body in reversed(list(self.msgs.items()))]
+
+
+def check_a_publish_pass_is_bounded() -> bool:
+    """One pass may not run for minutes, because the drain waits behind it.
+
+    A card message carries its position in the band, and `positions()` is
+    computed across the whole board -- so closing one ticket shifts
+    everything below it and genuinely changes the prose of dozens of
+    messages. That is not a bug; writing all of them in one pass is. Measured
+    on a 49-card sandbox: 40 edits, **4m46s**, at Discord's rate limit, with
+    the outbox on one thread and a Complete sitting behind the lot.
+
+    Everything else here that does per-item work against Discord has a
+    budget -- CLOSURE_CHECKS 20, RESCAN_PER_CYCLE 12, the change log's BATCH.
+    This had none.
+    """
+    c = Check("a publish pass is bounded")
+
+    import ernie_state as st
+
+    c.ok(isinstance(st.PUBLISH_MAX, int) and st.PUBLISH_MAX > 0,
+         f"there is a budget ({st.PUBLISH_MAX} card messages a pass)")
+
+    with Board() as b:
+        b.con.execute(
+            "INSERT OR IGNORE INTO watched_channels (channel_id, "
+            "generate_cards) VALUES (?,1)", (PARENT,))
+        n = st.PUBLISH_MAX * 2 + 3
+        for i in range(n):
+            b.card(f"PROD: C{i:03d} - 01Jan26 - x", "high", rank=1000.0 + i)
+        b.con.commit()
+
+        d = StateChannel()
+        r = st.publish(d, "chan-1", b.path)
+        wrote = r["posted"] + r["edited"]
+        c.equal(wrote, st.PUBLISH_MAX,
+                f"a pass writes at most the budget ({wrote})")
+        c.equal(r.get("left"), n - st.PUBLISH_MAX,
+                "and says how many it did not get to, so a pass that wrote "
+                "ten of forty does not read as one that finished")
+
+        # The rest arrive on later passes rather than never: a written card
+        # is unchanged next time, so the budget walks down the board.
+        second = st.publish(d, "chan-1", b.path)
+        c.equal(second["posted"] + second["edited"], st.PUBLISH_MAX,
+                "the next pass takes the next ten")
+        c.ok(second.get("left", 0) < r.get("left", 0),
+             f"and fewer are left each time "
+             f"({r.get('left')} -> {second.get('left')})")
+
+        third = st.publish(d, "chan-1", b.path)
+        c.equal(third.get("left", 0), 0,
+                "so a board this size is in step after three passes")
+        c.equal(third["posted"] + third["edited"], n - st.PUBLISH_MAX * 2,
+                "the last pass writes only what is left, not a full budget")
+
+    return c.report()
+
+
+def check_a_quiet_board_still_writes_nothing() -> bool:
+    """The cap must not turn "nothing to do" into "ten things to do"."""
+    c = Check("a quiet board still writes nothing")
+
+    import ernie_state as st
+
+    with Board() as b:
+        b.con.execute(
+            "INSERT OR IGNORE INTO watched_channels (channel_id, "
+            "generate_cards) VALUES (?,1)", (PARENT,))
+        for i in range(4):
+            b.card(f"PROD: D{i} - 01Jan26 - x", "high", rank=1000.0 + i)
+        b.con.commit()
+
+        d = StateChannel()
+        st.publish(d, "chan-1", b.path)
+        before = len(d.writes)
+        again = st.publish(d, "chan-1", b.path)
+        c.equal(len(d.writes), before,
+                "a second pass over an unchanged board writes nothing")
+        c.equal(again["posted"] + again["edited"], 0, "and reports nothing")
+        c.equal(again.get("left", 0), 0, "with nothing left over")
+
+    return c.report()
+
+
 CHECKS = (check_the_wal_is_measured_and_reported,
           check_what_bert_says_about_it,
           check_a_line_is_claimed_before_it_is_posted,
           check_a_post_that_fails_gives_the_claim_back,
           check_an_unrecorded_line_is_never_struck_through,
-          check_the_sql_tool_cannot_write_by_accident)
+          check_the_sql_tool_cannot_write_by_accident,
+          check_a_publish_pass_is_bounded,
+          check_a_quiet_board_still_writes_nothing)
