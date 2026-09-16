@@ -868,6 +868,42 @@ def compose_title(queue, client, date, summary) -> str:
     return out.rstrip(" -")
 
 
+class DateBox(QDateEdit):
+    """A date field that can say it has no date, and still opens on today.
+
+    Qt has no empty date, so the floor stands for one and
+    `setSpecialValueText` puts "none" in the box. What that does not fix is
+    the calendar: at the floor it opens on January 1900, so choosing a date
+    for a title that has none meant scrolling back a hundred and twenty-six
+    years.
+
+    So the sentinel is for *display* only. The moment somebody reaches for
+    the control -- a click, an arrow key, the popup -- an empty field becomes
+    today, which is the date nearly every ticket wants and one keystroke from
+    the rest. Reaching for it is the intent; nothing writes until then, so a
+    card whose title has no date keeps saying so until somebody says
+    otherwise.
+    """
+
+    def _wake(self):
+        if self.date() == NO_DATE:
+            self.setDate(QDate.currentDate())
+            return True
+        return False
+
+    def mousePressEvent(self, e):
+        # Woken here, the click still lands: the popup opens on today rather
+        # than on the floor, which is the whole point.
+        self._wake()
+        super().mousePressEvent(e)
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown):
+            if self._wake():
+                return          # the wake *was* the step; do not also step
+        super().keyPressEvent(e)
+
+
 def title_takes_client(title: str) -> bool:
     """Whether picking a client can reach this title at all.
 
@@ -3357,11 +3393,11 @@ class Card(QFrame):
         # the client -- with none, the parser cannot tell a client from a
         # summary -- so typing it freely would move the parsing problem here
         # rather than remove it.
-        self.f_date = QDateEdit()
+        self.f_date = DateBox()
         self.f_date.setCalendarPopup(True)
         self.f_date.setDisplayFormat("d MMM yyyy")
-        # Qt has no empty date, so the floor stands for one. A title with no
-        # date has to be able to say so rather than claim some default.
+        # The floor stands for "no date" -- see DateBox, which is what keeps
+        # that from meaning the calendar opens in 1900.
         self.f_date.setMinimumDate(NO_DATE)
         self.f_date.setSpecialValueText("\u2014 none \u2014")
         self.f_date.setStyleSheet(field())
