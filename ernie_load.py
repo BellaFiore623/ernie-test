@@ -27,6 +27,19 @@ import ernie_extract as ex
 
 SCHEMA = pathlib.Path(__file__).with_name("schema.sql")
 RANK_STEP = 1000.0
+# How long a closed card's thread must stay open before it counts as somebody
+# reopening it. The outbox unarchives a thread to post into it and re-archives
+# straight after, so for a second or two every closure looks exactly like a
+# reopen from the outside -- and did, once the guard stopped treating Ernie's
+# own message as the cause. Seen in the two-stack test as "closed this thread
+# in Discord" at 20:24:35 and "reopened, so it's back on the Bert board" at
+# 20:24:40, with nobody touching it.
+#
+# One observation is not evidence, which is `reconcile_closures`' own rule one
+# table along: absence is the question, never the answer. Ernie's window is
+# seconds and never survives this; a real reopen always does, at the cost of
+# registering half a minute later.
+REOPEN_SETTLE_S = 30
 WITNESSED_WITHIN_S = 600   # a thread Ernie watched appear was created moments
                            # before it was first seen. One that predates the
                            # mirror was not, and "somebody started this" about a
@@ -72,6 +85,7 @@ def now() -> str:
 # created from.
 ADDED_COLUMNS = (
     ("release_seen", "minimum", "TEXT NOT NULL DEFAULT ''"),
+    ("threads", "seen_open_at", "TEXT"),
 )
 
 
@@ -110,6 +124,39 @@ def connect(path: str, timeout: float = 15.0) -> sqlite3.Connection:
 # Mirror
 # --------------------------------------------------------------------------
 
+def settled_open(since: str, now_ts: str) -> bool:
+    """Has the thread been open long enough to mean it?"""
+    try:
+        a = datetime.fromisoformat(since)
+        b = datetime.fromisoformat(now_ts)
+    except (TypeError, ValueError):
+        return False
+    return (b - a).total_seconds() >= REOPEN_SETTLE_S
+
+
+def note_reopen(con: sqlite3.Connection, tid: str, ts: str, stats: dict) -> None:
+    """Record the reopen and put the card back.
+
+    Told, or recorded and silent. A reopen is the other half of a closure --
+    something that happened to this thread in Discord, seen by every stack
+    watching it -- so it is behind the same one-machine switch, for the same
+    reason: two boards announcing it tell the customer thread twice. NULL
+    still reopens the card everywhere; what the switch decides is who says so.
+    """
+    stats["reopened"] = stats.get("reopened", 0) + 1
+    con.execute(
+        """INSERT OR IGNORE INTO events
+           (event_id, occurred_at, thread_id, verb, old_value, new_value,
+            dispatch_after)
+           VALUES (?,?,?,?,?,?,?)""",
+        (str(uuid.uuid4()), ts, tid, "thread_reopened", "archived",
+         "active", ts if announce_thread_changes() else None),
+    )
+    con.execute(
+        "UPDATE cards SET completed_at=NULL, completed_by=NULL, updated_at=? "
+        "WHERE thread_id=?", (ts, tid))
+
+
 def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
     t = entry["thread"]
     tid = t["id"]
@@ -119,9 +166,27 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
     # Detect an archive/unarchive flip before we overwrite the flag. A reopen
     # means someone revived finished work, and Ernie should say so in-thread.
     was = con.execute(
-        "SELECT archived, last_synced_at FROM threads WHERE thread_id=?",
-        (tid,)).fetchone()
+        "SELECT archived, last_synced_at, seen_open_at FROM threads "
+        "WHERE thread_id=?", (tid,)).fetchone()
     now_archived = int(bool(meta.get("archived")))
+
+    if was is not None and now_archived and was["seen_open_at"]:
+        # Shut again, so whatever we were watching was not a reopen. Almost
+        # always this is the outbox finishing a post.
+        con.execute("UPDATE threads SET seen_open_at=NULL WHERE thread_id=?",
+                    (tid,))
+    elif (was is not None and not now_archived and was["seen_open_at"]
+            and settled_open(was["seen_open_at"], ts)):
+        # Still open, and has been for longer than a post takes. Now it is a
+        # reopen -- but only while the card is actually closed; one reopened
+        # by an earlier pass has nothing left to do.
+        done = con.execute("SELECT completed_at FROM cards WHERE thread_id=?",
+                           (tid,)).fetchone()
+        con.execute("UPDATE threads SET seen_open_at=NULL WHERE thread_id=?",
+                    (tid,))
+        if done is not None and done["completed_at"]:
+            note_reopen(con, tid, ts, stats)
+
     if was is not None and was["archived"] == 1 and now_archived == 0:
         # A bot posting into an archived thread unarchives it as a side
         # effect -- a keepalive ping, or Ernie's own correction going back
@@ -167,24 +232,11 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
             return tid
         con.execute("UPDATE threads SET archived_by_ernie=0 WHERE thread_id=?",
                     (tid,))
-        stats["reopened"] = stats.get("reopened", 0) + 1
-        # Told, or recorded and silent. A reopen is the other half of a
-        # closure -- something that happened to this thread in Discord, seen
-        # by every stack watching it -- so it is behind the same one-machine
-        # switch, for the same reason: two boards announcing it tell the
-        # customer thread twice. NULL still reopens the card everywhere; what
-        # the switch decides is who says so.
-        con.execute(
-            """INSERT OR IGNORE INTO events
-               (event_id, occurred_at, thread_id, verb, old_value, new_value,
-                dispatch_after)
-               VALUES (?,?,?,?,?,?,?)""",
-            (str(uuid.uuid4()), ts, tid, "thread_reopened", "archived",
-             "active", ts if announce_thread_changes() else None),
-        )
-        con.execute(
-            "UPDATE cards SET completed_at=NULL, completed_by=NULL, updated_at=? "
-            "WHERE thread_id=?", (ts, tid))
+        # Note the moment and wait. See REOPEN_SETTLE_S: the outbox has to
+        # unarchive a thread to post into it, so a thread caught open right
+        # now is as likely to be Ernie mid-sentence as anybody reopening it.
+        con.execute("UPDATE threads SET seen_open_at=? WHERE thread_id=?",
+                    (ts, tid))
 
     con.execute(
         """INSERT INTO threads (thread_id, parent_id, guild_id, created_at,

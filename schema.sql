@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS threads (
     archived_by_ernie INTEGER NOT NULL DEFAULT 0,
                     -- set when Ernie archived it on completion; lets the
                     -- reopen check tell a real revival from Ernie's own work
+    seen_open_at    TEXT,                      -- when a closed card's thread
+                    -- was first seen open. The outbox has to unarchive a
+                    -- thread to post into it, so one observation of "open"
+                    -- is not evidence anybody reopened anything.
     owner_id        TEXT,                      -- who opened the thread, per
                     -- Discord. Only an id: the name is resolved from the
                     -- messages, which already carry one for every author.

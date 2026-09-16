@@ -280,7 +280,7 @@ REQUIRED_COLUMNS = {
     "work_items": ["item_id", "done_at"],
     # Not read here, but the sync writes them every cycle and would fail one
     # thread at a time. Better to say so once, at startup, with the fix.
-    "threads": ["owner_id"],
+    "threads": ["owner_id", "seen_open_at"],
     "messages": ["author_display", "type"],
     "new_threads": ["rank", "sent_steps"],
     # Purely a cache -- rewritten from Discord every minute -- but a missing

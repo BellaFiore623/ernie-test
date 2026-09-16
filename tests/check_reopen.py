@@ -75,6 +75,22 @@ def now_open(tid):
                        "thread_metadata": {"archived": False}}}
 
 
+def passes(b, tid, *, open_for=load.REOPEN_SETTLE_S + 5):
+    """Two sync passes with the thread open, the second past the settle.
+
+    A reopen is no longer decided on one observation, so a check that calls
+    `load_thread` once is testing the old rule. `open_for` is how long the
+    thread is pretended to have been open by the second pass -- pass
+    something short to stand in for Ernie posting and re-archiving.
+    """
+    load.load_thread(b.con, now_open(tid), {})
+    b.con.execute(
+        "UPDATE threads SET seen_open_at=? WHERE thread_id=? "
+        "AND seen_open_at IS NOT NULL", (iso(-open_for), tid))
+    load.load_thread(b.con, now_open(tid), {})
+    b.con.commit()
+
+
 def reopened(b, tid):
     return b.con.execute(
         "SELECT COUNT(*) FROM events WHERE thread_id=? AND "
@@ -94,8 +110,7 @@ def check_a_thread_ernie_closed_can_be_reopened() -> bool:
         tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
                               synced_at=iso(-300))
         with announcing(True):
-            load.load_thread(b.con, now_open(tid), {})
-        b.con.commit()
+            passes(b, tid)
 
         c.equal(reopened(b, tid), 1,
                 "the reopen is seen -- Ernie's own closing message is older "
@@ -129,8 +144,7 @@ def check_a_bot_ping_is_still_not_a_reopen() -> bool:
         # The bot message arrives *after* the last sync: it is what changed.
         tid = archived_thread(b, last_message_at=iso(-60), is_bot=True,
                               synced_at=iso(-300))
-        load.load_thread(b.con, now_open(tid), {})
-        b.con.commit()
+        passes(b, tid)
 
         c.equal(reopened(b, tid), 0, "no reopen is recorded")
         c.ok(b.con.execute("SELECT completed_at FROM cards WHERE thread_id=?",
@@ -154,8 +168,7 @@ def check_a_person_posting_reopens_it() -> bool:
     with Board() as b:
         tid = archived_thread(b, last_message_at=iso(-60), is_bot=False,
                               synced_at=iso(-300))
-        load.load_thread(b.con, now_open(tid), {})
-        b.con.commit()
+        passes(b, tid)
 
         c.equal(reopened(b, tid), 1, "a human message since the last sync is "
                                      "a reopen whatever else is true")
@@ -182,8 +195,7 @@ def check_the_guard_asks_about_the_window_not_the_last_message() -> bool:
         with Board() as b:
             tid = archived_thread(b, last_message_at=when, is_bot=True,
                                   synced_at=iso(-300))
-            load.load_thread(b.con, now_open(tid), {})
-            b.con.commit()
+            passes(b, tid)
             seen[label] = reopened(b, tid)
 
     c.equal(seen["before the last sync"], 1,
@@ -213,8 +225,7 @@ def check_the_reopen_message_is_behind_the_one_machine_switch() -> bool:
             tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
                                   synced_at=iso(-300))
             with announcing(on):
-                load.load_thread(b.con, now_open(tid), {})
-            b.con.commit()
+                passes(b, tid)
 
             row = b.con.execute(
                 "SELECT dispatch_after FROM events WHERE thread_id=? AND "
@@ -267,8 +278,7 @@ def check_ernies_own_announcement_never_explains_the_unarchive() -> bool:
         b.con.commit()
 
         with announcing(True):
-            load.load_thread(b.con, now_open(tid), {})
-        b.con.commit()
+            passes(b, tid)
 
         c.equal(reopened(b, tid), 1,
                 "a message Ernie posted is not why the thread is open, "
@@ -282,11 +292,82 @@ def check_ernies_own_announcement_never_explains_the_unarchive() -> bool:
         tid = archived_thread(b, last_message_at=iso(-60), is_bot=True,
                               synced_at=iso(-120))
         with announcing(True):
-            load.load_thread(b.con, now_open(tid), {})
-        b.con.commit()
+            passes(b, tid)
         c.equal(reopened(b, tid), 0,
                 "a bot message that is not ours still reads as the ping it "
                 "is, which is the half being protected")
+
+    return c.report()
+
+
+def check_ernie_posting_into_a_closed_thread_is_not_a_reopen() -> bool:
+    """The regression the two-stack test caught, and why the wait exists.
+
+    The outbox has to unarchive a thread to post into it, and re-archives
+    straight after -- so for a second or two every closure looks exactly like
+    a reopen from the outside. The old guard hid this by accident, because
+    Ernie's own message was the newest one; taking that shortcut away
+    exposed it.
+
+    Seen live: "This thread was closed in Discord." at 20:24:35 and "This
+    thread was reopened, so it's back on the Bert board." at 20:24:40, with
+    nobody touching it, and the card back on the board.
+    """
+    c = Check("Ernie posting into a closed thread is not a reopen")
+
+    with Board() as b:
+        tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
+                              synced_at=iso(-300))
+        # Open for two seconds, which is the outbox mid-post.
+        with announcing(True):
+            passes(b, tid, open_for=2)
+
+        c.equal(reopened(b, tid), 0,
+                "a thread open for a moment is not somebody reopening it")
+        c.ok(b.con.execute("SELECT completed_at FROM cards WHERE thread_id=?",
+                           (tid,)).fetchone()[0] is not None,
+             "and the card stays closed")
+
+        # Re-archived, which is the outbox finishing: the clock is dropped,
+        # so a later genuine reopen starts from scratch rather than
+        # inheriting a head start.
+        shut = dict(now_open(tid))
+        shut["thread"] = dict(shut["thread"],
+                              thread_metadata={"archived": True})
+        load.load_thread(b.con, shut, {"titles_changed": 0})
+        b.con.commit()
+        c.equal(b.con.execute("SELECT seen_open_at FROM threads WHERE "
+                              "thread_id=?", (tid,)).fetchone()[0], None,
+                "and the clock is cleared when it shuts again")
+
+    return c.report()
+
+
+def check_the_wait_does_not_swallow_a_real_reopen() -> bool:
+    """The other side of it: waiting must not mean never."""
+    c = Check("the wait does not swallow a real reopen")
+
+    with Board() as b:
+        tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
+                              synced_at=iso(-300))
+        with announcing(True):
+            passes(b, tid, open_for=load.REOPEN_SETTLE_S + 5)
+        c.equal(reopened(b, tid), 1,
+                f"open for more than REOPEN_SETTLE_S ({load.REOPEN_SETTLE_S}s) "
+                f"is a reopen")
+
+    # And it only fires once, however many passes follow.
+    with Board() as b:
+        tid = archived_thread(b, last_message_at=iso(-600), is_bot=True,
+                              synced_at=iso(-300))
+        with announcing(True):
+            passes(b, tid)
+            for _ in range(3):
+                load.load_thread(b.con, now_open(tid), {})
+            b.con.commit()
+        c.equal(reopened(b, tid), 1,
+                "and a thread that simply stays open is not reopened again "
+                "on every pass after it")
 
     return c.report()
 
@@ -296,4 +377,6 @@ CHECKS = (check_a_thread_ernie_closed_can_be_reopened,
           check_the_reopen_message_is_behind_the_one_machine_switch,
           check_a_bot_ping_is_still_not_a_reopen,
           check_a_person_posting_reopens_it,
-          check_the_guard_asks_about_the_window_not_the_last_message)
+          check_the_guard_asks_about_the_window_not_the_last_message,
+          check_ernie_posting_into_a_closed_thread_is_not_a_reopen,
+          check_the_wait_does_not_swallow_a_real_reopen)
