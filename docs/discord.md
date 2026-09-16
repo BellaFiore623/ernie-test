@@ -153,7 +153,16 @@ rules and points here for the why.
   marks an already-archived thread's card completed as `imported` when the
   card is made, so an inherited thread never reaches `reconcile_closures` at
   all.
-- **Undo refuses it and points at reopen.** Clearing `completed_at` would
+- **Undo refuses it and points at unarchiving, which is where the
+  action is.** Clearing `completed_at` would leave the thread
+  archived, so the next pass closes the card again. It used to say
+  "reopen it instead" -- and Bert has no reopen for a card that has
+  left the board: it never asks for completed cards, so the one
+  Reopen it does have, in the edit-conflict dialog, cannot be reached
+  for a closed ticket. The advice named something the reader could not
+  do from the window they were reading it in. Unarchiving the thread
+  is the real route, and it only became one once the reopen guard
+  learned to ignore Ernie's own messages. Clearing `completed_at` would
   leave the thread archived, so the next pass closes the card again -- back
   on the board for five seconds and gone, for ever. Reopen posts to the
   thread, and posting to an archived thread unarchives it, so the two agree

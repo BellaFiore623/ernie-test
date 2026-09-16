@@ -17,6 +17,7 @@ close half the board in one pass.
 """
 
 import contextlib
+import pathlib
 import inspect
 import os
 import sqlite3
@@ -27,6 +28,9 @@ import bert
 import ernie_api as api
 import ernie_outbox as outbox
 import ernie_sync as S
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 @contextlib.contextmanager
@@ -306,8 +310,22 @@ def check_undo_refuses_a_discord_closure() -> bool:
             detail = e.detail if isinstance(e.detail, dict) else {}
             c.equal(e.status_code, 409, "it is refused")
             c.equal(detail.get("code"), "not_undoable", "as not undoable")
-            c.ok("reopen" in (detail.get("message") or "").lower(),
-                 "and names reopen, which is the one that settles it")
+            said = (detail.get("message") or "").lower()
+            c.ok("unarchive" in said and "discord" in said,
+                 f"and points at unarchiving the thread in Discord ({said!r})")
+
+            # The advice has to name something the reader can actually do.
+            # It used to say "reopen it instead", and Bert has no reopen for
+            # a card that has left the board: it never asks for completed
+            # cards, so the one Reopen it does have -- in the edit-conflict
+            # dialog -- cannot be reached for a closed ticket.
+            bert_src = (ROOT / "bert.py").read_text(encoding="utf-8")
+            c.ok("include_completed" not in bert_src,
+                 "which is the honest answer while Bert never asks for "
+                 "completed cards -- change that and this wording is worth "
+                 "revisiting")
+            c.ok("reopen it instead" not in said,
+                 "and no longer names an action the window cannot offer")
         else:
             c.ok(False, "undo is refused rather than looping")
 

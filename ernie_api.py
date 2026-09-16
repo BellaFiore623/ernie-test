@@ -1649,9 +1649,21 @@ def undo(event_id: str, body: ActorBody):
             # ever. Reopen is the verb that actually settles it: it posts to
             # the thread, and posting to an archived thread unarchives it, so
             # Discord and the board agree afterwards.
+            # Says where the action is, because it is not here. Bert never
+            # asks for completed cards -- `include_completed` is not in it --
+            # so a closed ticket is off the board and the one Reopen it has,
+            # in the edit-conflict dialog, cannot be reached for one. The
+            # advice used to be "reopen it instead", naming something nobody
+            # could do from the window they were reading it in.
+            #
+            # Unarchiving is the real route, and it only became one today:
+            # until the reopen guard learned to ignore Ernie's own messages,
+            # unarchiving a thread Ernie had announced a closure in did
+            # nothing at all.
             conflict("not_undoable",
-                     "That ticket was closed in Discord. Undo can't reach it "
-                     "-- reopen it instead, which unarchives the thread.")
+                     "That ticket was closed in Discord, so undo can't reach "
+                     "it. Unarchive the thread in Discord and the card comes "
+                     "back on its own.")
         if e["undone_at"]:
             who = e["undone_by"] or "Someone"
             conflict("already_undone", f"{who} has already undone this.",
