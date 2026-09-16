@@ -880,9 +880,21 @@ def title_problems(c) -> list:
         return ["No tag"] + title_problems(c)
 
     out = []
-    if not (c.get("client_raw") or ""):
+    dated = bool(c.get("thread_date") or "")
+
+    # The date is what anchors the client: the client is whatever sits
+    # between the tag and the date, so with no date there is no client slot
+    # to be empty. `PROD: Thrasher - Trade show TOF` comes back with the
+    # whole of it as the summary and no client at all -- and saying "No
+    # client name" there is the third form of the same mistake, a field
+    # reported missing because the parser could not reach it rather than
+    # because it is not there. Thrasher was sitting in the title.
+    #
+    # So the client is judged once the date has placed it, and not before.
+    # Add the date and the question answers itself.
+    if dated and not (c.get("client_raw") or ""):
         out.append("No client name")
-    if not (c.get("thread_date") or ""):
+    if not dated:
         # A date that is present and refused is a different job from one that
         # was never typed -- 32Jun26 is a correction, a missing date is an
         # addition -- and the card should not send somebody looking for the

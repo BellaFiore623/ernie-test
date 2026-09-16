@@ -411,10 +411,18 @@ def check_a_red_card_says_what_is_wrong_with_it():
                 "thread_date": "2026-06-29"}),
             ["No client name"], "a missing client is named, and only that")
 
-    # The tag parsed and nothing else did.
+    # The tag parsed and nothing else did. The client is not claimed: with no
+    # date there is nothing to place it against, and "Retired bots" may well
+    # be the client for all the parser can tell.
     c.equal(tp({"confidence": "prefix_only", "queue": "ENG", "client_raw": None,
-                "thread_date": None}),
-            ["No client name", "No date"], "two things wrong, both said")
+                "thread_date": None, "name": "ENG: Retired bots"}),
+            ["No date"], "the date is asked for, the client is not guessed at")
+
+    # The case that found this: a client typed, no date, so the parser cannot
+    # tell the client from the summary and must not say it is absent.
+    c.equal(tp({"confidence": "prefix_only", "queue": "PROD", "client_raw": None,
+                "thread_date": None, "name": "PROD: Thrasher - Trade show TOF"}),
+            ["No date"], "a client it cannot place is not called missing")
 
     # Everything is there and it still is not the documented shape, so the
     # shape is the complaint and there is nothing more specific to say.
@@ -440,7 +448,9 @@ def check_a_red_card_says_what_is_wrong_with_it():
     c.equal(tp(bare("29Jun26 - Trade show TOF")),
             ["No tag", "No client name"], "the date it does have is not claimed missing")
     c.equal(tp(bare("Trade show TOF")),
-            ["No tag", "No client name", "No date"], "and everything absent is")
+            ["No tag", "No date"], "and everything it can judge is")
+    c.equal(tp(bare("Thrasher - Trade show TOF")),
+            ["No tag", "No date"], "with the client left alone until a date places it")
     # The case the probe exists for: missing the tag and nothing else.
     c.equal(tp(bare("Edge AI Services - 29Jun26 - Trade show TOF")),
             ["No tag"], "a title missing only its tag says only that")
@@ -450,7 +460,7 @@ def check_a_red_card_says_what_is_wrong_with_it():
     # is the same kind of wrong as the tag case above, one field along.
     c.equal(tp({"confidence": "prefix_only", "queue": "PROD", "client_raw": None,
                 "thread_date": None, "name": "PROD: 32Jun26 - bad day"}),
-            ["No client name", "Date not readable"], "an impossible date says so")
+            ["Date not readable"], "an impossible date says so")
     return c.report()
 
 
