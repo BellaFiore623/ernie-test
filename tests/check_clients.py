@@ -416,11 +416,6 @@ def check_a_red_card_says_what_is_wrong_with_it():
                 "thread_date": None}),
             ["No client name", "No date"], "two things wrong, both said")
 
-    # Nothing parsed at all.
-    c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
-                "thread_date": None}),
-            ["No tag", "No client name", "No date"], "three things wrong")
-
     # Everything is there and it still is not the documented shape, so the
     # shape is the complaint and there is nothing more specific to say.
     c.equal(tp({"confidence": "loose", "queue": "OPS", "client_raw": "Thrasher",
@@ -432,6 +427,24 @@ def check_a_red_card_says_what_is_wrong_with_it():
     c.equal(tp({"confidence": "strict", "queue": "OPS",
                 "client_raw": "Thrasher", "thread_date": "2026-08-03"}),
             [], "a title that parses says nothing")
+
+    # No tag at all. Every pattern is anchored on it, so the parser never
+    # reaches the rest and reports nothing for any of it -- which was being
+    # quoted back as "no client, no date" over a title with the date sitting
+    # in it. One true thing, and the rest becomes answerable once it is there.
+    c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
+                "thread_date": None, "name": "29Jun26 - Trade show TOF"}),
+            ["No tag"], "a missing tag is the only thing claimed")
+    c.equal(tp({"confidence": "none", "queue": None, "client_raw": None,
+                "thread_date": None, "name": "Trade show TOF"}),
+            ["No tag"], "and still the only thing when there is no date either")
+
+    # A date typed and refused is a correction; a date never typed is an
+    # addition. Sending somebody to look for the second when it is the first
+    # is the same kind of wrong as the tag case above, one field along.
+    c.equal(tp({"confidence": "prefix_only", "queue": "PROD", "client_raw": None,
+                "thread_date": None, "name": "PROD: 32Jun26 - bad day"}),
+            ["No client name", "Date not readable"], "an impossible date says so")
     return c.report()
 
 

@@ -829,6 +829,11 @@ def needs_triage(c) -> bool:
     return not (c.get("client_override") or "").strip()
 
 
+# A date anywhere in the raw title, for telling "never typed" from
+# "typed and refused". The parser's own token, so the two agree.
+_DATE_RX = re.compile(ex._DATE_TOKEN, re.IGNORECASE)
+
+
 def title_problems(c) -> list:
     """What is actually wrong with this card's title, in words.
 
@@ -853,13 +858,26 @@ def title_problems(c) -> list:
     """
     if (c.get("confidence") or "") == "strict":
         return []
+    raw = c.get("name") or ""
+
+    # Every pattern is anchored on the tag, so without one the parser never
+    # reaches the rest and reports nothing for any of it. Reading that as
+    # "no client, no date" is the parser's silence being quoted as the
+    # title's: `29Jun26 - Trade show TOF` was told it had no date with the
+    # date sitting in it. One true thing instead, and the rest becomes
+    # answerable once the tag is there.
+    if not (c.get("queue") or ex.PREFIX_ONLY.match(raw)):
+        return ["No tag"]
+
     out = []
-    if not (c.get("queue") or ""):
-        out.append("No tag")
     if not (c.get("client_raw") or ""):
         out.append("No client name")
     if not (c.get("thread_date") or ""):
-        out.append("No date")
+        # A date that is present and refused is a different job from one that
+        # was never typed -- 32Jun26 is a correction, a missing date is an
+        # addition -- and the card should not send somebody looking for the
+        # second when it is the first.
+        out.append("Date not readable" if _DATE_RX.search(raw) else "No date")
     # Everything is present and it still did not parse strictly, so the shape
     # is the complaint: the separators or the date's spelling.
     return out or ["Non-standard title format"]
