@@ -52,6 +52,12 @@ MAX_ATTEMPTS = 5
 # the two together.
 UNDO_WINDOW_S = 60
 CLAIM_STALE_S = 300    # a claim older than this belonged to a process that died
+# What a `completed` event's new_value says when the closing happened in
+# Discord rather than in Bert. Matched rather than imported, the way
+# MAX_ATTEMPTS is: ernie_sync writes it, the API refuses undo on it, Bert
+# phrases the feed line off it, and this phrases the thread message.
+# tests/check_closures.py holds the four together.
+CLOSED_IN_DISCORD = "discord"
 
 
 def now() -> str:
@@ -97,6 +103,15 @@ def render(event, original=None) -> str | None:
     verb = event["verb"]
 
     if verb == "completed":
+        if event["new_value"] == CLOSED_IN_DISCORD:
+            # Named when the audit log gave a name, and no name rather than a
+            # wrong one when it did not -- `who` falls back to "Someone"
+            # above, and "Someone closed this thread" says less than the
+            # plain sentence while sounding like it knows more. Bert's feed
+            # line draws the same distinction.
+            if event["actor_name"]:
+                return f"**{who}** closed this thread in Discord."
+            return "This thread was closed in Discord."
         return f"**{who}** marked this complete in Bert."
     if verb in ("reopened", "thread_reopened"):
         if verb == "thread_reopened":

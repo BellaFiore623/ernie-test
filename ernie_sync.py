@@ -51,6 +51,7 @@ RESCAN_PER_CYCLE = 12  # threads rescanned per cycle; the rest wait their turn.
                        # the next one -- new cards, which is what people watch,
                        # are not delayed at all.
 CLOSURE_CHECKS = 20   # threads asked about per pass when cards go quiet
+ANNOUNCE_MAX = 3      # closures announced in one pass; past this it is catch-up
 # Discord's audit-log action for a thread being edited, which is what an
 # archive is. **111, not 112** -- 112 is THREAD_DELETE, and asking for it
 # returns entries whose changes all read `new_value: None`, which looks
@@ -430,6 +431,26 @@ def who_archived(d: Discord, guild_id: str, wanted: set) -> dict:
     return found
 
 
+def announce_closures() -> bool:
+    """Whether this machine tells the thread when somebody closed it in Discord.
+
+    Off unless `ANNOUNCE_CLOSURES` is set, and only one machine may set it.
+    Every stack runs its own sync, so every stack notices the same archived
+    thread and writes its own `completed` row -- which costs nothing while
+    those rows never post, and puts the message in the thread twice the
+    moment they do. The state channel does not settle it: a card is skipped
+    below only once `completed_at` is set, the pull is on the 60s beat and
+    this runs on the 5s one, so the local close wins the race nearly every
+    time.
+
+    The one-machine rule `CHANGELOG_CHANNEL_ID` already follows, expressed
+    the same way -- a line somebody uncomments on purpose rather than a thing
+    to remember.
+    """
+    return (os.environ.get("ANNOUNCE_CLOSURES", "").strip().lower()
+            in ("1", "true", "yes", "on"))
+
+
 def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
     """Cards whose thread has gone quiet: ask Discord whether it was closed.
 
@@ -483,6 +504,19 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
     # One audit call for however many closed, and none at all if none did.
     by = who_archived(d, d.guild_id, set(closed))
 
+    # Announced only when this board watched it happen. Telling the thread
+    # costs an unarchive, a message and a re-archive, so it lands in the
+    # sidebar of everybody on it -- which is the point for one closure and
+    # noise for twelve. At a 5s beat a pass finding more than a handful at
+    # once is a machine catching up rather than one watching: a stack started
+    # after a weekend, a channel coming back into `watched`, a permission
+    # restored. A backlog announcing itself as news is the failure
+    # `witnessed_start` exists to prevent one table along.
+    on = announce_closures()
+    say = on and len(closed) <= ANNOUNCE_MAX
+    if on and not say:
+        print(f"  {len(closed)} closed at once -- recorded, not announced")
+
     for tid, when in closed.items():
         who = by.get(tid)
         con.execute(
@@ -491,16 +525,21 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
         con.execute(
             "UPDATE cards SET completed_at=?, completed_by=?, updated_at=? "
             "WHERE thread_id=?", (when, who, now(), tid))
-        # dispatch_after NULL: it happened in Discord already, and posting
-        # "closed" back into the thread would be Ernie telling the room what
-        # it just watched somebody do -- the same rule `started` follows.
-        # new_value carries where it happened, so the feed can say so without
-        # inventing a person to attribute it to.
+        # new_value carries where it happened, so the feed can say so
+        # without inventing a person to attribute it to, and the outbox can
+        # phrase the thread message off the same field.
+        #
+        # The dispatch is what tells the thread, and it is immediate rather
+        # than held for the undo window: undo refuses this verb outright and
+        # points at reopen, so there is nothing to wait for. NULL leaves the
+        # closure recorded and silent, which is what every machine but the
+        # announcing one does.
         con.execute(
             """INSERT INTO events (event_id, occurred_at, actor_name, thread_id,
                                    verb, new_value, dispatch_after)
-               VALUES (?,?,?,?,?,?,NULL)""",
-            (str(uuid.uuid4()), when, who, tid, "completed", CLOSED_IN_DISCORD))
+               VALUES (?,?,?,?,?,?,?)""",
+            (str(uuid.uuid4()), when, who, tid, "completed", CLOSED_IN_DISCORD,
+             now() if say else None))
         stats["closed_in_discord"] = stats.get("closed_in_discord", 0) + 1
     con.commit()
 

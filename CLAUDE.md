@@ -213,6 +213,14 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   missing and closes only what comes back `archived: true`. Absence is the
   question, never the answer -- a listing short for any other reason would
   otherwise close the whole board in one pass.
+- The thread is told who closed it, and only one machine may tell it.
+  `ANNOUNCE_CLOSURES` is off unless set, for the reason
+  `CHANGELOG_CHANNEL_ID` is: every stack notices the same archived thread and
+  writes its own closure row, so two switched on tell the thread twice. A
+  pass finding more than `ANNOUNCE_MAX` closed at once records them silently
+  -- that is a machine catching up rather than one watching, and every
+  announcement unarchives the thread, posts and re-archives it. What is held
+  back is never the closure.
 - `messages.type` is Discord's and is stored because it cannot be derived.
   Type 4 is a rename, which is the only exact record of a retag there is.
 

@@ -16,13 +16,37 @@ hiccup, a permission change, a channel dropping out of `watched` -- must not
 close half the board in one pass.
 """
 
+import contextlib
+import os
 import sqlite3
 
 from support import Board, Check, PARENT
 
 import bert
 import ernie_api as api
+import ernie_outbox as outbox
 import ernie_sync as S
+
+
+@contextlib.contextmanager
+def announcing(on: bool):
+    """ANNOUNCE_CLOSURES set or not, whatever the machine running this has.
+
+    Restored afterwards, because a check that leaves it set decides the
+    answer for every check after it.
+    """
+    before = os.environ.get("ANNOUNCE_CLOSURES")
+    if on:
+        os.environ["ANNOUNCE_CLOSURES"] = "1"
+    else:
+        os.environ.pop("ANNOUNCE_CLOSURES", None)
+    try:
+        yield
+    finally:
+        if before is None:
+            os.environ.pop("ANNOUNCE_CLOSURES", None)
+        else:
+            os.environ["ANNOUNCE_CLOSURES"] = before
 
 
 BOT_ID = "bot-1"
@@ -95,7 +119,8 @@ def check_a_thread_archived_in_discord_closes_its_card() -> bool:
         stats = {}
         # `two` is in the listing, `one` is not -- which is what an archive
         # looks like from here.
-        S.reconcile_closures(b.con, d, {two}, stats)
+        with announcing(False):
+            S.reconcile_closures(b.con, d, {two}, stats)
 
         c.equal(d.asked, [one], "only the missing card is asked about")
         c.equal(stats.get("closed_in_discord"), 1, "and it is closed")
@@ -118,9 +143,9 @@ def check_a_thread_archived_in_discord_closes_its_card() -> bool:
             c.equal(e["new_value"], S.CLOSED_IN_DISCORD,
                     "carrying where it happened")
             c.equal(e["dispatch_after"], None,
-                    "and never posted back -- it happened in Discord already, "
-                    "so saying so there is Ernie telling the room what it "
-                    "just watched somebody do")
+                    "and stays silent on a machine nobody told to announce -- "
+                    "every stack notices the same archived thread, so a "
+                    "dispatch on two of them tells the thread twice")
             c.equal(e["actor_name"], None,
                     "naming nobody here, because this fake has no audit log "
                     "to read -- which is the shape of a bot without View "
@@ -288,19 +313,150 @@ def check_undo_refuses_a_discord_closure() -> bool:
     return c.report()
 
 
-def check_the_three_copies_of_the_marker_agree() -> bool:
+def check_the_four_copies_of_the_marker_agree() -> bool:
     """
-    `ernie_sync` writes it, the API reads it to refuse undo, and Bert reads
-    it to phrase the feed line. Matched rather than imported, the way
+    `ernie_sync` writes it, the API reads it to refuse undo, Bert reads it to
+    phrase the feed line, and the outbox reads it to phrase the message that
+    goes in the thread. Matched rather than imported, the way
     `OUTBOX_MAX_ATTEMPTS` is matched to `ernie_outbox.MAX_ATTEMPTS` -- so
     something has to hold them together.
     """
-    c = Check("the three copies of the marker agree")
+    c = Check("the four copies of the marker agree")
 
     c.equal(api.CLOSED_IN_DISCORD, S.CLOSED_IN_DISCORD,
             "the API matches the sync that writes it")
     c.equal(bert.CLOSED_IN_DISCORD, S.CLOSED_IN_DISCORD,
             "and so does Bert, which phrases the feed line off it")
+    c.equal(outbox.CLOSED_IN_DISCORD, S.CLOSED_IN_DISCORD,
+            "and so does the outbox, which phrases the thread message off it")
+
+    return c.report()
+
+
+def check_a_closure_is_announced_only_where_it_is_switched_on() -> bool:
+    """The one-machine rule, and the switch that makes it one machine.
+
+    Both stacks in the two-person setup run their own sync, both notice the
+    same archived thread, and both write a `completed` row. That costs
+    nothing while the rows never post; give them both a dispatch and the
+    customer thread is told twice. The state channel does not settle it --
+    a card is skipped only once `completed_at` is set, and the local close
+    beats the 60s pull nearly every time.
+    """
+    c = Check("a closure is announced only where it is switched on")
+
+    def closure_with(value):
+        """Reconcile one archived thread with the key set to `value`."""
+        with Board() as b:
+            one, two = board_with_two(b)
+            before = os.environ.get("ANNOUNCE_CLOSURES")
+            if value is None:
+                os.environ.pop("ANNOUNCE_CLOSURES", None)
+            else:
+                os.environ["ANNOUNCE_CLOSURES"] = value
+            try:
+                S.reconcile_closures(
+                    b.con, Answers({one: archived_at(WHEN)}), {two}, {})
+            finally:
+                if before is None:
+                    os.environ.pop("ANNOUNCE_CLOSURES", None)
+                else:
+                    os.environ["ANNOUNCE_CLOSURES"] = before
+            return b.con.execute(
+                """SELECT e.dispatch_after, c.completed_at
+                     FROM events e JOIN cards c USING (thread_id)
+                    WHERE e.thread_id=? AND e.verb='completed'""",
+                (one,)).fetchone()
+
+    for on in ("1", "true", "TRUE", " yes ", "on"):
+        r = closure_with(on)
+        c.ok(r["dispatch_after"] is not None, f"{on!r} announces it")
+
+    for off in (None, "", "0", "no", "false", "nope"):
+        r = closure_with(off)
+        c.equal(r["dispatch_after"], None, f"{off!r} records it silently")
+        c.ok(r["completed_at"] is not None,
+             "and the card is closed either way -- what is switched off is "
+             "the announcement, never the closure")
+
+    return c.report()
+
+
+def check_a_burst_is_recorded_but_not_announced() -> bool:
+    """A pass finding a dozen closed at once is catching up, not watching.
+
+    Telling the thread costs an unarchive, a message and a re-archive, so
+    every one of them lands in the sidebar of everybody on that thread. For
+    one closure that is the point; for a stack started after a weekend it is
+    a backlog announcing itself as news -- the failure `witnessed_start`
+    exists to prevent one table along.
+    """
+    c = Check("a burst is recorded but not announced")
+
+    def close_many(n, tag):
+        """n archived threads in one pass, with the announcement switched on."""
+        with Board() as b:
+            b.con.execute(
+                "INSERT OR IGNORE INTO watched_channels "
+                "(channel_id, generate_cards) VALUES (?,1)", (PARENT,))
+            gone = [b.card(f"PROD: {tag}{i} - 01Jan26 - x", "high")
+                    for i in range(n)]
+            live = b.card("OPS: live - 01Jan26 - y", "high")
+            b.con.commit()
+            with announcing(True):
+                S.reconcile_closures(
+                    b.con, Answers({t: archived_at(WHEN) for t in gone}),
+                    {live}, {})
+            return b.con.execute(
+                """SELECT COUNT(*) AS closed,
+                          SUM(e.dispatch_after IS NOT NULL) AS announced,
+                          SUM(c.completed_at IS NULL) AS still_open
+                     FROM events e JOIN cards c USING (thread_id)
+                    WHERE e.verb='completed'""").fetchone()
+
+    over = close_many(S.ANNOUNCE_MAX + 1, "C")
+    c.equal(over["closed"], S.ANNOUNCE_MAX + 1, "one over the cap: all closed")
+    c.equal(over["still_open"], 0,
+            "and every card leaves the board, which is never what is held back")
+    c.equal(over["announced"], 0, "and not one of them is announced")
+
+    at = close_many(S.ANNOUNCE_MAX, "D")
+    c.equal(at["announced"], S.ANNOUNCE_MAX,
+            "exactly at the cap it still announces, or the cap is the feature")
+
+    return c.report()
+
+
+def check_the_thread_is_told_who_closed_it() -> bool:
+    """What the thread actually reads, both halves of it.
+
+    The named form is the ordinary one now View Audit Log is granted. The
+    unnamed one matters because `render` falls back to "Someone", and
+    "Someone closed this thread" sounds like it knows something it does not
+    -- the same distinction Bert's feed line draws.
+    """
+    c = Check("the thread is told who closed it")
+
+    def text(actor, where=outbox.CLOSED_IN_DISCORD):
+        return outbox.render({"verb": "completed", "new_value": where,
+                              "actor_name": actor, "old_value": None})
+
+    named = text("JulianD")
+    c.ok("JulianD" in named, f"a known closer is named ({named!r})")
+    c.ok("in Discord" in named, "and it says where it happened")
+    c.ok("Bert" not in named, "never in Bert, which is where it did not happen")
+
+    for blank in (None, ""):
+        anon = text(blank)
+        c.ok("closed in Discord" in anon,
+             f"{blank!r} still reads as a closure ({anon!r})")
+        c.ok("Someone" not in anon,
+             "without inventing a someone, which is what the fallback would "
+             "have done")
+
+    in_bert = text("Bella Fiore", where=None)
+    c.ok("in Bert" in in_bert,
+         f"and a completion from the board is untouched ({in_bert!r})")
 
     return c.report()
 
@@ -491,7 +647,10 @@ CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_a_card_bert_closed_is_not_found_again,
           check_it_does_not_close_the_same_card_twice,
           check_undo_refuses_a_discord_closure,
-          check_the_three_copies_of_the_marker_agree,
+          check_the_four_copies_of_the_marker_agree,
+          check_a_closure_is_announced_only_where_it_is_switched_on,
+          check_a_burst_is_recorded_but_not_announced,
+          check_the_thread_is_told_who_closed_it,
           check_it_names_whoever_archived_the_thread,
           check_the_feed_line_says_who_when_it_knows,
           check_it_still_closes_when_the_audit_log_is_shut,

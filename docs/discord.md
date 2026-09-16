@@ -107,9 +107,46 @@ rules and points here for the why.
   Bert phrases the line off, so an unnamed closure says "closed in Discord"
   rather than running the usual fallback, which would have read "Ernie closed
   it" -- certainly wrong, Ernie being the one party that definitely did not.
-- **`dispatch_after` is NULL**, the same rule `started` follows: it happened
-  in Discord already, and posting "closed" back into the thread is Ernie
-  telling the room what it just watched somebody do.
+- **The thread is told, and only one machine may tell it.** It was silent for
+  a long time on the reasoning `started` follows -- it happened in Discord
+  already, so saying so there is Ernie telling the room what it just watched
+  somebody do. That is true of the *closer*, who was standing there, and not
+  of the other people on the thread, for whom the ticket simply stopped
+  appearing anywhere. So `dispatch_after` is set and the thread reads
+  **"JulianD closed this thread in Discord"**, phrased off `new_value` by
+  `ernie_outbox.render` and named off the audit log -- or **"This thread was
+  closed in Discord"** where there is no name, because `render` falls back to
+  "Someone" and a someone is exactly what is not known here. The same
+  distinction Bert's feed line draws.
+  **It is immediate rather than held for the undo window**, because undo
+  refuses this verb outright and points at reopen: there is nothing to wait
+  for.
+  **`ANNOUNCE_CLOSURES` is the switch, and it is off by default**, for the
+  reason `CHANGELOG_CHANNEL_ID` is: every stack runs its own sync, every
+  stack notices the same archived thread, and every stack writes its own
+  closure row. Those rows cost nothing while they never post, and tell the
+  thread twice the moment two of them do. The state channel does not settle
+  it -- `reconcile_closures` skips a card only once `completed_at` is set,
+  the pull is on the 60s beat and this runs on the 5s one, so the local close
+  wins the race nearly every time. Liftable the way the change log's rule is,
+  by claiming the closure through the channel; not done, because one line in
+  an env file buys the same thing today.
+  **A burst says nothing.** `ANNOUNCE_MAX` is 3, and a pass finding more than
+  that closed at once records them all silently and prints why. Telling the
+  thread costs an unarchive, a message and a re-archive, so every announcement
+  lands in the sidebar of everybody on that thread: the point for one closure,
+  noise for twelve. At a 5s beat more than a handful at once is a machine
+  catching up rather than one watching -- a stack started after a weekend, a
+  channel coming back into `watched` -- and a backlog announcing itself as
+  news is the failure `witnessed_start` exists to prevent one table along.
+  What is held back is the announcement and never the closure: those cards
+  still leave the board.
+  **Nothing old is ever sprayed.** A row written with NULL keeps it -- nothing
+  rewrites one -- so switching this on affects closures from that moment and
+  not the history. A fresh install cannot either: `ernie_load.ensure_card`
+  marks an already-archived thread's card completed as `imported` when the
+  card is made, so an inherited thread never reaches `reconcile_closures` at
+  all.
 - **Undo refuses it and points at reopen.** Clearing `completed_at` would
   leave the thread archived, so the next pass closes the card again -- back
   on the board for five seconds and gone, for ever. Reopen posts to the

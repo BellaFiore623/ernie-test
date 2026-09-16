@@ -195,9 +195,11 @@ Two lines matter more than the rest:
 - **`STATE_CHANNEL_ID`** is what makes the two boards one board. Without it
   you get a private board of your own.
 
-Leave `CHANGELOG_CHANNEL_ID` empty. Only one machine should set it, and that
-is theirs — both boards hold the whole history, so two loggers would write
-every line twice.
+Leave `CHANGELOG_CHANNEL_ID` and `ANNOUNCE_CLOSURES` empty. Only one machine
+should set either, and that is theirs. Both boards hold the whole history, so
+two loggers would write every line twice; and both boards notice when a thread
+is archived in Discord, so two announcers would tell that customer thread
+twice that somebody closed it.
 
 The token is a password for the bot. Don't put it in a chat that isn't the
 two of you.
