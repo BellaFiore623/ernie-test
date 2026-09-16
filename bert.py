@@ -925,7 +925,7 @@ def title_problems(c) -> list:
         t = ex.parse_title(f"{ex.QUEUES_OFFERED[0]}: {raw}")
         c = dict(c, queue=t.queue, client_raw=t.client_raw,
                  thread_date=t.date.isoformat() if t.date else None,
-                 confidence=t.confidence)
+                 summary=t.summary, confidence=t.confidence)
         return ["No tag"] + title_problems(c)
 
     out = []
@@ -949,6 +949,11 @@ def title_problems(c) -> list:
         # addition -- and the card should not send somebody looking for the
         # second when it is the first.
         out.append("Date not readable" if _DATE_RX.search(raw) else "No date")
+    if dated and not (c.get("summary") or ""):
+        # The one remaining field, and the only reason a title with a tag, a
+        # client and a date still will not parse strictly. Saying "non-
+        # standard format" there sends somebody looking at the separators.
+        out.append("No description")
     # Everything is present and it still did not parse strictly, so the shape
     # is the complaint: the separators or the date's spelling.
     return out or ["Non-standard title format"]
@@ -3303,6 +3308,15 @@ class Card(QFrame):
         # here, for the same reason warning_row() exists.
         self.title_state.setStyleSheet("font-size:11px; padding:1px 0 3px 0;"
                                        " background:transparent;")
+        # What the thread is called now, shown only when the fields cannot
+        # express it and guided is therefore building a replacement. Two
+        # lines then: what it is, and what it will be. Read-only, because the
+        # old one is a fact rather than a field.
+        self.title_was = QLabel()
+        self.title_was.setWordWrap(True)
+        self.title_was.setStyleSheet("background:transparent; font-size:12px;")
+        self.title_was.hide()
+
         # The mark goes beside the title rather than into it: a tick inside
         # the box would be part of the string, and the string is what gets
         # saved as the thread's name.
@@ -3317,6 +3331,7 @@ class Card(QFrame):
         title_box = QVBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(2)
+        title_box.addWidget(self.title_was)
         title_box.addLayout(title_row)
         title_box.addWidget(self.title_state)
         title_holder = QWidget()
@@ -3354,7 +3369,15 @@ class Card(QFrame):
         self.f_date.setDate(QDate(d_date.year, d_date.month, d_date.day)
                             if d_date else NO_DATE)
 
-        self.f_desc = QLineEdit(ex.parse_title(d.get("name") or "").summary or "")
+        # Seeded from whatever the title already says. For an unreadable one
+        # that is the whole remainder -- `ENG: Retired bots` puts "Retired
+        # bots" here -- so building a replacement starts from what somebody
+        # wrote rather than from nothing. Seeding a field does not compose,
+        # so opening a card still cannot make it dirty.
+        _t0 = ex.parse_title(d.get("name") or "")
+        self.f_desc = QLineEdit(
+            _t0.summary or ("" if _t0.confidence in ("strict", "loose")
+                            else (d.get("name") or "").strip()))
         self.f_desc.setStyleSheet(field())
 
         # textEdited fires only for typing, so rebuilding the suggestion below
@@ -3481,7 +3504,25 @@ class Card(QFrame):
         """
         if getattr(self, "_syncing", False):
             return
-        self._set_title(ex.replace_field(self.f_title.text(), field, value))
+        cur = self.f_title.text()
+        if ex.parse_title(cur).confidence in ("strict", "loose"):
+            self._set_title(ex.replace_field(cur, field, value))
+            return
+        # Nothing to splice into. Composing is only dangerous for a title
+        # that already parses -- that is where the 513 gratuitous renames
+        # live -- and this one does not, so there are no bytes worth
+        # preserving and the fields build a replacement outright.
+        self._set_title(self._composed())
+
+    def _composed(self) -> str:
+        """The four fields as the title they describe."""
+        qd = self.f_date.date() if hasattr(self, "f_date") else None
+        return compose_title(
+            self.f_queue.currentData() if hasattr(self, "f_queue") else "",
+            self.f_client.text().strip() if hasattr(self, "f_client") else "",
+            None if qd is None or qd == NO_DATE
+            else date(qd.year(), qd.month(), qd.day()),
+            self.f_desc.text().strip() if hasattr(self, "f_desc") else "")
 
     def _fields_from_title(self, t):
         """The other direction: what the title says, in the fields.
@@ -3566,32 +3607,34 @@ class Card(QFrame):
         # fields and somebody who would rather pick never has to type.
         if not getattr(self, "_syncing", False):
             self._fields_from_title(t)
-        # Guided keeps the title as a preview -- there is nothing to type
-        # when four fields are writing it. Except when they cannot: a title
-        # the fields have no way to express is one only the box can repair,
-        # and three of production's 47 open cards are exactly that, all of
-        # them the red ones. So the box comes back precisely when it is
-        # needed, and somebody who chose guided never has to learn that a
-        # preference exists to fix a broken title.
+        # Guided never hands back a box. Handing one over was the mode giving
+        # up at the point it is most useful -- the titles the fields cannot
+        # express are exactly the ones somebody needs help rebuilding. So the
+        # title stays the result of the fields, and when the thread is called
+        # something the fields cannot say, both are shown: what it is called
+        # now, and what it will be called. Not a disabled box either -- a
+        # frame around something nobody can type in is an invitation the
+        # control then refuses.
         if getattr(self, "_entry", ENTRY_DEFAULT) == "guided":
-            preview = t.confidence in ("strict", "loose")
-            if self.f_title.isReadOnly() != preview:
-                self.f_title.setReadOnly(preview)
-                # Not a disabled box -- no box. A frame around something
-                # nobody can type in is an invitation the control refuses,
-                # and the title here is the *result* of the fields rather
-                # than another thing to fill in. Frameless and unpainted it
-                # reads as the sentence it is, and stays selectable so it can
-                # still be copied out.
-                self.f_title.setFrame(not preview)
+            if not self.f_title.isReadOnly():
+                self.f_title.setReadOnly(True)
+                self.f_title.setFrame(False)
                 self.f_title.setStyleSheet(
                     f"background:transparent; border:none; padding:0;"
-                    f" color:{T.INK}; font-size:13px;" if preview else field())
+                    f" color:{T.INK}; font-size:13px;")
                 self.f_title.setToolTip(
-                    "Built from the fields below. You get it back if they "
-                    "cannot express the title." if preview else
-                    "The fields below cannot express this title, so it is "
-                    "yours to repair.")
+                    "Built from the fields below. Change one and this "
+                    "follows.")
+            was = ((getattr(self, "_edit_base", None) or {}).get("title") or "")
+            broken = bool(was) and ex.parse_title(was).confidence not in (
+                "strict", "loose")
+            if broken:
+                shown = (was.replace("&", "&amp;").replace("<", "&lt;")
+                         .replace(">", "&gt;"))
+                self.title_was.setText(
+                    f"<span style='color:{T.RED_FG}'>\u2717</span> "
+                    f"<span style='color:{T.MUTED}'>Now: {shown}</span>")
+            self.title_was.setVisible(broken)
 
         guided = getattr(self, "_entry", ENTRY_DEFAULT) == "guided"
         ok = t.confidence in ("strict", "loose")

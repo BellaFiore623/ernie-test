@@ -408,7 +408,7 @@ def check_a_red_card_says_what_is_wrong_with_it():
 
     # The card this was written against. A date, a tag, no client.
     c.equal(tp({"confidence": "loose", "queue": "PROD", "client_raw": "",
-                "thread_date": "2026-06-29"}),
+                "thread_date": "2026-06-29", "summary": "Trade show TOF"}),
             ["No client name"], "a missing client is named, and only that")
 
     # The tag parsed and nothing else did. The client is not claimed: with no
@@ -427,12 +427,19 @@ def check_a_red_card_says_what_is_wrong_with_it():
     # Everything is there and it still is not the documented shape, so the
     # shape is the complaint and there is nothing more specific to say.
     c.equal(tp({"confidence": "loose", "queue": "OPS", "client_raw": "Thrasher",
-                "thread_date": "2026-08-03"}),
+                "thread_date": "2026-08-03", "summary": "gasket"}),
             ["Non-standard title format"], "an odd shape says so")
+
+    # The last field to get a name of its own. A tag, a client and a date and
+    # still not strict means the description is what is missing, and saying
+    # "non-standard format" there sends somebody to look at the separators.
+    c.equal(tp({"confidence": "loose", "queue": "OPS", "client_raw": "Thrasher",
+                "thread_date": "2026-08-03", "summary": ""}),
+            ["No description"], "a missing description is named")
 
     # A title that reads properly has nothing to report, which is what keeps
     # the row off every card on the board.
-    c.equal(tp({"confidence": "strict", "queue": "OPS",
+    c.equal(tp({"confidence": "strict", "queue": "OPS", "summary": "x",
                 "client_raw": "Thrasher", "thread_date": "2026-08-03"}),
             [], "a title that parses says nothing")
 

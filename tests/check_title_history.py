@@ -351,6 +351,46 @@ def check_changing_one_field_changes_one_field() -> bool:
     return c.report()
 
 
+def check_a_rebuilt_title_converges() -> bool:
+    """Guided rebuilds an unreadable title instead of handing back a box.
+
+    Composing is only dangerous for a title that already parses -- that is
+    where the 513 gratuitous renames live -- so the rule is splice when it
+    parses, compose when it does not. A title the fields cannot express has
+    no bytes worth preserving, which is what makes building a replacement
+    free.
+
+    What has to hold is that the replacement converges: fill the four fields
+    and the result parses, so the tick can actually be earned. Otherwise
+    guided would be a mode you cannot finish.
+    """
+    import bert
+    from datetime import date as _date
+    c = Check("a rebuilt title converges")
+
+    for was in ("ENG: Retired bots",
+                "OPS: SCI, Bravo, Inspect.AI inventory outreach",
+                "Thrasher - Trade show TOF",
+                ""):
+        t0 = ex.parse_title(was)
+        c.ok(t0.confidence not in ("strict", "loose"),
+             f"the fixture really is unreadable: {was!r}")
+        # What the editor seeds the description with.
+        seed = t0.summary or ("" if t0.confidence in ("strict", "loose") else was)
+        built = bert.compose_title("PROD", "Acme Digging",
+                                   _date(2026, 9, 16), seed)
+        c.ok(ex.parse_title(built).confidence in ("strict", "loose"),
+             f"and the rebuild parses: {built!r}")
+        if seed:
+            c.ok(seed in built, "keeping what somebody had already written")
+
+    # Half-filled on the way there is allowed to be unreadable -- it just
+    # must not throw anything away.
+    part = bert.compose_title("PROD", "", None, "Retired bots")
+    c.equal(part, "PROD: Retired bots", "a half-built title keeps the words")
+    return c.report()
+
+
 CHECKS = (check_a_rename_becomes_the_revision_it_was,
           check_it_cannot_change_what_the_board_shows,
           check_a_familiar_name_still_gets_its_own_date,
@@ -358,4 +398,5 @@ CHECKS = (check_a_rename_becomes_the_revision_it_was,
           check_running_it_twice_changes_nothing,
           check_a_thread_with_no_title_row_is_left_alone,
           check_a_title_with_no_client_keeps_its_whole_date,
-          check_changing_one_field_changes_one_field)
+          check_changing_one_field_changes_one_field,
+          check_a_rebuilt_title_converges)
