@@ -20,6 +20,8 @@ from support import Board, Check, iso
 
 import inspect
 import bert
+
+Q = chr(34)
 import ernie_extract as ex
 import ernie_api as api
 import ernie_jira as J
@@ -462,6 +464,19 @@ def check_a_red_card_says_what_is_wrong_with_it():
     # Discord will not take a nameless thread, so it would have gone out,
     # come back 4xx, burned its five attempts and settled on the card as
     # "Not sent" for something answerable the moment it was typed.
+    # The dash in the Tag dropdown is an entry, and an entry is something you
+    # can pick, so picking it has to do what it says. It used to return
+    # early: the tag stayed in the title and the dropdown snapped back to it
+    # on the next pass, which reads as the control being broken.
+    picked = inspect.getsource(bert.Card._queue_picked)
+    # Picking it clears the tag rather than doing nothing: the clearing
+    # call is the evidence, since a bare `return` leaves no trace to
+    # look for.
+    c.ok(("_put(" + Q + "queue" + Q + ", " + Q + Q + ")") in picked,
+         "the dash clears the tag out of the title")
+    c.ok("PREFIX_ONLY" in picked,
+         "including on a title with no date, where there is no segment")
+
     src = inspect.getsource(bert.Card.save)
     c.ok("_title_to_send().strip()" in src, "save refuses an empty title")
     c.ok(src.index("_title_to_send().strip()") < src.index("self.is_new"),

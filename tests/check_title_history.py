@@ -355,6 +355,15 @@ def check_changing_one_field_changes_one_field() -> bool:
         c.ok(ex.parse_title(out).confidence in ("strict", "loose"),
              f"what is left still parses after clearing {f}")
 
+    # Taking the tag off, which the dropdown's dash offers and so must do.
+    c.equal(ex.replace_field(n, "queue", ""),
+            "Trekk - 04aug26 - SSD0129 motor short", "the tag can be removed")
+    # Putting it back is not this function's job and cannot be: once the tag
+    # is gone the title has no queue group for a swap to find, which is
+    # exactly why the editor prepends rather than splices in that case.
+    c.equal(ex.replace_field("Trekk - 04aug26 - x", "queue", "OPS"),
+            "Trekk - 04aug26 - x", "a tagless title has no tag to swap")
+
     # A title with no segments to swap is returned as it stands, which is
     # what lets the editor say so instead of guessing.
     c.equal(ex.replace_field("ENG: Retired bots", "client", "Acme"),

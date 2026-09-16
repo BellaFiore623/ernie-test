@@ -3701,10 +3701,24 @@ class Card(QFrame):
     def _queue_picked(self, _index):
         """Put the chosen queue into the title, keeping whatever else is there."""
         q = self.f_queue.currentData()
-        if not q:
-            return
         cur = self.f_title.text().strip()
         t = ex.parse_title(cur)
+        if not q:
+            # The dash is an entry, and an entry is something you can pick,
+            # so picking it has to do what it says. It used to return here --
+            # the tag stayed in the title and the dropdown snapped back to it
+            # on the next pass, which reads as the control being broken.
+            #
+            # Taking a tag off leaves a title nothing can parse, and that is
+            # allowed: the card says "No tag" and the fields are still there
+            # to put one back. It is refusing to do the visible thing that is
+            # not allowed.
+            if t.confidence in ("strict", "loose"):
+                self._put("queue", "")
+            else:
+                m = ex.PREFIX_ONLY.match(cur)
+                self._set_title(m.group("rest").strip() if m else cur)
+            return
         if t.confidence in ("strict", "loose"):
             self._put("queue", q)
             return
