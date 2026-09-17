@@ -153,6 +153,28 @@ class Card:
 # the cap walks down the board rather than starving the bottom of it.
 PUBLISH_MAX = 10
 
+# Seconds between the card messages a publish writes.
+#
+# `Discord.write` sleeps `PACING`, which is 0.1 and tuned for GETs against the
+# 50/s global ceiling. Editing messages in one channel is about 5 per 5s, so a
+# capped pass fires ten edits in a second and is rate limited from the sixth.
+#
+# With one board that was survivable and invisible: write() rides out a 429
+# asking for 30s or less, so the pass simply took longer -- 40 edits measured
+# at 4m46s on the sandbox, which was read as Discord being slow rather than as
+# this.
+#
+# **Two boards share one bucket**, because they share the bot. The backoffs
+# escalate past RETRY_MAX_S, write() raises, and the publish dies -- every
+# pass, on both machines, so neither board's changes ever reach the other.
+# The same property the rename budget already documents: `scope: shared`, so
+# a second Ernie gets no allowance of its own.
+#
+# Ten writes at this pace is about eleven seconds, well inside the 30s the
+# publish beat allows and inside the channel's budget even with both machines
+# spending it at once.
+WRITE_PACE = 1.1
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -681,6 +703,10 @@ def publish(d: Discord, cid: str, db: str, actor: str = "ernie",
                                content=content, retry_5xx=True)
                 counts["edited"] += 1
                 written += 1
+
+            if sent is not None:
+                # Spaced, not burst. See WRITE_PACE.
+                time.sleep(WRITE_PACE)
 
             if sent:
                 s = skew_seconds(sent)

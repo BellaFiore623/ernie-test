@@ -780,6 +780,23 @@ other's API. Priority, rank, work items and completion live in
 
 - One message per card, not one document, so two people moving different
   cards never collide and no card can outgrow the 2000-character cap.
+- **The writes are paced, and two boards share one bucket.** `Discord.write`
+  sleeps `PACING`, 0.1s, which is tuned for GETs against the 50/s global
+  ceiling; editing messages in one channel is about **5 per 5s**, so a capped
+  pass fired ten edits in a second and was rate limited from the sixth. With
+  one board that was survivable and invisible -- `write()` rides out a 429
+  asking 30s or less, so the pass just took longer, and the sandbox's 40 edits
+  in **4m46s** were read as Discord being slow rather than as this. With two
+  boards it breaks outright: they share the bot, so they share the bucket, the
+  backoffs escalate past `RETRY_MAX_S`, `write()` raises and the publish dies
+  -- every pass, on both machines, so neither board's changes reach the other.
+  The rename budget already documented exactly this property (`scope: shared`,
+  so a second Ernie gets no allowance of its own) and nobody applied it here.
+  `WRITE_PACE` is 1.1s between card writes: ten of them is about eleven
+  seconds, inside the 30s the publish beat allows and inside the channel's
+  budget with both machines spending it at once. Found the day two stacks
+  first shared a production channel, when a card moved on one board took six
+  minutes to reach the other.
 - **A publish pass is bounded, `PUBLISH_MAX` card messages at a time.** A
   card message carries its position in the band and `positions()` is computed
   across the whole board, so closing one ticket shifts everything below it

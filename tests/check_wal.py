@@ -280,6 +280,9 @@ def check_a_publish_pass_is_bounded() -> bool:
     c = Check("a publish pass is bounded")
 
     import ernie_state as st
+    # The stub below has no rate-limit bucket, so the pace buys nothing here
+    # and costs the suite 30 seconds. See WRITE_PACE for what it is for.
+    pace, st.WRITE_PACE = st.WRITE_PACE, 0
 
     c.ok(isinstance(st.PUBLISH_MAX, int) and st.PUBLISH_MAX > 0,
          f"there is a budget ({st.PUBLISH_MAX} card messages a pass)")
@@ -317,6 +320,7 @@ def check_a_publish_pass_is_bounded() -> bool:
         c.equal(third["posted"] + third["edited"], n - st.PUBLISH_MAX * 2,
                 "the last pass writes only what is left, not a full budget")
 
+    st.WRITE_PACE = pace
     return c.report()
 
 
@@ -325,6 +329,7 @@ def check_a_quiet_board_still_writes_nothing() -> bool:
     c = Check("a quiet board still writes nothing")
 
     import ernie_state as st
+    pace, st.WRITE_PACE = st.WRITE_PACE, 0
 
     with Board() as b:
         b.con.execute(
@@ -343,6 +348,7 @@ def check_a_quiet_board_still_writes_nothing() -> bool:
         c.equal(again["posted"] + again["edited"], 0, "and reports nothing")
         c.equal(again.get("left", 0), 0, "with nothing left over")
 
+    st.WRITE_PACE = pace
     return c.report()
 
 
