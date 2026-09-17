@@ -667,9 +667,31 @@ discussed, and the two only met by somebody opening Bert. `ernie_status.py`
 puts what is left where the conversation is: band, what is still to do, what
 has been done, when it last moved and who moved it.
 
-- New threads only, and there is no backfill. A first sync makes a card for
-  every thread there has ever been, and posting into all of those is not a
-  thing to do to a channel people are working in.
+- **New threads only by default, and a backfill is bounded and opt-in.**
+  `witnessed_start()` is the gate: a first sync makes a card for every thread
+  there has ever been, and posting into all of those is not a thing to do to
+  a channel people are working in.
+  The rule was right about the hazard and wrong about the number. It was
+  decided against production's 889 inherited threads -- but an archived thread
+  is skipped anyway, separately, so the set a backfill actually speaks into is
+  the *open* ones. On 2026-09-17 that was 37, against a board carrying a
+  status on **2 cards of 39**: the feature was doing its job on 5% of the
+  live board, and it does not self-correct, because it only improves as old
+  tickets close.
+  `STATUS_BACKFILL` switches it on and `BACKFILL_MAX` is 3 a pass, the same
+  shape as `ANNOUNCE_MAX`, `PUBLISH_MAX`, `CLOSURE_CHECKS` and
+  `RESCAN_PER_CYCLE`. The cost being budgeted is not API calls, it is 37
+  notifications arriving in everybody's sidebar at once; simulated against a
+  copy of production's mirror it covers all 37 in 13 passes, about 13 minutes.
+  The budget is spent only on threads being spoken into for the first time --
+  one that already has a status is maintained like any other, or the budget
+  would be filled every pass by work already done and never reach the rest --
+  and the counts carry `left` so three of thirty-seven does not read as a pass
+  that finished.
+  Unlike `CHANGELOG_CHANNEL_ID` and `ANNOUNCE_CLOSURES` it is safe on more
+  than one machine, because `adopt()` looks in the thread before posting.
+  Nothing filters by title prefix, `ENG:` included: titles change, and nothing
+  may be keyed on parsed title fields.
 - An archived thread is skipped. Discord refuses a post to one, and
   unarchiving to say "closed" would drag a finished ticket back into
   everybody's sidebar.

@@ -202,13 +202,88 @@ def check_only_threads_ernie_watched_open() -> bool:
         old = a_card(b, "OPS: Munhall - 26Aug26 - 1k reel", witnessed=False)
         shut = a_card(b, "CS: Latrobe - 30Aug26 - camera head", archived=True)
 
-        keep = {card.thread_id for card in
-                st.wanted(b.con, S.load_board(b.path))}
+        kept, left = st.wanted(b.con, S.load_board(b.path))
+        keep = {card.thread_id for card in kept}
         c.ok(fresh in keep, "a thread Ernie watched appear gets one")
         c.ok(old not in keep, "one it merely inherited does not")
         c.ok(shut not in keep,
              "nor an archived one, which Discord refuses a post to anyway")
+        c.equal(left, 1, "and the inherited one is counted as still waiting")
 
+    return c.report()
+
+
+def check_backfill_is_bounded() -> bool:
+    """The backfill speaks into inherited threads, a few at a time.
+
+    The no-backfill rule was decided against production's 889 inherited
+    threads. But an archived thread is skipped anyway, separately, so the set
+    this actually speaks into is the open ones -- 37 on 2026-09-17, against a
+    board carrying a status on 2 cards of 39. The rule was right about the
+    hazard and wrong about the number.
+
+    What must stay true is that it is bounded and that the bound is spent on
+    threads being spoken into for the first time. A budget that counted every
+    inherited thread would be filled every pass by the ones already done and
+    would never reach the rest.
+    """
+    c = Check("a backfill is bounded and walks the board")
+
+    with Board() as b:
+        fresh = a_card(b, "PROD: Penn Hills - 09Sep26 - EReel-1220 respool")
+        olds = [a_card(b, f"OPS: Munhall - 26Aug26 - reel {i}", witnessed=False)
+                for i in range(5)]
+        shut = a_card(b, "CS: Latrobe - 30Aug26 - camera head",
+                      witnessed=False, archived=True)
+
+        kept, left = st.wanted(b.con, S.load_board(b.path))
+        c.equal(len(kept), 1, "switched off, only the witnessed one")
+        c.equal(left, 5, "and five inherited threads are waiting")
+
+        kept, left = st.wanted(b.con, S.load_board(b.path), backfill=2)
+        keep = {card.thread_id for card in kept}
+        c.equal(len(kept), 3, "switched on, the budget adds two")
+        c.ok(fresh in keep, "the witnessed one is never crowded out")
+        c.equal(left, 3, "three still to go, so the pass does not read as done")
+        c.ok(shut not in keep, "an archived thread is still refused outright")
+
+        # Two done. The next pass must spend its budget on the other three,
+        # not on the two it has already spoken into.
+        done = [t for t in olds if t in keep]
+        kept, left = st.wanted(b.con, S.load_board(b.path), backfill=2,
+                               have=set(done))
+        keep = {card.thread_id for card in kept}
+        c.equal(left, 1, "the next pass reaches two more")
+        c.ok(all(t in keep for t in done),
+             "the ones already posted into are still kept current")
+        c.equal(len(keep - set(done) - {fresh}), 2,
+                "and the budget was spent on threads with nothing said in them")
+
+        # The whole board, with room to spare.
+        kept, left = st.wanted(b.con, S.load_board(b.path), backfill=99)
+        c.equal(left, 0, "nothing left when the budget covers the board")
+        c.equal(len(kept), 6, "every open card, witnessed or not")
+
+    return c.report()
+
+
+def check_backfill_is_off_by_default() -> bool:
+    c = Check("the backfill switch")
+    import os
+
+    was = os.environ.pop("STATUS_BACKFILL", None)
+    try:
+        c.ok(not st.backfilling(), "unset is off")
+        for v in ("1", "true", "YES", "on"):
+            os.environ["STATUS_BACKFILL"] = v
+            c.ok(st.backfilling(), f"{v!r} is on")
+        for v in ("", "0", "no", "maybe"):
+            os.environ["STATUS_BACKFILL"] = v
+            c.ok(not st.backfilling(), f"{v!r} is off")
+    finally:
+        os.environ.pop("STATUS_BACKFILL", None)
+        if was is not None:
+            os.environ["STATUS_BACKFILL"] = was
     return c.report()
 
 
@@ -245,7 +320,8 @@ def check_it_posts_once_then_edits() -> bool:
         d2 = FakeDiscord()
         again = st.publish(d2, b.con, b.path)
         c.equal({k: v for k, v in again.items() if k != "pinned"},
-                {"posted": 0, "adopted": 0, "edited": 0, "failed": 0},
+                {"posted": 0, "adopted": 0, "edited": 0, "failed": 0,
+                 "left": 0},
                 "a pass over an unchanged board writes nothing at all")
         c.equal(d2.calls, [], "and does not touch Discord")
 
@@ -270,17 +346,44 @@ def check_it_posts_once_then_edits() -> bool:
 
 
 def check_an_inherited_thread_is_never_posted_to() -> bool:
-    """Belt and braces on the rule that matters most: no backfill, ever."""
-    c = Check("an inherited thread is never posted to")
+    """Belt and braces on the default: silence unless somebody asks for it.
 
-    with Board() as b:
-        a_card(b, "OPS: Munhall - 26Aug26 - 1k reel", witnessed=False)
-        d = FakeDiscord()
-        counts = st.publish(d, b.con, b.path)
-        c.equal(counts["posted"], 0, "nothing is posted")
-        c.equal(d.calls, [], "and Discord is not called at all")
-        c.equal(b.con.execute("SELECT COUNT(*) FROM thread_status")
-                .fetchone()[0], 0, "and nothing is recorded")
+    This used to read "no backfill, ever". It is now "not unless it is
+    switched on", and the half worth guarding hardest is still this one --
+    `publish()` must go the whole way to Discord and make no call at all,
+    because the thing being prevented is a first sync of an inherited server
+    posting into every thread it has just adopted.
+    """
+    c = Check("an inherited thread is never posted to by default")
+    import os
+
+    was = os.environ.pop("STATUS_BACKFILL", None)
+    try:
+        with Board() as b:
+            a_card(b, "OPS: Munhall - 26Aug26 - 1k reel", witnessed=False)
+            d = FakeDiscord()
+            counts = st.publish(d, b.con, b.path)
+            c.equal(counts["posted"], 0, "nothing is posted")
+            c.equal(d.calls, [], "and Discord is not called at all")
+            c.equal(counts["left"], 1, "it is reported as waiting, not forgotten")
+            c.equal(b.con.execute("SELECT COUNT(*) FROM thread_status")
+                    .fetchone()[0], 0, "and nothing is recorded")
+
+        # The same board with the switch on, so the two halves are one test.
+        os.environ["STATUS_BACKFILL"] = "1"
+        with Board() as b:
+            tid = a_card(b, "OPS: Munhall - 26Aug26 - 1k reel", witnessed=False)
+            d = FakeDiscord()
+            counts = st.publish(d, b.con, b.path)
+            c.equal(counts["posted"], 1, "switched on, the thread gets one")
+            c.equal(counts["left"], 0, "and nothing is left waiting")
+            c.equal(b.con.execute("SELECT COUNT(*) FROM thread_status WHERE"
+                                  " thread_id=?", (tid,)).fetchone()[0], 1,
+                    "and it is recorded, so the next pass edits rather than posts")
+    finally:
+        os.environ.pop("STATUS_BACKFILL", None)
+        if was is not None:
+            os.environ["STATUS_BACKFILL"] = was
 
     return c.report()
 
@@ -578,4 +681,6 @@ CHECKS = (check_a_second_board_adopts_rather_than_posting,
           check_the_band_colours_match_the_board,
           check_it_carries_what_the_thread_is_about,
           check_nothing_is_invented_for_a_thread_without_a_ticket,
-          check_a_pending_equipment_number_is_left_out)
+          check_a_pending_equipment_number_is_left_out,
+          check_backfill_is_bounded,
+          check_backfill_is_off_by_default)

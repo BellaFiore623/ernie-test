@@ -44,6 +44,15 @@ from ernie_sync import Discord, load_env
 
 POLL_SECONDS = 30
 
+# How many threads a backfill pass may speak into. The same shape as every
+# other per-item budget here -- ANNOUNCE_MAX 3, PUBLISH_MAX 10, CLOSURE_CHECKS
+# 20, RESCAN_PER_CYCLE 12 -- and for the same reason: the cost of a backfill
+# is not the API calls, it is 37 notifications landing in people's sidebars at
+# once. Cards are taken in board order and a thread that has one is not posted
+# into again, so the budget walks down the board rather than starving the
+# bottom of it.
+BACKFILL_MAX = 3
+
 # What a band is called to somebody reading a thread rather than the board.
 # Not imported from bert.py: that pulls in PySide6, and the outbox runs where
 # there is no display.
@@ -70,6 +79,32 @@ BAND_COLOUR = {
 }
 CLOSED_COLOUR = 0xA8DC8B      # T.OK_FG: done is green everywhere else
 FIELD_MAX = 1024              # Discord's cap on a field value
+
+
+def backfilling() -> bool:
+    """Whether this machine may give an inherited thread a status message.
+
+    Off unless `STATUS_BACKFILL` is set. The default is silence because the
+    rule it relaxes was a good one: a first sync inherits every thread there
+    has ever been, and posting into all of those is not a thing to do to a
+    channel people are working in.
+
+    What changed is the number. That rule was decided against production's
+    889 inherited threads -- but `wanted()` skips an archived thread anyway,
+    separately, so the set a backfill actually speaks into is the *open* ones.
+    Measured 2026-09-17: 40 open against 927 total, of which 37 were inherited
+    and would otherwise stay silent for ever. Those are live tickets -- a
+    keepalive bot pings them every three days, so nothing is open by accident
+    -- and they are exactly what the status message was built for. The board
+    was carrying it on 2 cards of 39.
+
+    Unlike the change log and the closure announcements this is safe on more
+    than one machine: `adopt()` looks in the thread before posting, so a
+    second board finds the first board's message and edits it rather than
+    adding another.
+    """
+    return (os.environ.get("STATUS_BACKFILL", "").strip().lower()
+            in ("1", "true", "yes", "on"))
 
 
 def now() -> str:
@@ -223,25 +258,43 @@ def as_body(embed: dict) -> str:
 
 # -- what needs one ---------------------------------------------------------
 
-def wanted(con, cards: list[ernie_state.Card]) -> list[ernie_state.Card]:
-    """The cards whose threads should carry a status message.
+def wanted(con, cards: list[ernie_state.Card], backfill: int = 0,
+           have=()) -> tuple[list[ernie_state.Card], int]:
+    """The cards whose threads should carry a status message, and how many
+    inherited ones are still waiting.
 
     Two filters, and both are about not shouting into threads that are not
-    ours to shout into. A thread Ernie merely inherited on a first sync gets
-    nothing, ever. An archived one is skipped because Discord refuses a post
-    to it -- and unarchiving to say "closed" would drag a finished ticket back
-    into everybody's sidebar.
+    ours to shout into. An archived thread is skipped because Discord refuses
+    a post to it -- and unarchiving to say "closed" would drag a finished
+    ticket back into everybody's sidebar. That one is absolute.
+
+    A thread Ernie merely inherited on a first sync gets nothing **unless a
+    backfill is switched on**, and then only `backfill` of them per pass. The
+    budget counts threads being spoken into for the first time and nothing
+    else: an inherited thread that already has a status is maintained like any
+    other, or the board would fill its budget every pass re-listing work it
+    had already done and never reach the rest.
+
+    `left` is the ones still without a message, so a pass that did three of
+    thirty-seven does not read as one that finished -- the same reason the
+    state channel's bounded publish carries it.
     """
-    out = []
+    out, room, left = [], backfill, 0
     for card in cards:
-        if not load.witnessed_start(con, card.thread_id):
-            continue
         r = con.execute("SELECT archived FROM threads WHERE thread_id=?",
                         (card.thread_id,)).fetchone()
         if r is None or r["archived"]:
             continue
-        out.append(card)
-    return out
+        if load.witnessed_start(con, card.thread_id) or card.thread_id in have:
+            out.append(card)
+            continue
+        # Inherited, and nothing has been said in it yet.
+        if room:
+            out.append(card)
+            room -= 1
+        else:
+            left += 1
+    return out, left
 
 
 def stored(con) -> dict:
@@ -294,11 +347,15 @@ def adopt(d: Discord, tid: str) -> str | None:
 
 def publish(d: Discord, con, db: str) -> dict:
     """One pass: post the missing ones, edit the ones that would read differently."""
-    counts = {"posted": 0, "adopted": 0, "edited": 0, "failed": 0}
+    counts = {"posted": 0, "adopted": 0, "edited": 0, "failed": 0, "left": 0}
     have = stored(con)
 
+    cards, counts["left"] = wanted(
+        con, ernie_state.load_board(db),
+        backfill=BACKFILL_MAX if backfilling() else 0, have=have)
+
     facts = ticket_facts(con)
-    for card in wanted(con, ernie_state.load_board(db)):
+    for card in cards:
         embed = render(card, facts.get(card.thread_id))
         body = as_body(embed)
         was = have.get(card.thread_id)
@@ -410,10 +467,17 @@ def main() -> None:
 
     if a.dry_run:
         cards = ernie_state.load_board(a.db)
-        keep = wanted(con, cards)
+        # The real budget and the real stored rows, so --dry-run answers what
+        # the next pass would actually do rather than what it could do with no
+        # limit -- which is the question somebody switching the backfill on is
+        # asking.
+        keep, left = wanted(con, cards,
+                            backfill=BACKFILL_MAX if backfilling() else 0,
+                            have=stored(con))
         facts = ticket_facts(con)
         print(f"{len(keep)} of {len(cards)} cards would carry a status message"
-              f" ({len(cards) - len(keep)} inherited or archived)\n")
+              f" ({len(cards) - len(keep) - left} archived or already current,"
+              f" {left} inherited and waiting; backfill {'on' if backfilling() else 'off'})\n")
         for card in keep:
             print(f"-- {card.thread_id}")
             e = render(card, facts.get(card.thread_id))
