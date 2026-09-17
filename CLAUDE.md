@@ -31,6 +31,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
 | `tools/q.py` | Ad-hoc SQL helper, **read-only unless `--write`**. `python tools/q.py "SELECT ..." ernie-test.db` |
+| `tools/wal_watch.py` | Watches for the reader that pins the WAL, while it is happening. Holds one connection, passive-checkpoints on a beat, names what was running. The one tool here that must be read-write. |
 | `tools/backfill_message_types.py` | Fetches Discord's message `type` for rows written before the column existed. Read-only against Discord, writes one column, resumable. |
 | `tools/rebuild_title_history.py` | Writes each recovered rename as the title revision it was. No network. Cannot change what the board shows today. |
 | `tools/backfill_closers.py` | Puts names on closures recorded before View Audit Log was granted. Read-only against Discord, fills two NULLs, `--dry-run`. |
@@ -103,7 +104,12 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   `wal_checkpoint(TRUNCATE)`, which reports when a reader blocks it, and none
   of them ever did. The diagnostic tooling pointed at the live database is
   the candidate that could not be cleared, which is why `tools/q.py` is
-  read-only now.
+  read-only now. Both sightings were reconstructed hours afterwards from what
+  was left behind, which is why neither named a reader: `tools/wal_watch.py`
+  is the part that was missing, holding one connection and passive-
+  checkpointing on a beat so a log that will not copy back is caught while
+  whatever is holding it is still running. Start it beside the stack the next
+  time the strip comes up, not after.
 - **Never hard-delete from the mirror.** Discord is mutable, so
   `thread_titles` and `message_revisions` are append-only and deletions set
   `deleted_at`. Bert's own state (`cards`, `events`) is never overwritten by
