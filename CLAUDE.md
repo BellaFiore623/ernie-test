@@ -99,12 +99,33 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   smaller than its database, amber past that, red past twice it, and silent
   again for an Ernie too old to send the field. Restarting the stack clears
   it; a checkpoint with nothing running took 33 MB to nothing instantly.
-  **What holds it is still unidentified.** The API, the sync, the outbox and
-  Bert-shaped polling were each probed with a writer attempting
-  `wal_checkpoint(TRUNCATE)`, which reports when a reader blocks it, and none
-  of them ever did. The diagnostic tooling pointed at the live database is
-  the candidate that could not be cleared, which is why `tools/q.py` is
-  read-only now. Both sightings were reconstructed hours afterwards from what
+  **What holds it is `ernie_status.pin_pending`, found 2026-09-17.** The
+  earlier probes -- the API, the sync, the outbox and Bert-shaped polling,
+  each tested with a writer attempting `wal_checkpoint(TRUNCATE)` -- all came
+  back clean because none of them was ever *pinning*. The loop iterated
+  `con.execute(...)` directly, which is a lazy cursor holding a read
+  transaction open for the whole loop, and the loop does an HTTP PUT per row.
+  That stale snapshot is the reader, and the refused upgrade to a write is
+  `database is locked` on the outbox's connection -- permanently, because the
+  failed upgrade leaves the transaction open and the outbox is one thread and
+  one connection. Status, drain, state channel and change log, all of it,
+  until the process restarts.
+  `.fetchall()` is the fix and the word is load-bearing. Reproduced against a
+  copy of production's mirror with a second connection committing underneath:
+  raises on the first pass before, eight clean passes and a flat 2 MB WAL
+  after, against 450 concurrent commits. `tests/check_status.py` holds it
+  with a Discord whose `write()` commits on a second connection, so the race
+  happens every time rather than sometimes.
+  It was latent for the life of the project: the query only returns rows when
+  something is waiting to be pinned, and production had three status messages,
+  all pinned months earlier. `STATUS_BACKFILL` made three unpinned rows a
+  pass, which is the first traffic that ever reached it -- **48 MB of WAL
+  against a 16 MB database and the outbox stalled for ten minutes**.
+  The two earlier sightings are consistent with the same cause and not proven
+  to be it: the sandbox run where *all 29 pins came back 403* held that cursor
+  open across 29 HTTP calls, which pins the WAL without ever reaching the
+  UPDATE -- growth with no lock errors, which is what was seen. `tools/q.py`
+  stays read-only regardless; that was a good change for its own reasons. Both sightings were reconstructed hours afterwards from what
   was left behind, which is why neither named a reader: `tools/wal_watch.py`
   is the part that was missing, holding one connection and passive-
   checkpointing on a beat so a log that will not copy back is caught while
@@ -678,6 +699,11 @@ has been done, when it last moved and who moved it.
   status on **2 cards of 39**: the feature was doing its job on 5% of the
   live board, and it does not self-correct, because it only improves as old
   tickets close.
+  **It needs 0.9.7.** Switched on in production on 2026-09-17 against 0.9.6
+  and it stalled the outbox within three passes -- not through anything the
+  backfill does, but because three unpinned rows a pass was the first traffic
+  ever to reach the lazy cursor in `pin_pending`. The WAL rule above has the
+  whole of it. Do not switch it on against a build without that fix.
   `STATUS_BACKFILL` switches it on and `BACKFILL_MAX` is 3 a pass, the same
   shape as `ANNOUNCE_MAX`, `PUBLISH_MAX`, `CLOSURE_CHECKS` and
   `RESCAN_PER_CYCLE`. The cost being budgeted is not API calls, it is 37

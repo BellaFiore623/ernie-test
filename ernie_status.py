@@ -431,7 +431,29 @@ def pin_pending(d: Discord, con) -> int:
     Never fatal: a thread at the 50-pin cap still gets its status.
     """
     done = 0
-    for r in con.execute("SELECT * FROM thread_status WHERE pinned = 0"):
+    # **fetchall, and the word is load-bearing.** `for r in con.execute(...)`
+    # is a lazy cursor: it holds a read transaction open on this connection
+    # for the whole loop, and the loop does an HTTP PUT per row. While that
+    # PUT is in flight the sync commits on its own connection, so the UPDATE
+    # below is asking SQLite to upgrade a read snapshot that is now stale --
+    # which it refuses with "database is locked", immediately, and which
+    # `busy_timeout` cannot help with because waiting is not what resolves it.
+    #
+    # Worse than the failed write: the refused upgrade leaves the transaction
+    # open, so every later write on this connection fails the same way. The
+    # outbox is one thread and one connection, so that is the status message,
+    # the drain, the state channel and the change log, until the process is
+    # restarted. It is also the reader pinning the WAL, which then grows
+    # without bound.
+    #
+    # Latent for the life of the project and unreachable until 2026-09-17:
+    # this query only returns rows when something is waiting to be pinned, and
+    # production had 3 status messages, all pinned months ago. The backfill
+    # made 3 unpinned rows a pass, which is the first traffic that could
+    # reach it -- 48 MB of WAL against a 16 MB database, and the outbox
+    # stalled for ten minutes.
+    for r in con.execute(
+            "SELECT * FROM thread_status WHERE pinned = 0").fetchall():
         try:
             # Pinning a pinned message is the same as pinning it once.
             d.write("PUT", f"/channels/{r['thread_id']}/pins/{r['message_id']}",

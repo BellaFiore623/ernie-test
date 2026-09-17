@@ -668,7 +668,85 @@ def check_adoption_is_careful_about_what_it_adopts() -> bool:
     return c.report()
 
 
-CHECKS = (check_a_second_board_adopts_rather_than_posting,
+def check_a_pin_does_not_wedge_the_connection() -> bool:
+    """The lock that stalled production for ten minutes on 2026-09-17.
+
+    `pin_pending` iterated `con.execute(...)` directly, which is a lazy
+    cursor: it holds a read transaction open on this connection for the whole
+    loop, and the loop does an HTTP PUT per row. The sync commits on its own
+    connection while that PUT is in flight, so the UPDATE afterwards asks
+    SQLite to upgrade a snapshot that is now stale. It refuses -- immediately,
+    and `busy_timeout` cannot help, because waiting is not what resolves it.
+
+    The failed write is the small half. The refused upgrade leaves the
+    transaction open, so every later write on that connection fails the same
+    way, and the outbox is one thread and one connection: the status message,
+    the drain, the state channel and the change log, all of it, until the
+    process restarts. That stale snapshot is also what pins the WAL, which is
+    how 16 MB of database came to carry 48 MB of write-ahead log.
+
+    Latent for the life of the project. This query only returns rows when
+    something is waiting to be pinned, and production had three status
+    messages, all pinned months earlier. The backfill made three unpinned
+    rows a pass -- the first traffic that could ever reach it.
+
+    No threads and no sleeping: a Discord whose write() commits on a second
+    connection is exactly the race, made to happen every time.
+    """
+    c = Check("a pin cannot wedge the outbox's connection")
+
+    with Board() as b:
+        import sqlite3
+        tid = a_card(b, "PROD: Penn Hills - 09Sep26 - EReel-1220 respool")
+        # The threads first: thread_status references them, so the rows
+        # cannot go in ahead of what they point at.
+        ids = [tid] + [f"{tid}{i}" for i in (1, 2)]
+        for t in ids[1:]:
+            b.con.execute(
+                """INSERT OR IGNORE INTO threads
+                       (thread_id, parent_id, guild_id, created_at,
+                        first_seen_at, last_synced_at, archived)
+                   VALUES (?,?,?,?,?,?,0)""",
+                (t, "chan", "g", iso(-60), iso(-30), iso(-30)))
+        for i, t in enumerate(ids):
+            b.con.execute(
+                """INSERT INTO thread_status (thread_id, message_id, body,
+                                              sent_at, pinned)
+                   VALUES (?,?,?,?,0)""", (t, f"m{i}", "", iso(-10)))
+        b.con.commit()
+
+        other = sqlite3.connect(b.path, timeout=1.0)
+
+        class WritingDiscord(FakeDiscord):
+            """The sync, committing while the pin is in flight."""
+            def write(self, verb, path, **kw):
+                other.execute("UPDATE threads SET last_synced_at=? "
+                              "WHERE thread_id=?", (iso(), tid))
+                other.commit()
+                return super().write(verb, path, **kw)
+
+        d = WritingDiscord()
+        pinned = st.pin_pending(d, b.con)
+
+        c.equal(pinned, 3, "all three are pinned despite the writes underneath")
+        c.equal(b.con.execute("SELECT COUNT(*) FROM thread_status WHERE"
+                              " pinned=0").fetchone()[0], 0,
+                "and none is left waiting")
+        c.ok(not b.con.in_transaction,
+             "the connection is left with no transaction open")
+
+        # The half that made one failure permanent: the next write must work.
+        b.con.execute("UPDATE cards SET updated_at=? WHERE thread_id=?",
+                      (iso(), tid))
+        b.con.commit()
+        c.ok(True, "and a later write on the same connection still lands")
+        other.close()
+
+    return c.report()
+
+
+CHECKS = (check_a_pin_does_not_wedge_the_connection,
+          check_a_second_board_adopts_rather_than_posting,
           check_adoption_is_careful_about_what_it_adopts,
           check_the_message_says_what_is_left,
           check_an_empty_ticket_says_so,
