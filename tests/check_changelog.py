@@ -14,6 +14,12 @@ from support import Board, Check, FakeDiscord, iso
 import ernie_changelog as cl
 import ernie_load as load
 
+# FakeDiscord has no rate-limit bucket, so the pace between writes buys
+# nothing here and cost the suite 40 seconds. Zeroed for the module rather
+# than per check, because every check below drains. See
+# `ernie_state.WRITE_PACE` for what it is for on a real channel.
+cl.WRITE_PACE = 0
+
 
 def check_settled() -> bool:
     c = Check("settled()")

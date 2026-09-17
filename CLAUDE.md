@@ -839,6 +839,16 @@ changes worth interrupting somebody for; this gets all of them.
   rather than posted.
 - Nothing is logged until it has settled, because an event inside its undo
   window may still be cancelled.
+- **Paced like the state channel, and for the same reason.** `BATCH` is 20
+  lines a pass into one channel, which at `PACING` alone is 20 writes in two
+  seconds against a budget of about 5 per 5s. It never bit, because a quiet
+  board logs one or two lines a pass and `drain()` breaks out of the loop on a
+  failed write rather than hammering -- so it degraded into slowness and a
+  retry next pass rather than into the state channel's dead publish. Found by
+  looking for the same shape elsewhere the day the state channel's was fixed,
+  which is the only reason it was found before a busy day did it.
+  `ernie_state.WRITE_PACE` is the one value, imported rather than copied:
+  it is a statement about a Discord channel, not about either feature.
 - **A line is claimed before it is posted, never after.** The order was post,
   then record, then commit, under a comment saying "a failure halfway repeats
   nothing" -- true of a failure *between* lines and false of one inside a

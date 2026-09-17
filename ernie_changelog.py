@@ -30,11 +30,14 @@ from datetime import datetime, timedelta, timezone
 
 import ernie_load as load
 import ernie_version
-from ernie_state import connect, discord_time
+from ernie_state import connect, discord_time, WRITE_PACE
 from ernie_sync import Discord
 
 POLL_SECONDS = 60
-BATCH = 20          # lines per pass, so a backlog doesn't hold the loop
+# Lines per pass, so a backlog doesn't hold the loop -- and, like the state
+# channel's cap, a burst into one channel. `WRITE_PACE` is why 20 of them is
+# not 20 writes in two seconds; see `ernie_state.WRITE_PACE` for the budget.
+BATCH = 20
 # Must match ernie_api.UNDO_WINDOW_S. Copied rather than imported: ernie_api
 # pulls in FastAPI, and the outbox process this runs inside has no other
 # reason to load it.
@@ -298,6 +301,8 @@ def drain(d: Discord, cid: str, con) -> dict:
             mark(con, e["event_id"], e["log_message_id"])
             con.commit()
             struck += 1
+            # Spaced, not burst. One channel, same budget as the board's.
+            time.sleep(WRITE_PACE)
         except Exception as err:
             print(f"  changelog: {e['event_id'][:8]} strike failed -- {err}",
                   file=sys.stderr)
@@ -333,6 +338,9 @@ def drain(d: Discord, cid: str, con) -> dict:
                   f"not recorded -- {err}. It cannot be struck through.",
                   file=sys.stderr)
         sent += 1
+        # Spaced, not burst. See WRITE_PACE -- a full BATCH is 20 posts into
+        # one channel, which at PACING alone is rate limited from the sixth.
+        time.sleep(WRITE_PACE)
 
     for row in unresolved(con):
         print(f"  changelog: {row['event_id'][:8]} claimed at "
