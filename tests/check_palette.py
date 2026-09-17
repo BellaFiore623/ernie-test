@@ -1088,8 +1088,13 @@ def check_a_status_gives_up_its_noun_not_its_state() -> bool:
     fit_src = ast.get_source_segment(src, next(
         n for n in cls.body if isinstance(n, ast.FunctionDef)
         and n.name == "_fit_toolbar")) or ""
-    c.ok("range(max(len(fresh), len(shared)))" in fit_src,
+    c.ok("range(max(len(fresh), len(shared), len(seen)))" in fit_src,
          "the fit tries every form, not just the longest")
+    # The attention count is the third label with words to give up, and the
+    # bar already asks for more than it has at the window's minimum -- so it
+    # has to be in the negotiation rather than assumed to fit.
+    c.ok("self.count.setText(" in fit_src,
+         "the attention count shortens with the other two")
     c.ok("totalMinimumSize" in fit_src,
          "and stops at the first that the layout says it can hold")
 

@@ -1,6 +1,8 @@
 # Jump to the next card that needs a person
 
-Status: planned, not started. Asked for 2026-09-16.
+Status: **built 2026-09-17**, in `tests/check_attention.py`. Kept as the
+record of what was decided and why; the three open questions below were
+settled as suggested.
 
 ## What is wanted
 

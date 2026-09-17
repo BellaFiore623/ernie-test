@@ -330,7 +330,16 @@ edge, which is `needs_triage()` and is about the title being unreadable. A
 card keeps the red edge wherever it is dragged, so the two sets overlap
 rather than nest -- on 2026-09-16, 23 in the band and 3 red, two of those
 three sitting in Medium. `plans/needs-attention-jump.md` turns on the
-distinction.
+distinction, and so does the jump built from it: **clicking the toolbar's
+attention count goes to the next card whose title cannot be read**, wrapping
+past the last. It hangs off that count rather than a band header for exactly
+this reason -- two of those three were in Medium, so a control on the Needs
+Attention header would have taught the ambiguity to everybody who used it.
+`needs_attention()` orders `needs_triage()`'s set by band then rank and
+`next_attention()` wraps; it cycles only what the filters leave on screen and
+says `2 of 3` when that is not all of them, and does nothing while an editor
+is open, because scrolling away from a half-typed ticket is what the poll
+parks its payload to avoid. `tests/check_attention.py`.
 
 ## Writes and undo
 

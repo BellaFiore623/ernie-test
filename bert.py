@@ -566,6 +566,10 @@ def apply_theme(choice: str) -> None:
         f"QToolTip {{ color:{T.INK}; background-color:{T.SURFACE};"
         f" border:1px solid {T.LINE}; padding:4px 6px; }}")
 
+# Long enough to find the card the jump landed on, short enough that it is
+# not a selection state the board would then have to explain.
+FLASH_MS = 600
+
 # Issues that mean the thread itself couldn't be read properly.
 BLOCKING = {"title_none", "title_unparseable", "title_prefix_only",
             "title_loose", "title_nonstandard"}
@@ -817,6 +821,34 @@ def needs_triage(c) -> bool:
     if not set(c.get("issues") or []) & BLOCKING:
         return False
     return not (c.get("client_override") or "").strip()
+
+
+def needs_attention(cards):
+    """The cards asking for a person, in the order the eye reads down a board.
+
+    `needs_triage` stays the only definition of the set; this is the ordering
+    alone, so the control cannot drift from the red edges it points at.
+    BANDS then rank is what the board already draws, so cycling never jumps
+    backwards up the screen.
+    """
+    place = {b: i for i, b in enumerate(BANDS)}
+    flagged = [c for c in cards or [] if needs_triage(c)]
+    flagged.sort(key=lambda c: (place.get(c.get("priority") or "", len(BANDS)),
+                                c.get("rank") or 0.0))
+    return [c["thread_id"] for c in flagged]
+
+
+def next_attention(order, current):
+    """The card after `current`, wrapping past the last one to the first.
+
+    A `current` that has gone -- retitled, closed, or filtered out since the
+    last click -- starts again at the top rather than losing the cycle.
+    """
+    if not order:
+        return None
+    if current in order:
+        return order[(order.index(current) + 1) % len(order)]
+    return order[0]
 
 
 # A date anywhere in the raw title, for telling "never typed" from
@@ -1733,6 +1765,16 @@ class ClickableWidget(QWidget):
         super().mousePressEvent(e)
 
 
+class ClickLabel(QLabel):
+    """A label that reports left clicks -- used for the attention count."""
+    clicked = Signal()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
+
+
 class FeedRow(ClickableWidget):
     """One line of the activity feed, with a hairline under it.
 
@@ -2496,20 +2538,32 @@ def status_forms(text):
         forms.append("shared · " + text.split("· ", 1)[1])
     elif text.startswith("synced "):
         forms.append(text[len("synced "):])
+    elif text.endswith(" attention"):
+        # The count is the part that cannot go: it is red, it is clickable,
+        # and the tooltip carries the sentence. So the words go first and the
+        # number last, which is the rule the other two follow.
+        stem = text[:-len(" attention")]
+        forms.append(stem + " you")
+        forms.append(stem.rsplit(" need", 1)[0])
     return forms
 
 
-def attention_text(n) -> str:
+def attention_text(n, total=None) -> str:
     """`1 needs attention`, `2 need attention`, and nothing at nought.
 
-    The verb agrees with the count, which is the half that was wrong: it read
-    "1 need attention" for as long as there has been a count there. It sits
-    beside the logo on every board in the company, which is a good argument
-    for it reading like English.
+    The verb agrees with the count: it read "1 need attention" for as long as
+    there had been a count there, and it sits beside the logo on every board
+    in the company.
+
+    `total` shows the narrowing when a filter is hiding some of them -- `2 of
+    3 need attention`. The control cycles what is on screen, so the number
+    has to say when that is not all of it; cycling silently past a card a
+    chip has hidden is the disappearing-band problem by another route.
     """
     if not n:
         return ""
-    return f"{n} need{'s' if n == 1 else ''} attention"
+    count = f"{n} of {total}" if total and total != n else str(n)
+    return f"{count} need{'s' if n == 1 else ''} attention"
 
 
 def a_few(n, one: str, many: str) -> str:
@@ -2874,6 +2928,25 @@ class Card(QFrame):
             f"Card {{ background:{fill}; border:{px}px solid {edge};"
             f" border-left:{4 if self.problem else 3}px solid {left};"
             f" border-radius:{CARD_RADIUS}px; }}")
+
+    def flash(self):
+        """Say which card the jump landed on, briefly.
+
+        Three unreadable cards look alike, so arriving without being told
+        which one is disorienting. Deliberately not a selection state: that
+        would be a second kind of highlight for the board to explain, and
+        this has nothing to say once it has been seen.
+
+        `self` as the timer's context, so a card rebuilt by a poll inside the
+        window takes its pending repaint with it rather than reaching a
+        deleted widget.
+        """
+        fill, _, _ = card_skin(self.data, self.editing)
+        self.setStyleSheet(
+            f"Card {{ background:{fill}; border:2px solid {T.RED_FG};"
+            f" border-left:4px solid {T.RED_FG};"
+            f" border-radius:{CARD_RADIUS}px; }}")
+        QTimer.singleShot(FLASH_MS, self, self._paint)
 
     def _clear(self):
         # These belong to the view and are about to be deleted. Dropping the
@@ -5385,6 +5458,9 @@ class Bert(QMainWindow):
         self.dragging = False
         self._pending = None        # a poll held back by a drag or an editor
         self.editing_card = None
+        self._shown = []            # the cards the filters left on screen
+        self._attention_at = None   # where the jump has got to, by thread id
+        self._attention_full = ""   # the count's longest form, for _fit_toolbar
         self.poller = None
         # The customer roster, refreshed far more slowly than the board.
         self.roster = []
@@ -5874,8 +5950,15 @@ class Bert(QMainWindow):
         title.setStyleSheet(f"color:{T.INK}; background:transparent;")
         lay.addWidget(title)
 
-        self.count = QLabel("")
+        # The count is the control: it is already the one thing on the bar
+        # that names the cards needing a person, so hanging the jump off
+        # anything else would be a second way to say the same thing. Not on a
+        # band header, because a card keeps its red edge wherever it is
+        # dragged -- two of the three on the board the day this was asked for
+        # were sitting in Medium.
+        self.count = ClickLabel("")
         self.count.setStyleSheet(f"color:{T.MUTED}; font-size:12px;")
+        self.count.clicked.connect(self.jump_attention)
         lay.addWidget(self.count)
         lay.addSpacing(10)
 
@@ -7254,9 +7337,15 @@ class Bert(QMainWindow):
         lay = bar.layout()
         fresh = status_forms(getattr(self, "_fresh_full", "") or "")
         shared = status_forms(getattr(self, "_shared_full", "") or "")
-        for step in range(max(len(fresh), len(shared))):
+        # The attention count is a third label with words to give up, so it
+        # steps down with the other two rather than being assumed to fit: the
+        # bar already asks for about 45px more than it has at the window's
+        # minimum width, and this one is on every board that has a red card.
+        seen = status_forms(getattr(self, "_attention_full", "") or "")
+        for step in range(max(len(fresh), len(shared), len(seen))):
             self.fresh.setText(fresh[min(step, len(fresh) - 1)])
             self.shared.setText(shared[min(step, len(shared) - 1)])
+            self.count.setText(seen[min(step, len(seen) - 1)])
             lay.activate()
             if lay.totalMinimumSize().width() <= bar.width():
                 break
@@ -7708,6 +7797,29 @@ class Bert(QMainWindow):
         if w is not None:
             self.scroll.ensureWidgetVisible(w, 0, 60)
 
+    def jump_attention(self):
+        """Scroll to the next card needing a person, wrapping at the end.
+
+        Nothing happens while an editor is open: the poll already parks its
+        payload for exactly this reason, and scrolling the board away from a
+        half-typed ticket is the same discourtesy by another route. The
+        tooltip says so rather than the click failing silently.
+
+        It cycles what is on screen, which is what the label counts -- the
+        narrowing is in the words (`2 of 3`) rather than in a card the control
+        skips without saying.
+        """
+        if self.editing_card:
+            return
+        tid = next_attention(needs_attention(self._shown), self._attention_at)
+        if tid is None:
+            return
+        self._attention_at = tid
+        self.reveal(tid)
+        w = self._card_widget(tid)
+        if w is not None:
+            w.flash()
+
     def priority_of(self, tid):
         for c in self.cards:
             if c["thread_id"] == tid:
@@ -7978,13 +8090,24 @@ class Bert(QMainWindow):
                 return term in hay
             return True
 
-        shown = [c for c in self.cards if keep(c)]
+        shown = self._shown = [c for c in self.cards if keep(c)]
         # Only the part worth acting on. The open count was a number nobody
         # did anything with -- the board itself says how much there is.
         problems = sum(1 for c in shown if needs_triage(c))
-        self.count.setText(
-            f"<span style='color:{T.RED_FG}'>{attention_text(problems)}</span>"
-            if problems else "")
+        everywhere = sum(1 for c in self.cards if needs_triage(c))
+        self._attention_full = attention_text(problems, everywhere)
+        # Colour on the widget rather than inline HTML, so `_fit_toolbar` can
+        # shorten the words without having to rebuild the markup around them.
+        self.count.setStyleSheet(
+            f"color:{T.RED_FG if problems else T.MUTED}; font-size:12px;")
+        self.count.setCursor(Qt.PointingHandCursor if problems
+                             else Qt.ArrowCursor)
+        self.count.setToolTip(
+            "Finish or close the ticket being edited first."
+            if problems and self.editing_card else
+            "Go to the next ticket whose title can't be read." if problems
+            else "")
+        self._fit_toolbar()
 
         # Straight down the order the server sent: rank is the only order,
         # and an unreadable thread is ranked to the top in `ensure_card`

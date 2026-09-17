@@ -40,6 +40,7 @@ import check_close_rule
 import check_wal
 import check_reopen
 import check_sync_beats                                           # noqa: E402
+import check_attention                                            # noqa: E402
 
 MODULES = {"app": check_app,
            "changelog": check_changelog, "state": check_state,
@@ -60,7 +61,8 @@ MODULES = {"app": check_app,
            "reopen": check_reopen,
            "msgtype": check_message_type,
            "titles": check_title_history,
-           "retry": check_outbox_retry}
+           "retry": check_outbox_retry,
+           "attention": check_attention}
 
 
 def main(argv: list[str]) -> int:
