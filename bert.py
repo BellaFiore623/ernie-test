@@ -450,9 +450,36 @@ MIDNIGHT = {
 }
 
 
-THEMES = ("system", "light", "dark", "midnight")
+# The same derivation as MIDNIGHT at hue 345, which the sweep put highest of
+# any ground: it sits between CS at 307 and the red bands at 26-29, the other
+# wide gap on the wheel. Worst tag 13.4 against midnight's 10.8 and dark's
+# 5.6, and the worst ratio drift from DARK is 0.050.
+PLUM = {
+    **DARK,
+    "ink": "#EFE6EB", "muted": "#AF9CA5", "line": "#4D3240",
+    "surface": "#361327", "canvas": "#2D0B1F", "panel": "#2D0B1F",
+    "feed": "#2D0B1F", "beside": "#3F1C30", "control": "#361327",
+    "well": "#200816", "chip_bg": "#442035",
+}
+
+# **Every palette, by the name a setting holds, and the one place that knows
+# they exist.** `check_palette.py` walks this rather than keeping a list of
+# its own: a palette added there and missed at one of the ten sites that
+# check a floor is a theme held in nine places and not the tenth, which is
+# exactly the shape of failure these checks exist to catch.
+PALETTES = {"light": LIGHT, "dark": DARK, "midnight": MIDNIGHT, "plum": PLUM}
+
+# Which of them have pale ink. `T.dark` is asked by anything choosing a glyph
+# or a shade for the ground it is on, and the question is about the ground
+# rather than about which palette happens to be loaded.
+DARK_GROUNDS = frozenset({"dark", "midnight", "plum"})
+
+# "system" is not a palette, it is a question -- so it is added here rather
+# than living in PALETTES and having to be excluded from every walk.
+THEMES = ("system",) + tuple(PALETTES)
 THEME_LABEL = {"system": "Follow the desktop", "light": "Light",
-               "dark": "Dark", "midnight": "Midnight \u2014 dark blue"}
+               "dark": "Dark", "midnight": "Midnight \u2014 dark blue",
+               "plum": "Plum \u2014 dark wine"}
 # What a board with no setting yet opens as: dark, not the desktop.
 # Following the desktop would hand a fresh install whichever the machine
 # happened to be set to, which is a coin toss on the question that has taken
@@ -485,22 +512,15 @@ class Theme:
     def __init__(self):
         self.name = "light"
 
-    # Every palette, by the name a setting holds. A dict rather than a chain
-    # of conditionals: a third theme was two `if`s and a fallback, and the
-    # fallback is what silently makes an unknown name light.
-    _ALL = {"light": LIGHT, "dark": DARK, "midnight": MIDNIGHT}
-    # Which of them have pale ink. `T.dark` is asked by anything choosing a
-    # glyph or a shade for the ground it is on, and the question is about the
-    # ground rather than about which palette is loaded.
-    _DARK_GROUNDS = frozenset({"dark", "midnight"})
-
     def use(self, name: str) -> None:
-        self.name = name if name in self._ALL else "light"
-        self._p = self._ALL[self.name]
+        # An unknown name is light rather than a KeyError: it arrives from a
+        # settings file, which a future build may have written.
+        self.name = name if name in PALETTES else "light"
+        self._p = PALETTES[self.name]
 
     @property
     def dark(self) -> bool:
-        return self.name in self._DARK_GROUNDS
+        return self.name in DARK_GROUNDS
 
     def __getattr__(self, key):
         # _p resolves off the class, so this never recurses looking for it.
@@ -572,7 +592,7 @@ def resolve_theme(choice: str) -> str:
     about. A desktop has no way to say "dark, and blue" -- midnight is a
     choice somebody makes, never one that is inferred.
     """
-    if choice in Theme._ALL:
+    if choice in PALETTES:
         return choice
     return "dark" if desktop_is_dark() else "light"
 

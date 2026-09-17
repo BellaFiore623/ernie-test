@@ -116,7 +116,7 @@ def check_palettes_agree() -> bool:
     """
     c = Check("every palette has the same keys")
 
-    named = {"light": bert.LIGHT, "dark": bert.DARK, "midnight": bert.MIDNIGHT}
+    named = dict(bert.PALETTES)
     flat = {n: flatten(p) for n, p in named.items()}
     for a in flat:
         for b in flat:
@@ -127,7 +127,7 @@ def check_palettes_agree() -> bool:
     for band in bert.BANDS:
         for group in ("band_tint", "band_card", "band_text"):
             c.ok(all(band in p[group] for p in named.values()),
-                 f"{band} has a {group.replace('_', ' ')} in all three")
+                 f"{band} has a {group.replace('_', ' ')} in every palette")
 
     # Band and the feed index these directly, not with .get, so a band missing
     # from either map is a KeyError while the board is drawing itself.
@@ -140,8 +140,7 @@ def check_palettes_agree() -> bool:
 def check_each_palette_is_the_right_end() -> bool:
     c = Check("dark is dark and light is light")
 
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         ink, surface, canvas = palette["ink"], palette["surface"], palette["canvas"]
         if name == "light":
             c.ok(lum(surface) > 200, "light draws on a bright surface")
@@ -156,22 +155,19 @@ def check_each_palette_is_the_right_end() -> bool:
 
     # Every colour is a real hex, in both. A typo here is a silently ignored
     # stylesheet rule, which Qt reports nowhere.
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         bad = [s for s in swatches(palette) if len(s) != 7]
         c.equal(bad, [], f"{name}: every value is a #rrggbb")
 
     # A quiet tag -- an equipment number, a ticket count -- sits near the
     # surface it is on. The light grey read as quiet under black text and
     # became the brightest thing on the card once the card went dark.
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         c.ok(abs(lum(palette["chip_bg"]) - lum(palette["surface"])) < 45,
              f"{name}: a plain tag stays close to the card under it")
 
     # Text on an accent fill has to survive it, in both.
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         c.ok(abs(lum(palette["on_accent"]) - lum(palette["accent"])) > 80,
              f"{name}: label on an accent button is readable")
 
@@ -218,9 +214,8 @@ def check_a_ticket_wears_its_tag() -> bool:
                 f"{bert.T.name}: an unknown tag falls back to neutral")
         return True
 
-    in_theme("light", body)
-    in_theme("dark", body)
-    in_theme("midnight", body)
+    for _name in bert.PALETTES:
+        in_theme(_name, body)
     return c.report()
 
 
@@ -255,9 +250,8 @@ def check_needs_attention_is_the_alarm() -> bool:
                     f"{bert.T.name}: {q} is still red while it sits here")
         return True
 
-    in_theme("light", body)
-    in_theme("dark", body)
-    in_theme("midnight", body)
+    for _name in bert.PALETTES:
+        in_theme(_name, body)
     return c.report()
 
 
@@ -278,9 +272,8 @@ def check_triage_is_outlined_not_filled() -> bool:
                         f"{bert.T.name}: {band}/{q} drawn thicker than ordinary")
         return True
 
-    in_theme("light", body)
-    in_theme("dark", body)
-    in_theme("midnight", body)
+    for _name in bert.PALETTES:
+        in_theme(_name, body)
     return c.report()
 
 
@@ -314,17 +307,24 @@ def check_the_other_skins() -> bool:
                 f"{bert.T.name}: an unknown band draws like any other")
         return True
 
-    in_theme("light", body)
-    in_theme("dark", body)
-    in_theme("midnight", body)
+    for _name in bert.PALETTES:
+        in_theme(_name, body)
     return c.report()
 
 
 def check_choosing_a_theme() -> bool:
     c = Check("what Settings offers")
 
-    c.equal(sorted(bert.THEMES), ["dark", "light", "midnight", "system"],
-            "four choices")
+    # Read off the registry rather than restated: a palette added to
+    # PALETTES and forgotten in THEMES is a theme nobody can choose, and a
+    # name in THEMES with no palette behind it is a crash on selecting it.
+    c.equal(sorted(bert.THEMES), sorted(set(bert.PALETTES) | {"system"}),
+            "every palette is offered, and nothing else is")
+    c.ok("system" not in bert.PALETTES,
+         "system is a question, not a palette")
+    for name in bert.PALETTES:
+        c.ok(name in bert.THEME_LABEL, f"{name} has a label to show")
+        c.equal(bert.resolve_theme(name), name, f"{name} is taken as itself")
     c.equal(sorted(bert.THEME_LABEL), sorted(bert.THEMES),
             "each one has a label to show")
 
@@ -344,13 +344,15 @@ def check_choosing_a_theme() -> bool:
     c.ok(not bert.T.dark, "and back")
     c.equal(bert.T.SURFACE, bert.LIGHT["surface"], "reading the other one")
 
-    # Midnight is a dark ground, and everything that picks a glyph or a shade
-    # asks `T.dark` rather than which palette is loaded.
-    bert.T.use("midnight")
-    c.ok(bert.T.dark, "midnight is a dark ground")
-    c.equal(bert.T.SURFACE, bert.MIDNIGHT["surface"], "and reads its own palette")
-    c.equal(bert.resolve_theme("midnight"), "midnight",
-            "and is taken as itself, never inferred")
+    # Every palette loads, and `T.dark` answers for the ground rather than
+    # for which one is in. A desktop can say dark; it cannot say which dark.
+    for name, pal in bert.PALETTES.items():
+        bert.T.use(name)
+        c.equal(bert.T.SURFACE, pal["surface"], f"{name} reads its own palette")
+        c.equal(bert.T.dark, name in bert.DARK_GROUNDS,
+                f"and {name} says whether its ground is dark")
+    c.ok(bert.resolve_theme("system") in ("light", "dark"),
+         "system is only ever answered with one the desktop can say")
     bert.T.use("light")
 
     # A colour neither palette has is a mistake worth hearing about at once.
@@ -839,8 +841,7 @@ def check_a_card_stands_off_the_board_it_sits_on() -> bool:
     # rather than policing taste.
     CARD_MIN = 1.10
 
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         # The canvas, because that is what a card is actually drawn on:
         # `#boardColumn` takes T.CANVAS and `#bandPanel` inside it is
         # transparent. The well is the floor *under* the column and is only
@@ -891,8 +892,7 @@ def check_a_card_is_edged_in_its_own_tag() -> bool:
     # reading as a border and the card loses its outline.
     EDGE_MIN = 3.5
 
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         for q, (stripe, fill, _) in palette["queue"].items():
             got = contrast(stripe, fill)
             c.ok(got >= EDGE_MIN, f"{name}: the {q} stripe stands off a {q} "
@@ -930,8 +930,7 @@ def check_a_band_header_is_accented_not_filled() -> bool:
     # shout or call dark a failure for a tint nobody can see. The invariant
     # that holds in both is the one that was actually broken -- the strip
     # behind a run of cards was more coloured than the cards on it.
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         loudest = max(hue_spread(v[1]) for v in palette["queue"].values())
         for band, tint in palette["band_tint"].items():
             got = hue_spread(tint)
@@ -972,8 +971,7 @@ def check_the_ink_follows_the_ground() -> bool:
 
     TEXT_MIN = 4.5
 
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         for ink in ("ink", "muted"):
             for ground in ("surface", "canvas", "well", "beside", "chip_bg"):
                 got = contrast(palette[ink], palette[ground])
@@ -1261,8 +1259,7 @@ def check_a_control_sits_under_the_card_it_is_on() -> bool:
     # its border is what makes the button a button there.
     CONTROL_MIN = 1.20
 
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         ground, edge = palette["control"], palette["line"]
         for card, fill in all_card_fills(palette).items():
             got = max(contrast(ground, fill), contrast(edge, fill))
@@ -1337,8 +1334,7 @@ def check_a_control_on_chrome_stands_off_the_bar() -> bool:
     # Light is 1.15 and dark 1.28. The floor is under both: it catches the
     # relationship inverting or going flat, not a value somebody preferred.
     CHROME_MIN = 1.10
-    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK),
-                          ("midnight", bert.MIDNIGHT)):
+    for name, palette in bert.PALETTES.items():
         got = contrast(palette["beside"], palette["well"])
         c.ok(got >= CHROME_MIN,
              f"{name}: a control on the bar stands off it "
@@ -1418,7 +1414,8 @@ def check_the_light_ramp_has_five_levels() -> bool:
     c.ok(1.10 <= step <= 1.30,
          f"a card is a step over the workspace, not a jump ({step:.2f})")
 
-    for dname, D in (("dark", bert.DARK), ("midnight", bert.MIDNIGHT)):
+    for dname in sorted(bert.DARK_GROUNDS):
+        D = bert.PALETTES[dname]
         c.equal(D["panel"], D["canvas"],
                 f"{dname}'s sections stay at its workspace level")
         c.equal(D["feed"], D["canvas"],
@@ -1533,7 +1530,7 @@ def check_no_colour_is_written_by_hand() -> bool:
     palette = set()
     for n in tree.body:
         if isinstance(n, ast.Assign) and any(
-                getattr(t, "id", "") in ("LIGHT", "DARK", "MIDNIGHT")
+                getattr(t, "id", "") in {p.upper() for p in bert.PALETTES}
                 for t in n.targets):
             palette.update(range(n.lineno, n.end_lineno + 1))
 

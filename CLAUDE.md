@@ -1052,14 +1052,24 @@ No colour literals in Bert. Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 every palette. A hex typed into a stylesheet works in one theme and is wrong
 in the others, silently, in whichever nobody happened to be looking at.
-Settings offers light, dark, midnight, or following the desktop; changing it
+Settings offers light, dark, midnight, plum, or following the desktop; changing it
 rebuilds the window, because each widget styles itself where it is made and
 there is no single sheet to swap -- and a stylesheet missed on a restyle is a
 white panel in a dark board. `tests/check_palette.py` holds all three palettes
 to the same keys and to the same floors, which is the invariant that keeps a
 theme from crashing only for the person using it.
 
-**Midnight is `DARK` with its neutrals re-hued**, spread as `{**DARK, ...}` so
+**`PALETTES` is the registry and the one place that knows a theme exists.**
+`check_palette.py` walks it rather than keeping a list of its own, so a
+palette added there is covered everywhere by existing -- adding plum took the
+ink-on-ground check from 60 assertions to 80 without a line of it changing.
+A list kept in the checks is a palette held in nine places and not the tenth,
+which is the shape of failure they exist to catch. `THEMES` is
+`("system",) + tuple(PALETTES)`, because "system" is a question rather than a
+palette, and `DARK_GROUNDS` is which of them have pale ink -- `T.dark` asks
+about the ground, never about which palette is loaded.
+
+**Midnight and plum are `DARK` with their neutrals re-hued**, spread as `{**DARK, ...}` so
 a token added to `DARK` arrives there too. Every L* is held to within 0.16,
 which is what makes a new theme cheap to be sure about: contrast is a function
 of luminance alone, so a hue that does not move lightness cannot break a ratio
@@ -1072,3 +1082,11 @@ of CS at 307, so its worst tag stands at **10.8**. `low` and the no-tag fill
 are deliberately the ground's own hue and stand off by lightness, so they are
 not in that measurement. `resolve_theme` never infers midnight: a desktop can
 say dark, not "dark, and blue".
+
+**Plum is the same derivation at hue 345**, which the sweep put highest of any
+ground: it sits between CS at 307 and the red bands at 26-29, the other wide
+gap on the wheel. Worst tag **13.4** against midnight's 10.8 and dark's 5.6,
+worst ratio drift from `DARK` 0.050. The one hue a dark ground may not take is
+**90-120**, which scores 1.4 and 3.0 -- it collides with `high band` at 81 and
+OPS at 133, so there is no olive or forest-green theme without moving a tag
+first.
