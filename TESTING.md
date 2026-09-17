@@ -195,7 +195,7 @@ Two lines matter more than the rest:
 - **`STATE_CHANNEL_ID`** is what makes the two boards one board. Without it
   you get a private board of your own.
 
-Leave `CHANGELOG_CHANNEL_ID` and `ANNOUNCE_CLOSURES` empty. Only one machine
+Leave `CHANGELOG_CHANNEL_ID` and `ANNOUNCE_THREAD_CHANGES` empty. Only one machine
 should set either, and that is theirs. Both boards hold the whole history, so
 two loggers would write every line twice; and both boards notice when a thread
 is archived in Discord, so two announcers would tell that customer thread

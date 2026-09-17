@@ -418,7 +418,7 @@ def who_archived(d: Discord, guild_id: str, wanted: set) -> dict:
 # are "what happened to this thread in Discord", and every stack sees both.
 # Defined in ernie_load because `load_thread` needs it too and the import
 # runs that way; named here for the readers that already say so.
-announce_closures = load.announce_thread_changes
+announce_thread_changes = load.announce_thread_changes
 
 
 def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
@@ -492,7 +492,7 @@ def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
     # after a weekend, a channel coming back into `watched`, a permission
     # restored. A backlog announcing itself as news is the failure
     # `witnessed_start` exists to prevent one table along.
-    on = announce_closures()
+    on = announce_thread_changes()
     say = on and len(closed) <= ANNOUNCE_MAX
     if on and not say:
         print(f"  {len(closed)} closed at once -- recorded, not announced")

@@ -127,7 +127,8 @@ rules and points here for the why.
   **It is immediate rather than held for the undo window**, because undo
   refuses this verb outright and points at reopen: there is nothing to wait
   for.
-  **`ANNOUNCE_CLOSURES` is the switch, and it is off by default**, for the
+  **`ANNOUNCE_THREAD_CHANGES` is the switch, and it is off by default**,
+  for the
   reason `CHANGELOG_CHANNEL_ID` is: every stack runs its own sync, every
   stack notices the same archived thread, and every stack writes its own
   closure row. Those rows cost nothing while they never post, and tell the

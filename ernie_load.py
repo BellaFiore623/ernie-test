@@ -48,22 +48,48 @@ WITNESSED_WITHIN_S = 600   # a thread Ernie watched appear was created moments
                            # and the change log.
 
 
+# The name this switch was born with, still honoured. It was `ANNOUNCE_CLOSURES`
+# while closures were all it gated; reopens made it wrong, and a switch whose
+# name describes half of what it does is one somebody will set for the half
+# they read.
+#
+# Renamed 2026-09-17, while the only two machines carrying it were ours. The
+# old name is still read because an installed env lives at
+# `%LOCALAPPDATA%\Ernie\ernie.env` and a reinstall does not overwrite it --
+# so dropping it outright would turn a rename into both boards going quiet
+# about closures, saying nothing, which is the exact failure most of the rules
+# in this project exist to prevent. It warns once and keeps working.
+OLD_ANNOUNCE_NAME = "ANNOUNCE_CLOSURES"
+_warned_old_announce = False
+
+
 def announce_thread_changes() -> bool:
     """Whether this machine tells a thread what happened to it in Discord.
 
     Covers both halves of the same fact: somebody archived the thread, and
-    somebody unarchived it. Off unless `ANNOUNCE_CLOSURES` is set, and only
-    one machine may set it -- every stack runs its own sync, every stack sees
-    the same flip, and every stack writes its own event. Those rows cost
+    somebody unarchived it. Off unless `ANNOUNCE_THREAD_CHANGES` is set, and
+    only one machine may set it -- every stack runs its own sync, every stack
+    sees the same flip, and every stack writes its own event. Those rows cost
     nothing while they never post, and tell the thread twice the moment they
     do.
 
     It lives here rather than in `ernie_sync` because `load_thread` needs it
-    and the import runs the other way. `ernie_sync.announce_closures` is this
-    function.
+    and the import runs the other way. `ernie_sync.announce_thread_changes` is
+    this function.
     """
-    return (os.environ.get("ANNOUNCE_CLOSURES", "").strip().lower()
-            in ("1", "true", "yes", "on"))
+    global _warned_old_announce
+    on = os.environ.get("ANNOUNCE_THREAD_CHANGES", "").strip().lower()
+    if not on:
+        on = os.environ.get(OLD_ANNOUNCE_NAME, "").strip().lower()
+        if on and not _warned_old_announce:
+            # Once per process. This is read per thread on every pass, and an
+            # alarm repeated a hundred times an hour is one nobody reads.
+            _warned_old_announce = True
+            print(f"  !! {OLD_ANNOUNCE_NAME} has been renamed to "
+                  f"ANNOUNCE_THREAD_CHANGES, because it gates reopens too. "
+                  f"Still honoured; rename the line in your env file.",
+                  file=sys.stderr)
+    return on in ("1", "true", "yes", "on")
 
 
 def now() -> str:

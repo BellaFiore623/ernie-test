@@ -309,8 +309,14 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   The flag is cleared when the outbox unarchives to post, or the skip becomes
   a blind spot and a real closure never reaches the board.
 - The thread is told who closed it **and who reopened it**, and only one
-  machine may tell it. `ANNOUNCE_CLOSURES` gates both, because both are
+  machine may tell it. `ANNOUNCE_THREAD_CHANGES` gates both, because both are
   things that happened to the thread in Discord and every stack sees them.
+  It was `ANNOUNCE_CLOSURES` until 2026-09-17, which named half of what it
+  does: a switch whose name describes half its job is one somebody sets for
+  the half they read. Renamed while the only two machines carrying it were
+  ours -- an installed env is not overwritten by a reinstall, so the old name
+  is still read and warns once rather than being dropped, which would have
+  made a rename into both boards silently going quiet about closures.
   It is off unless set, for the reason
   `CHANGELOG_CHANNEL_ID` is: every stack notices the same archived thread and
   writes its own closure row, so two switched on tell the thread twice. A
@@ -737,7 +743,7 @@ has been done, when it last moved and who moved it.
   would be filled every pass by work already done and never reach the rest --
   and the counts carry `left` so three of thirty-seven does not read as a pass
   that finished.
-  Unlike `CHANGELOG_CHANNEL_ID` and `ANNOUNCE_CLOSURES` it is safe on more
+  Unlike `CHANGELOG_CHANNEL_ID` and `ANNOUNCE_THREAD_CHANGES` it is safe on more
   than one machine, because `adopt()` looks in the thread before posting.
   Nothing filters by title prefix, `ENG:` included: titles change, and nothing
   may be keyed on parsed title fields.

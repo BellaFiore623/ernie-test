@@ -30,21 +30,27 @@ import ernie_extract as ex
 import ernie_load as load
 
 
+# Both names, because the old one is still honoured: clearing only the new
+# one would let a machine's exported old one decide the answer here.
+NAMES = ("ANNOUNCE_THREAD_CHANGES", "ANNOUNCE_CLOSURES")
+
+
 @contextlib.contextmanager
 def announcing(on: bool):
-    """ANNOUNCE_CLOSURES set or not, restored afterwards."""
-    before = os.environ.get("ANNOUNCE_CLOSURES")
+    """ANNOUNCE_THREAD_CHANGES set or not, restored afterwards."""
+    before = {n: os.environ.get(n) for n in NAMES}
+    for n in NAMES:
+        os.environ.pop(n, None)
     if on:
-        os.environ["ANNOUNCE_CLOSURES"] = "1"
-    else:
-        os.environ.pop("ANNOUNCE_CLOSURES", None)
+        os.environ[NAMES[0]] = "1"
     try:
         yield
     finally:
-        if before is None:
-            os.environ.pop("ANNOUNCE_CLOSURES", None)
-        else:
-            os.environ["ANNOUNCE_CLOSURES"] = before
+        for n, v in before.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v
 
 
 def archived_thread(b, *, last_message_at, is_bot, synced_at):
@@ -210,7 +216,7 @@ def check_the_reopen_message_is_behind_the_one_machine_switch() -> bool:
 
     Every stack runs its own sync and every stack sees the same flip, so two
     of them announcing it tell the customer thread twice -- the problem
-    ANNOUNCE_CLOSURES exists for. `thread_reopened` had an unconditional
+    ANNOUNCE_THREAD_CHANGES exists for. `thread_reopened` had an unconditional
     dispatch since it was written and simply never fired, so nobody met it.
 
     What the switch decides is who *says so*. The card comes back on every

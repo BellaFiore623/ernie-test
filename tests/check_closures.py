@@ -17,6 +17,7 @@ close half the board in one pass.
 """
 
 import contextlib
+import io
 import pathlib
 import inspect
 import os
@@ -26,6 +27,7 @@ from support import Board, Check, PARENT
 
 import bert
 import ernie_api as api
+import ernie_load as load
 import ernie_outbox as outbox
 import ernie_sync as S
 
@@ -33,25 +35,36 @@ import ernie_sync as S
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
+NEW_SWITCH = "ANNOUNCE_THREAD_CHANGES"
+# Both, because the old one is still honoured: a check that clears only
+# the new name would read a machine's exported old one as an answer.
+NAMES = (NEW_SWITCH, load.OLD_ANNOUNCE_NAME)
+
+
 @contextlib.contextmanager
-def announcing(on: bool):
-    """ANNOUNCE_CLOSURES set or not, whatever the machine running this has.
+def announcing(on: bool, name: str = NEW_SWITCH):
+    """The switch set or not, whatever the machine running this has.
+
+    Both names are cleared on the way in, not just the one being set: the
+    old one is still honoured, so a machine with it exported would otherwise
+    decide the answer for every check that asked for it off.
 
     Restored afterwards, because a check that leaves it set decides the
     answer for every check after it.
     """
-    before = os.environ.get("ANNOUNCE_CLOSURES")
+    before = {n: os.environ.get(n) for n in NAMES}
+    for n in NAMES:
+        os.environ.pop(n, None)
     if on:
-        os.environ["ANNOUNCE_CLOSURES"] = "1"
-    else:
-        os.environ.pop("ANNOUNCE_CLOSURES", None)
+        os.environ[name] = "1"
     try:
         yield
     finally:
-        if before is None:
-            os.environ.pop("ANNOUNCE_CLOSURES", None)
-        else:
-            os.environ["ANNOUNCE_CLOSURES"] = before
+        for n, v in before.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v
 
 
 BOT_ID = "bot-1"
@@ -368,19 +381,20 @@ def check_a_closure_is_announced_only_where_it_is_switched_on() -> bool:
         """Reconcile one archived thread with the key set to `value`."""
         with Board() as b:
             one, two = board_with_two(b)
-            before = os.environ.get("ANNOUNCE_CLOSURES")
-            if value is None:
-                os.environ.pop("ANNOUNCE_CLOSURES", None)
-            else:
-                os.environ["ANNOUNCE_CLOSURES"] = value
+            before = {n: os.environ.get(n) for n in NAMES}
+            for n in NAMES:
+                os.environ.pop(n, None)
+            if value is not None:
+                os.environ[NEW_SWITCH] = value
             try:
                 S.reconcile_closures(
                     b.con, Answers({one: archived_at(WHEN)}), {two}, {})
             finally:
-                if before is None:
-                    os.environ.pop("ANNOUNCE_CLOSURES", None)
-                else:
-                    os.environ["ANNOUNCE_CLOSURES"] = before
+                for n, v in before.items():
+                    if v is None:
+                        os.environ.pop(n, None)
+                    else:
+                        os.environ[n] = v
             return b.con.execute(
                 """SELECT e.dispatch_after, c.completed_at
                      FROM events e JOIN cards c USING (thread_id)
@@ -743,6 +757,60 @@ def check_a_thread_ernie_reopened_is_watched_again() -> bool:
     return c.report()
 
 
+
+def check_old_switch_name_still_works() -> bool:
+    r"""The rename must not be a silent off switch.
+
+    `ANNOUNCE_CLOSURES` became `ANNOUNCE_THREAD_CHANGES` on 2026-09-17,
+    because it gates reopens too and a switch named for half its job is one
+    somebody sets for the half they read. An installed env lives at
+    `%LOCALAPPDATA%\Ernie\ernie.env` and a reinstall does not overwrite it,
+    so a hard rename would have turned a tidy-up into both production boards
+    going quiet about closures and saying nothing about why.
+
+    The old name is therefore still read, and says so once. This is the check
+    that holds it, and the one to delete when the name is finally dropped.
+    """
+    c = Check("the old switch name still works")
+
+    with announcing(False):
+        c.equal(load.announce_thread_changes(), False,
+                "neither name set is off")
+
+    with announcing(True):
+        c.equal(load.announce_thread_changes(), True,
+                "the new name switches it on")
+
+    # Captured, because it goes to stderr on purpose and an alarm printed
+    # into a passing test run is one nobody reads anywhere else either.
+    with announcing(True, load.OLD_ANNOUNCE_NAME):
+        load._warned_old_announce = False
+        said = io.StringIO()
+        with contextlib.redirect_stderr(said):
+            c.equal(load.announce_thread_changes(), True,
+                    "and so does the name two production machines carry")
+            again = load.announce_thread_changes()
+        c.equal(again, True, "every time, not just the first")
+        c.ok("ANNOUNCE_THREAD_CHANGES" in said.getvalue(),
+             "saying what the line should be renamed to")
+        c.equal(said.getvalue().count("renamed"), 1,
+                "once per process -- this is read per thread on every pass")
+
+    # The new name wins, so a stale old line cannot hold it off.
+    with announcing(False):
+        os.environ[NEW_SWITCH] = "1"
+        os.environ[load.OLD_ANNOUNCE_NAME] = "0"
+        c.equal(load.announce_thread_changes(), True,
+                "the new name is the one that decides when both are set")
+
+    offered = (ROOT / "ernie-test.env.example").read_text(encoding="utf-8")
+    c.ok(load.OLD_ANNOUNCE_NAME not in
+         offered.split(NEW_SWITCH + "=")[1],
+         "and the example file offers only the new one to copy")
+
+    return c.report()
+
+
 CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_absence_is_the_question_never_the_answer,
           check_a_thread_it_cannot_read_is_never_declared_finished,
@@ -760,4 +828,5 @@ CHECKS = (check_a_thread_archived_in_discord_closes_its_card,
           check_it_never_attributes_a_closure_to_ernie,
           check_the_audit_log_is_asked_once_and_only_when_needed,
           check_ernies_own_archive_is_not_a_discord_closure,
-          check_a_thread_ernie_reopened_is_watched_again)
+          check_a_thread_ernie_reopened_is_watched_again,
+          check_old_switch_name_still_works)
