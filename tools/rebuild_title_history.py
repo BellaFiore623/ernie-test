@@ -1,39 +1,22 @@
 """
 Put the renames Ernie never watched back into `thread_titles`.
 
-Discord posts a system message into a thread every time it is renamed --
-type 4, CHANNEL_NAME_CHANGE, carrying the new name as its content. Those
-messages have always been in the mirror; what was missing was the `type` that
-tells one from somebody pasting a title into the chat, and
-`tools/backfill_message_types.py` fetched it. Production has 703 of them.
-
-They are not a *title history* yet. `thread_titles` is what every reading of
-the board goes through -- the retag figure included -- and production has one
-row per thread, written at its first sync, so a board that has been renamed
-for two years reads as never having changed. This walks the renames and
-writes the revision each one was.
+Discord's type 4 messages carry every rename and have always been in the
+mirror; `tools/backfill_message_types.py` fetched the `type` that identifies
+them. But `thread_titles` still holds one row per thread, written at its
+first sync, so a board renamed for two years reads as never having changed.
+This writes the revision each rename was. **No network.**
 
     python tools/rebuild_title_history.py --db ernie.db --dry-run
-    python tools/rebuild_title_history.py --db ernie.db
-
-**No network.** Everything it needs is already in the database.
 
 **It cannot change what the board shows today.** A rename is written only if
 it is strictly older than the thread's earliest existing title row, so the
-newest revision -- the one `v_thread_current` reads and every card takes its
-queue and client from -- is never the one we added. Renames dated after that
-are the *sync's* business: it will see the current name on its next pass and
-record it the way it records every other one. Measured against production,
-that is 2 of 696; the other 694 are history nobody was watching.
+newest revision -- what `v_thread_current` reads -- is never ours. Anything
+later is the sync's business. Against production that is 2 of 696.
 
-**And it writes through `load.record_title`**, which is the one place that
-decides what a title row holds. A row written any other way is a row parsed
-some other way, and that has already caused one bug -- the outbox writing the
-name alone left cards grey with "unknown client" for titles that read
-perfectly well.
-
-Re-runnable: `thread_titles` is keyed on (thread_id, observed_at), so a
-second pass rewrites the same rows with the same values.
+**It writes through `load.record_title`**, the one place that decides what a
+title row holds; a row written any other way is parsed some other way, which
+has already caused one bug. Re-runnable: keyed on (thread_id, observed_at).
 """
 
 from __future__ import annotations

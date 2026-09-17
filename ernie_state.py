@@ -901,28 +901,21 @@ def note_format_skew(con, seen: list) -> None:
 def parse_release(content: str) -> tuple[str, str]:
     """A release note as (version, minimum). ("", "") for anything else.
 
-    Strict: the marker, then something shaped like a version. Prose after it
-    is fine and ignored -- `**Release** 0.9.1 -- installer is in Drive` is the
-    message somebody would actually write, and the half that matters is the
-    number.
+    Strict: the marker, then something version-shaped. Prose after it is
+    ignored, since that is what somebody would actually write.
 
         **Release** 0.9.1                     worth updating
         **Release** 0.9.1 minimum 0.9.1       older builds go read-only
 
-    **The minimum is the dangerous half, and it is checked here.** A floor
-    above the build people can actually download locks every board out at
-    once, and the only fix is a build that does not exist yet. In code that
-    is held by `check_version.py`; here it is a sentence somebody typed into
-    Discord on a Friday with nothing between them and everybody's board. So a
-    minimum ahead of its own note's version is **dropped**, not obeyed --
-    the note goes on meaning "update when you can", which is the wrong answer
+    **The minimum is the dangerous half.** A floor above the build people can
+    download locks every board out at once, and the fix is a build that does
+    not exist yet -- and unlike `check_version.py`, this is a sentence someone
+    typed into Discord with nothing between them and everybody's board. So a
+    minimum ahead of its own note's version is **dropped**, not obeyed: wrong
     in the harmless direction.
 
-    Deliberately not inferred from the number. A patch release can be
-    mandatory because it stops a build writing something wrong, and a minor
-    one can be entirely optional because it adds a panel; how big a change is
-    and how dangerous it is to skip are different questions, so the note
-    answers the second one out loud.
+    Not inferred from the number. How big a change is and how dangerous it is
+    to skip are different questions, so the note answers the second out loud.
     """
     opener = RELEASE_OPENER.match(content or "")
     if not opener:
@@ -1009,31 +1002,25 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
     """
     Pull the channel into the local mirror.
 
-    Three-way, against what this machine last agreed with the channel about
-    (state_sync), never by comparing the two machines' clocks. Timestamps come
-    off two real laptops: a clock a few minutes out would win or lose every
-    tie in the same direction, silently, and a badly wrong one would either
-    stamp on everything the other person does or ignore them entirely.
+    Three-way against `state_sync` -- what this machine last agreed with the
+    channel -- never by comparing the two machines' clocks. A laptop a few
+    minutes out would win or lose every tie in the same direction, silently.
 
     Against that base, per card:
 
         channel moved, we didn't   -> apply theirs
         we moved, channel didn't   -> ours stands, publish() sends it
-        both moved                 -> conflict; the channel wins, because it
-                                      is the shared copy, and the change that
-                                      loses is named in the feed rather than
-                                      vanishing
+        both moved                 -> the channel wins, being the shared copy;
+                                      the losing change is named in the feed
         neither moved              -> settled
 
-    A card with no base is one this machine has never reconciled, so it adopts
-    the channel: a board joining an existing session takes the shared state.
+    A card with no base adopts the channel, so a board joining an existing
+    session takes the shared state.
 
-    Every card that gets as far as being compared has its agreed_at stamped,
-    whichever way the comparison went -- including the two quiet outcomes that
-    write nothing else. That column is the only honest answer to "are their
-    changes reaching us", because it moves solely when this loop has read the
-    channel. publish() must never touch it: it advances even while the sync is
-    stopped, which is the state worth reporting.
+    Every card compared has `agreed_at` stamped, whichever way it went. That
+    column is the only honest answer to "are their changes reaching us",
+    because it moves solely when this loop has read the channel -- so
+    publish() must never touch it.
     """
     remote = fetch_state(d, cid)
     con = rw(db)

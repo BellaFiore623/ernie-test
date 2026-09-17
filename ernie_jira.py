@@ -1,29 +1,21 @@
 """
 The customer list, pulled from Jira.
 
-Read-only against Jira, the way ernie_sync is read-only against Discord: this
-fetches Client CR issues and writes them into `clients`, and it never creates,
-edits or transitions anything there.
+Read-only against Jira the way ernie_sync is against Discord: it fetches
+Client CR issues into `clients` and never creates, edits or transitions
+anything there.
 
-It exists because client names are typed by hand into thread titles and drift.
-Production carries 120 distinct spellings of 43 customers -- five ways of
-writing Inspect.AI, two of RavanAir, and one title where the apostrophe in
-Duke's came through as a replacement character. Jira already holds the list
-those titles are all trying to name, keyed by the PIP-#### the tickets carry,
-so the fix is to offer that list rather than to guess at the spellings after
-the fact.
+Client names are typed by hand into thread titles and drift -- production
+carries 120 spellings of 43 customers. Jira already holds the list those
+titles are trying to name, keyed by the PIP-#### the tickets carry, so the fix
+is to offer that list rather than guess at spellings after the fact.
 
-Two things come out of a run:
+  clients          one row per Client CR, with the short name a title should use
+  client_aliases   spellings already on the board, pointed at what they mean
 
-  clients          one row per Client CR, with the short name a thread title
-                   should use
-  client_aliases   every spelling already on the board, pointed at the client
-                   it means, so existing cards resolve without being retitled
+Inert unless JIRA_BASE_URL, JIRA_EMAIL, JIRA_TOKEN and JIRA_CLIENT_JQL are set.
 
-Inert unless JIRA_BASE_URL, JIRA_EMAIL, JIRA_TOKEN and JIRA_CLIENT_JQL are all
-set, the way the change log is inert without its channel.
-
-    python ernie_jira.py --check  --env ernie-test.env --db ernie-test.db
+    python ernie_jira.py --check --env ernie-test.env --db ernie-test.db
     python ernie_jira.py --once --report --env ernie-test.env --db ernie-test.db
 """
 

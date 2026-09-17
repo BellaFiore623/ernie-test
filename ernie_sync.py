@@ -185,27 +185,18 @@ class Discord:
     def write(self, method: str, path: str, retry_5xx: bool = False, **body):
         """Any non-GET call goes through here, and here checks the guard.
 
-        **`retry_5xx` is off by default, and the default is the safety.**
-        `get()` has always ridden out Discord's 5xx with a backoff, because a
-        repeated read costs nothing. Writes did not, so a `503` -- which
-        Discord serves often enough to meet twice in one afternoon -- raised
-        straight out. Found on a run of six thousand consecutive writes,
-        which is simply more writes than this had ever done in a row.
+        **`retry_5xx` is off by default, and the default is the safety.** A
+        5xx does not say whether the request was processed, so retrying a POST
+        can post twice -- the failure `events.sent_steps` exists to prevent,
+        and which once put three identical "marked this complete" messages
+        into one customer thread. Only the caller knows whether repeating is
+        harmless, so the decision is theirs.
 
-        The asymmetry was not an oversight to be deleted, though. A 5xx does
-        **not** tell you whether the request was processed, so retrying a
-        POST can post twice -- which is the failure `events.sent_steps`
-        exists to prevent, and which once put three identical "marked this
-        complete" messages into one customer thread. So the decision stays
-        with the caller, who is the only one who knows whether doing it again
-        is harmless.
-
-        **Opt in only where repeating is genuinely a no-op**: archiving a
-        thread that is already archived, editing a message to the text it
-        already holds, pinning a pinned message. **Never** for posting a
-        message, opening a thread, or renaming one -- a rename is two per ten
-        minutes on a shared budget and posts a system message every time, so
-        a silent retry spends somebody else's allowance.
+        **Opt in only where repeating is a genuine no-op**: archiving an
+        archived thread, editing a message to the text it holds, pinning a
+        pinned message. **Never** for posting a message, opening a thread, or
+        renaming one -- a rename is two per ten minutes on a shared budget and
+        posts a system message each time.
         """
         if not self.writes_allowed:
             raise GuildMismatch(
@@ -433,29 +424,21 @@ announce_closures = load.announce_thread_changes
 def reconcile_closures(con, d: Discord, active: set, stats: dict) -> None:
     """Cards whose thread has gone quiet: ask Discord whether it was closed.
 
-    Archiving a thread is how work finishes, and Bert could not see it happen.
-    The listing this loop runs on is `/guilds/{id}/threads/active`, and an
-    archived thread is simply **not in it** -- so the row keeps whatever
-    `archived` it had, the card is never completed, and a ticket somebody
-    closed in Discord sits on the board for ever. Measured before this: a
-    thread archived in Discord, then a full cycle -- `threads.archived` still
-    0, `completed_at` still NULL, no event.
+    Archiving is how work finishes, and an archived thread is simply not in
+    `/guilds/{id}/threads/active` -- so without this the card is never
+    completed and a ticket closed in Discord sits on the board for ever.
 
     **Absence is the question, never the answer.** A card missing from the
-    listing only earns a `GET /channels/{id}`; the card is closed on what
-    Discord says in the reply, not on the fact that it was missing. That
-    matters because a listing short for any other reason -- a hiccup, a
-    permission change, a channel dropping out of `watched` -- would otherwise
-    close half the board in one pass. It costs nothing when nothing has
-    happened, which is why it can run on the fast beat: no card is missing,
-    so no request is made.
+    listing earns a `GET /channels/{id}`, and is closed on what Discord says
+    in the reply rather than on having been missing. A listing short for any
+    other reason -- a hiccup, a permission change -- would otherwise close
+    half the board in one pass. It costs nothing when nothing has happened,
+    which is why it can run on the fast beat.
 
-    The time is Discord's own `archive_timestamp`, not now: the event says
-    when the work actually finished, which is the whole point of putting it
-    in the feed. Who did it comes from the audit log, which needs **View
-    Audit Log** on the bot's role -- see `who_archived`. Without it, or when
-    the log no longer reaches back that far, the closure is recorded with no
-    name rather than not recorded at all.
+    The time is Discord's `archive_timestamp`, not now: the event says when
+    the work finished. Who did it needs **View Audit Log** (see
+    `who_archived`); without it the closure is recorded with no name rather
+    than not recorded at all.
     """
     # A thread Ernie archived itself is not evidence that somebody closed it
     # in Discord, and `archived_by_ernie` has recorded which is which all

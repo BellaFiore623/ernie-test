@@ -1,43 +1,23 @@
 """
 Put names on closures that were recorded without one.
 
-`reconcile_closures` closes a card when Discord says its thread is archived,
-and asks the audit log who did it. That question needs **View Audit Log** on
-the bot's role, which is a per-server toggle, and the symptom of it missing
-is not an error: `who_archived` turns the 403 into `None`, the closure is
-recorded unattributed, and the feed says "closed in Discord" and names
-nobody, for ever. Naming somebody is a nicety and closing the ticket is the
-feature -- so the pass is deliberately built to carry on without it.
-
-"For ever" is the part that turned out not to be true. Discord keeps audit
-log entries for 45 days, so a closure recorded before the permission was
-granted can still be attributed afterwards, as long as somebody asks inside
-that window. This is that ask.
+`reconcile_closures` asks the audit log who archived a thread, which needs
+**View Audit Log**. Without it `who_archived` turns the 403 into `None` and
+the closure is recorded unattributed -- deliberately, since naming somebody
+is a nicety and closing the ticket is the feature. Discord keeps audit
+entries for 45 days, so those closures can still be attributed inside that
+window. This is that ask.
 
     python tools/backfill_closers.py --env ernie.env --db ernie.db --dry-run
-    python tools/backfill_closers.py --env ernie.env --db ernie.db
 
-Found on production's first sync: 18 days of archiving had happened while
-Ernie was not watching, the pass closed 20 cards in one go, and every one of
-them was written before the permission existed -- 19 by one person and 1 by
-another, all recoverable four pages into the log.
+**It fills two NULLs and nothing else**: `events.actor_name` and
+`cards.completed_by`, only where already NULL, because a name somebody typed
+is a decision. Nothing here reopens a card, moves a rank or writes an event.
 
-**It fills two NULLs and nothing else.** `events.actor_name` and
-`cards.completed_by`, and only where they are already NULL: a name somebody
-put there by hand is a decision, and this has no business overruling one.
-`events.new_value` is untouched, because it is `CLOSED_IN_DISCORD` whether or
-not there is a name -- it says *where* the closure happened, and that was
-never in doubt. Nothing here reopens a card, moves a rank or writes an event.
+**Our own bot is skipped**, the way `who_archived` skips it: "Ernie closed
+it" is worth making impossible rather than merely unlikely.
 
-**Our own bot is skipped, the way `who_archived` skips it.** Ernie archives a
-thread when Complete is pressed in Bert, and that path never reaches a
-closure row at all -- but "Ernie closed it" is the one attribution worth
-making impossible rather than merely unlikely, so an entry naming us leaves
-the row NULL and is reported as ours.
-
-Read-only against Discord: every request is a GET, and nothing here can reach
-`Discord.write()`. Re-runnable -- a row it has already filled is no longer
-NULL, so a second run finds nothing to do.
+Read-only against Discord, and re-runnable -- a filled row is no longer NULL.
 """
 
 from __future__ import annotations

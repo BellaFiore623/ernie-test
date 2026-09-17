@@ -628,33 +628,23 @@ def wal_standing(wal: dict | None) -> str:
 def build_standing(mine, theirs, floor, newest="", required=""):
     """Whether this Bert is behind, and how far. Answers (state, sentence).
 
-    Pure, and separate from the dialog that shows it, because the decision is
-    the part worth being sure about: this is what disables writing.
+    Pure, and separate from the dialog that shows it: this is what disables
+    writing, so the decision is the part worth being sure about.
 
-    Three states. **blocked** is a Bert older than the floor its Ernie
-    publishes -- somebody has decided that build genuinely cannot be trusted
-    against this one, so the board goes read-only. **behind** is a Bert that
-    is merely not the newest, which is most of them and is not a reason to
-    stop anybody working. **ok** is everything else.
+    **blocked** is older than the floor its Ernie publishes -- read-only.
+    **behind** is merely not the newest, which is most of them and no reason
+    to stop anybody working. **ok** is the rest.
 
     **`theirs` cannot answer this in the exe, which is what `newest` is for.**
-    Comparing Bert against the Ernie serving it works while those are two
-    checkouts -- `run.sh`, or one backend and two Berts. In one process they
-    are the same module imported once, so the two numbers are always equal,
-    the answer is always "ok", and the check quietly stopped existing the day
-    we shipped the supervisor. `newest` is the build a pinned note in the
-    state channel says everybody should be on, which is a fact from outside
-    this process and so the only kind that can be news to it.
+    In one process Bert and Ernie are the same module imported once, so the
+    numbers are always equal and the check quietly stopped existing the day we
+    shipped the supervisor. `newest` comes from the pinned note in the state
+    channel -- a fact from outside this process, and so the only kind that can
+    be news to it. Whichever of the two is further ahead wins: from source
+    there is often no note, and `theirs` is still a real signal.
 
-    Whichever of the two is further ahead wins. Not `newest` alone: from
-    source there is often no note at all and `theirs` is still a real signal,
-    and a board that took the note as the whole truth would go quiet about a
-    colleague running something newer than the last release.
-
-    It fails *open* at every step it cannot answer. An Ernie that publishes
-    no floor is an older Ernie, not a demand; one that publishes neither a
-    version nor a note says nothing about ours. A build check has no business
-    taking a working board away over a missing field.
+    It fails *open* at every step it cannot answer. A build check has no
+    business taking a working board away over a missing field.
     """
     if not theirs and not newest:
         return "ok", ""
@@ -1010,28 +1000,21 @@ def unsent_mark(c):
 
     Returns (glyph, colour, why), or None when the card owes nothing.
 
-    Two debts, and they are the two Bert._owed() counts before warning about
-    a close: events queued behind their undo window, and cards that have moved
-    since the shared board was last published. A reorder, and every band move
-    that is not in or out of critical, is silent by design -- no
-    dispatch_after at all -- and appears only in the second, so reading the
-    first alone would leave a card somebody had just dragged looking as though
-    it had already gone out. The mark and the close warning have to agree, or
-    one of them is lying.
+    Two debts, the same two `Bert._owed()` counts: events queued behind their
+    undo window, and cards moved since the shared board was last published. A
+    reorder is silent by design -- no dispatch_after -- so it appears only in
+    the second, and reading the first alone would leave a card somebody just
+    dragged looking as though it had gone out. The mark and the close warning
+    have to agree or one of them is lying.
 
-    A row the outbox has given up on says something else. It will not be
-    tried again, so a mark that reads as "in a moment" would be telling the
-    reader to wait for something that is not coming -- which is exactly why
-    /health reports `stuck` apart from `queued` rather than folding it in.
+    A row the outbox has given up on says something else: it will not be tried
+    again, so a mark reading "in a moment" tells the reader to wait for
+    something that is not coming. Hence `stuck` apart from `queued`.
 
-    **Words, not a glyph.** It was `*` and `!`, on the reasoning that the
-    glyph is what tells the two states apart and it spends no colour. Both
-    halves are true and neither made `*` mean anything: an asterisk in the
-    corner of a card is a footnote mark with nothing to point at, and the
-    sentence explaining it was in a tooltip nobody hovers on a card they are
-    not already asking about. Saying it costs the width of a chip, and the
-    card already wears chips -- the tag, the PIP count, "edited" -- so this is
-    the shape the eye is reading there anyway.
+    **Words, not a glyph.** `*` in the corner of a card is a footnote mark
+    with nothing to point at, and the tooltip explaining it is not read on a
+    card nobody is already asking about. A chip is the shape the eye is
+    reading there anyway.
     """
     if c.get("stuck"):
         # Amber stays: this one is a caution, and amber is what a caution
@@ -2025,12 +2008,9 @@ def client_resolve(typed, roster, opened_with="") -> str:
     if client_squash(typed) == client_squash(opened_with):
         return ""
     # The customer's own name stands; an alias does not. `client_known`
-    # counts aliases, which is right for the caution -- a spelling the board
-    # has used nine times is a name that resolves -- and exactly wrong here,
-    # because an alias is a wrong spelling that happens to resolve, which is
-    # what this exists to correct. `reconcile_aliases` records one through
-    # the ticket's CR key, so a typo saved once makes itself a known
-    # spelling and every later one is left alone.
+    # counts aliases, which is right for the caution and wrong here: an alias
+    # is a wrong spelling that happens to resolve, which is what this exists
+    # to correct.
     #
     # Correcting through an alias is the safest case there is: an alias names
     # one client outright, so there is nothing to guess.
@@ -3135,36 +3115,22 @@ class Card(QFrame):
     def _fit_foot(self, d):
         """The footer's columns, fitted to the card before any of them is placed.
 
-        The row was laid out chips-first, buttons-after, and a QLabel reports
-        its whole text as a minimum width -- so the chips took the row and the
-        buttons were pushed past the card's edge. Rendered and measured at the
-        board column's own 463px minimum: one chip put **Complete at x=470 on
-        a 463px card**, and two needed 850px, over even at the full 846. Not
-        hypothetical and not rare -- 13 of production's 50 open cards carry an
-        issue chip and 4 carry two. Nothing reported it because nothing had
-        failed: the layout did exactly what it was asked, and what went
-        missing went off-screen.
+        A QLabel reports its whole text as a minimum width, so laying the row
+        out chips-first pushed the buttons past the card's edge -- Complete at
+        x=470 on a 463px card. 13 of production's 50 open cards carry an issue
+        chip and 4 carry two.
 
-        **The controls never give way**, which is the feed's rule arrived at
-        on a card. What gives way, in order:
+        **The controls never give way.** What does, in order:
 
-        1. **The age gives up its words first.** `_fit_toolbar` already does
-           this with `status_forms()` -- shortened before anything is cut,
-           because a word dropped whole still reads and half a word does not.
-           `Last reply 3d` becomes `3d`, which is what the card said before
-           it was labelled at all.
-        2. **Then a second chip is dropped**, its text moving into the one
-           that stays. Two stubs cut to four letters each say less between
-           them than one chip that can be read, and the tooltip loses nothing.
-        3. **Then the age goes altogether**, because it is context and an
-           amber chip is the card asking for somebody. Measured at the 463px
-           minimum, keeping `12d` left the chip a pixel under its floor and
-           took the issue off the card to make room for a number.
-        4. **Only then is the survivor cut**, to `CARD_ISSUE_MIN_W` at worst,
-           with the whole of it on hover.
+        1. The age gives up its words -- `Last reply 3d` becomes `3d`. A word
+           dropped whole still reads; half a word does not.
+        2. A second chip is dropped, its text moving into the one that stays.
+        3. The age goes altogether: it is context, and an amber chip is the
+           card asking for somebody.
+        4. Only then is the survivor cut, to `CARD_ISSUE_MIN_W` at worst.
 
-        Nothing is ever dropped in silence: whatever is not on the row is in
-        the tooltip of what is.
+        Nothing is dropped in silence -- whatever is not on the row is in the
+        tooltip of what is.
         """
         texts = [i.replace("_", " ") for i in (d.get("issues") or [])[:2]
                  if i not in BLOCKING]
@@ -4074,28 +4040,18 @@ class Card(QFrame):
     def _age_label(cls, text, ts):
         """The age as it sits on the card, or None when there is nothing to say.
 
-        Built only when it has a number, rather than added blank: an empty
-        label still takes a column and its spacing, and a row of invisible
-        chrome is the kind of thing that is only ever found by measuring.
+        Built only when it has a number: an empty label still takes a column
+        and its spacing.
 
-        **It sits in the footer, not the card's corner**, which is also what
-        makes the words affordable. Every column in the head is paid for by
-        the client name -- `_client_room` subtracts each one -- and the corner
-        had just grown a `Build PIP-8448` link, which is wide. Measured across
-        production's 50 open cards, the corner runs 207px on average and 342px
-        at its widest inside a column whose minimum is 463, and the age was
-        56px of that on every card; at the narrowest the client name was
-        pinned at `CARD_CLIENT_MIN_W`, clamped at its floor having run out
-        altogether. The footer's left-hand end was empty, because everything
-        in it is pushed right by a stretch, so the age costs the name nothing
-        there -- and there is room for words, which in the head there was not.
+        **It sits in the footer, not the card's corner**, which is what makes
+        the words affordable. Every column in the head is paid for by the
+        client name (`_client_room` subtracts each one), and the corner runs
+        207px on average inside a 463px minimum -- 56px of it this. The
+        footer's left end is empty, everything there being pushed right by a
+        stretch, so the age costs the name nothing.
 
-        The tooltip says what the number counts, because neither form does.
-        `3d` on a ticket reads as the *ticket's* age, which is the more
-        obvious thing to put on a card and is not what this is; and the two
-        rules that decide when it is blank -- bots do not count, today says
-        nothing -- can only live here, since a card that is blank has no
-        widget to hover.
+        The tooltip says what the number counts, because neither form does:
+        `3d` reads as the *ticket's* age, which is not what this is.
         """
         if not text:
             return None
@@ -6264,30 +6220,21 @@ class Bert(QMainWindow):
     def _centre_board(self):
         """Keep the column in the middle of the **window**, not of its pane.
 
-        The pane is only centred while the two side panels happen to match.
-        Drag the running order out and fold the figures down and the board's
-        pane starts 400px from the left and ends at the window edge -- so
-        splitting that pane evenly leaves the tickets sitting well right of
-        centre, which is what somebody looking at the screen sees.
+        The pane is only centred while the two side panels match. Fold the
+        figures down and the board's pane starts 400px from the left, so
+        splitting it evenly puts the tickets well right of centre.
 
-        Worked out against the splitter, which spans the whole row: where the
-        column *should* start is `(width - column) / 2`, and the left spacer
-        is however far that is from where the pane begins.
+        Measured against the splitter, which spans the whole row: the column
+        should start at `(width - column) / 2`, and the left spacer is however
+        far that is from where the pane begins.
 
-        **Staying centred costs width, and that is the trade.** A column that
-        fills its pane cannot be centred, because the pane is not -- so with
-        the panels lopsided it comes in to the widest that *can* be, which is
-        whichever of its two edges runs out first. Measured at 1500px with
-        the running order at its 460 maximum and the figures at their 180
-        minimum: the widest centred column is 568 against the 846 it would
-        otherwise take. At 1920 the same arrangement centres at the full 846
-        and costs nothing.
+        **Staying centred costs width.** A column filling a pane that is not
+        centred cannot be, so it comes in to whichever edge runs out first --
+        568 against 846 at 1500px with the panels lopsided, nothing at 1920.
 
-        The floor is the column's own minimum -- the width below which a card
-        stops being a card. Under that it gives up no more room and simply
-        sits as near the middle as the pane allows, which on a narrow window
-        with both panels wide is hard against the near edge. Better a board
-        off centre than a board too narrow to read.
+        The floor is the column's own minimum. Below that it gives up no more
+        room and sits as near the middle as the pane allows: better a board
+        off centre than one too narrow to read.
         """
         hold = getattr(self, "board_holder", None)
         if hold is None or not hold.width():

@@ -531,26 +531,18 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
         fast: int = FAST_SECONDS, once: bool = False, stop=None) -> None:
     """The outbox loop, so something other than a CLI can run it.
 
-    Lifted out whole rather than reimplemented: the pass is not just
-    `drain()`. It makes the threads tickets are waiting on, publishes the
-    board to `#ernie-state`, writes each ticket's status into its own
-    thread, and appends to the change log -- four things with four different
-    reasons for being on *this* loop rather than the sync's, all of them
-    about this being the only process allowed to write to Discord.
+    The pass is not just `drain()`: it also makes the threads tickets are
+    waiting on, publishes to `#ernie-state`, writes each ticket's status into
+    its thread, and appends to the change log -- all here because this is the
+    only process allowed to write to Discord.
 
-    **The pass has two halves and they run at different rates.** `drain` and
-    `make_threads` are what a person is waiting on, and they are cheap -- a
-    whole cycle measured two seconds on a settled board. The three publishes
-    are the expensive half and nobody is watching them: the state channel, the
-    status embeds and the change log all edit in place and announce nothing.
-    Putting them on one beat meant a change queued behind however long the
-    publishes took, and a lock or a slow pass cost the drain its turn
-    entirely.
+    **Two halves, at different rates.** `drain` and `make_threads` are what a
+    person is waiting on and are cheap. The three publishes are expensive and
+    nobody is watching them. On one beat, a change queued behind however long
+    the publishes took, and a slow pass cost the drain its turn entirely.
 
-    `next_full` is a wall clock rather than a count of fast passes, and the
-    sleep is measured from the **top** of the pass -- both for the reason
-    `ernie_sync` gives: sleeping a fixed amount after a pass that takes four
-    seconds is a nine-second beat that lurches once a minute.
+    `next_full` is a wall clock, and the sleep is measured from the **top** of
+    the pass: a fixed sleep after a four-second pass is a nine-second beat.
 
     `stop` is a `threading.Event`.
     """

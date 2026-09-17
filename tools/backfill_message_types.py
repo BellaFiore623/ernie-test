@@ -1,42 +1,24 @@
 """
 Fill in `messages.type` on rows written before the column existed.
 
-Discord's message type is not derivable from anything in the mirror -- it can
-only be fetched again. Every message ingested before the column was added has
-none, which is 22,810 rows in production, and among them are the only exact
-records of a thread ever being retagged: **type 4, CHANNEL_NAME_CHANGE**,
-carrying the new name as its content. Without the type a rename cannot be
-told from somebody pasting a title into the chat, and 573 of production's
-messages have content that parses as a title with 550 written by people.
-
-`rescan_edits` fills it in on its own for threads active in the last
-`RESCAN_DAYS`. This is for everything older, which is most of the board.
+Discord's message type cannot be derived from the mirror, only fetched again,
+and among those rows are the only exact records of a retag -- **type 4,
+CHANNEL_NAME_CHANGE**. Without it a rename cannot be told from somebody
+pasting a title into the chat. 22,810 rows in production. `rescan_edits`
+covers threads active within `RESCAN_DAYS`; this is for everything older.
 
     python tools/backfill_message_types.py --env ernie.env --db ernie.db
-    python tools/backfill_message_types.py --env ernie-test.env \
-        --db ernie-test.db --limit 5        # a short run, to watch it work
 
-**It writes one column and nothing else.** Not through `load_messages`, which
-also inserts messages, opens revisions and moves `threads.last_seen_message_id`
--- paging *backwards* through history would hand that last one an old id and
-send the forward sync back over ground it had already covered. The only
-statement here is `UPDATE messages SET type=? WHERE message_id=? AND type IS
-NULL`, so a message this finds and the mirror has never seen is left alone:
-filling in the mirror is a different job from filling in a column, and doing
-both at once on 889 threads is not a thing to start on a production database.
+**One column, and not through `load_messages`** -- that also moves
+`threads.last_seen_message_id`, and paging *backwards* would hand it an old
+id and send the forward sync back over ground it had covered. So a message
+the mirror has never seen is left alone.
 
-Read-only against Discord -- every request is a GET, and nothing here can
-reach `Discord.write()`.
-
-Resumable. Its own bookkeeping lives in `backfill_message_types`, a table it
-creates and nothing else reads; drop it when the run is done. Threads are
-marked finished rather than re-derived from what is still NULL, because a
-message Discord no longer returns -- deleted, or in a thread that has gone --
-stays NULL for ever and would otherwise make its thread eligible on every run.
-
-Cost, measured against production: 889 threads and 910 pages of 100, on a
-route that allows 5 requests per 5 seconds. About 15 minutes, and it can be
-interrupted and picked up again.
+Read-only against Discord. Resumable: its bookkeeping lives in
+`backfill_message_types`, which nothing else reads -- drop it when done.
+Threads are marked finished rather than re-derived from what is still NULL,
+or a message Discord no longer returns would make its thread eligible for
+ever. About 15 minutes against production, and interruptible.
 """
 
 from __future__ import annotations

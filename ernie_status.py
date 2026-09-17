@@ -2,31 +2,23 @@
 The ticket's status, kept as a message in its own thread.
 
 The board knows what a ticket still needs; the thread is where the work is
-actually discussed, and until now the two only met by somebody opening Bert.
-This puts the answer where the conversation is: what is still to do, what has
-been done, which band it sits in, and when it last moved.
+discussed, and the two only met by somebody opening Bert.
 
-Three things shape it.
+**One message per thread, edited in place.** An edit recovers from its rate
+limit in 0.67s and notifies nobody, while a rename allows two per ten minutes
+and posts a system line every time -- so the status can follow every tick of a
+work item without the thread becoming a notification feed. `thread_status.body`
+holds what was last written, and a pass rewrites only when the rendering would
+differ.
 
-**One message per thread, edited in place.** The same design as
-`#ernie-state`, for the same measured reason: an edit recovers from its rate
-limit in 0.67s and notifies nobody, while a thread rename allows two per ten
-minutes and posts a system line into the thread every time. So the status can
-follow every tick of a work item without the thread becoming a notification
-feed. `thread_status.body` holds what was last written and a pass rewrites
-only when the rendering would differ -- otherwise a quiet board would edit
-every message every cycle for nothing.
+**New threads only**, unless `STATUS_BACKFILL` is set: `witnessed_start()`
+asks whether Ernie saw the thread appear rather than inheriting it, and a
+first sync of an existing server is 889 threads.
 
-**New threads only.** `witnessed_start()` asks whether Ernie saw the thread
-appear rather than inheriting it, which is the same predicate the `started`
-feed line uses. Without it the first sync of an existing server -- 889 threads
-in production -- would post into every one of them at once.
-
-**Nothing in it moves on its own.** The timestamp is Discord's own `<t:...:R>`
-markup, so the reader's client renders "2 hours ago" and keeps it current
-while the source text stays fixed at the moment the card changed. A written-out
-"2h ago" would differ on every pass and rewrite the message forever, which is
-the trap `ernie_state.without_stamp()` exists to work around.
+**Nothing in it moves on its own.** The timestamp is Discord's `<t:...:R>`
+markup, so the reader's client renders "2 hours ago" while the source text
+stays fixed -- a written-out "2h ago" would differ on every pass and rewrite
+the message for ever.
 """
 from __future__ import annotations
 
@@ -287,30 +279,20 @@ def stored(con) -> dict:
 def adopt(d: Discord, tid: str) -> str | None:
     """A status message already in this thread, whoever put it there.
 
-    **`thread_status` is per database, and the thread is not.** Every board
-    keeps its own `message_id` and had no way to learn about anybody else's,
-    so a board with no row posted a fresh one -- and N boards meant N status
-    embeds in one customer thread, each edited by the board that made it and
-    ignored by the rest. Measured on the sandbox after a weekend of two
-    databases on one machine: 10 of 34 threads carrying two or three, and
-    four belonging to no database that still existed.
+    **`thread_status` is per database, and the thread is not.** A board with
+    no row used to post a fresh one, so N boards meant N embeds in one
+    customer thread -- 10 of the sandbox's 34 threads carried two or three
+    after a weekend of two databases on one machine. So the thread is the key
+    and the message is found by looking, the way `#ernie-state` has always
+    worked.
 
-    `#ernie-state` never had this problem because **its messages are
-    self-describing** -- each names its own `thread_id`, so a second board
-    finds the existing one and edits it. This is that idea, one channel
-    along: the thread is the key, and the message is found by looking.
+    **The title is the marker**, and always was: every status embed begins
+    `Ticket status`, so adoption reaches messages written long before this
+    function existed -- which is the point, since those are the ones out
+    there. **The oldest wins**, so two boards adopting independently converge
+    on one message.
 
-    **The title is the marker, and it always was.** Every status embed this
-    has ever posted begins `Ticket status`, so adoption works on messages
-    written long before this function existed -- which is the whole point,
-    since the ones needing adoption are exactly the ones already out there.
-
-    **The oldest wins**, so two boards adopting independently converge on one
-    message rather than each taking a different duplicate.
-
-    Costs one GET, and only for a thread this board has no row for. `wanted()`
-    has already filtered to threads Ernie *witnessed*, so a fresh install --
-    which inherits every thread and witnesses none -- asks for nothing at all.
+    Costs one GET, and only for a thread this board has no row for.
     """
     got = d.get(f"/channels/{tid}/messages", limit=50)
     if not got:

@@ -215,33 +215,21 @@ def load_thread(con: sqlite3.Connection, entry: dict, stats: dict) -> str:
 
     if was is not None and was["archived"] == 1 and now_archived == 0:
         # A bot posting into an archived thread unarchives it as a side
-        # effect -- a keepalive ping, or Ernie's own correction going back
-        # into a thread it had closed. Neither is somebody reopening the
-        # ticket, and neither should put the card back.
+        # effect -- a keepalive ping, or Ernie's own correction. Neither is
+        # somebody reopening the ticket.
         #
-        # **The test used to be "is the newest message a bot", and it
-        # swallowed every reopen that mattered.** Ernie posts "closed this
-        # thread in Bert" and *then* archives, so its own message is the
-        # newest one in every thread it has ever closed -- making
-        # `thread_reopened` unreachable for all of them. Zero in five months
-        # across both boards, which read as nobody ever reopening a ticket
-        # and was really the guard eating them. Found when a thread closed in
-        # Bert and reopened in Discord left the card closed with nothing
-        # said.
+        # The test was "is the newest message a bot", which swallowed every
+        # reopen that mattered: Ernie posts "closed this thread in Bert" and
+        # *then* archives, so its own message is the newest in every thread it
+        # has closed. Zero `thread_reopened` in five months, which read as
+        # nobody ever reopening one.
         #
         # What makes a bot message the *cause* is arriving since we last
-        # looked at this thread. One that was already sitting there while the
-        # thread was archived explains nothing about why it is open now.
-        # And never Ernie's own message. The window above is not enough on
-        # its own: `reconcile_closures` stamps `last_synced_at` at the moment
-        # it closes a card, so the announcement it triggers lands *after*
-        # that stamp -- and a thread closed in Discord would have its reopen
-        # swallowed by Ernie's own "closed this thread in Discord". Measured
-        # across the sandbox's archived threads: four of five would have been
-        # seen, and the Discord-closed one would not.
-        #
-        # `events.discord_message_id` records every message the outbox has
-        # posted, so this needs no new column and no network.
+        # looked -- one already sitting there explains nothing. And never
+        # Ernie's own: `reconcile_closures` stamps `last_synced_at` as it
+        # closes, so the announcement lands after that stamp and would swallow
+        # the reopen. `events.discord_message_id` already records what the
+        # outbox posted, so this needs no new column and no network.
         caused = con.execute(
             """SELECT is_bot FROM messages
                 WHERE thread_id=? AND datetime(created_at) > datetime(?)

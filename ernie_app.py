@@ -1,25 +1,20 @@
 """
 One process: sync, the outbox, the API and Bert.
 
-The shape the packaging note settles on -- everybody runs everything and
-shares only `#ernie-state`, so no machine has to stay powered on and anybody
-can open it whenever they like. What that costs is five jobs that fall to a
-person today and cannot be asked of a non-technical one: starting four
-processes, stopping them in the right order, not starting them twice,
-installing Python, and pasting keys into a text file.
+Everybody runs everything and shares only `#ernie-state`, so no machine has to
+stay powered on. What that replaces is five jobs a non-technical person cannot
+be asked to do: start four processes, stop them in order, not start them
+twice, install Python, paste keys into a text file.
 
-**The API stays an API.** uvicorn runs on a thread bound to 127.0.0.1 and
-Bert talks to it exactly as it does now -- no refactor of the client, and
-`run.sh test bert lan` still works the day somebody does want one backend
-shared across a network.
+**The API stays an API.** uvicorn runs on a thread bound to 127.0.0.1, so
+`run.sh test bert lan` still works the day somebody wants one shared backend.
 
-**Qt owns the main thread**, which is not a preference: a QApplication has to
-be created on it and its event loop has to run there. So the two background
-loops and uvicorn are the threads, and Bert is what `main()` blocks on.
+**Qt owns the main thread** -- a QApplication has to be created there and its
+loop has to run there. So the two loops and uvicorn are the threads, and Bert
+is what `main()` blocks on.
 
-**Closing the window is now what stops the outbox.** Under `run.sh` that is
-somebody closing three console windows; here the application has to do it,
-and the order matters -- see `shut_down()`.
+**Closing the window is what stops the outbox**, and the order matters: see
+`shut_down()`.
 """
 
 from __future__ import annotations

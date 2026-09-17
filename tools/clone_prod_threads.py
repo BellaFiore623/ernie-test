@@ -1,55 +1,26 @@
 """Rebuild production's customer threads in the test server, from the mirror.
 
-The sandbox's threads are invented, and invented threads are tidy: one client
-spelling, one equipment kind, a handful of messages, no attachments and no
-argument halfway through about which reel actually went out. Production is
-none of those things, and every surprise this project has had came from the
-difference. So this puts the real board in front of the real client.
+The sandbox's invented threads are tidy; production's are not, and every
+surprise this project has had came from the difference.
 
-**Production's Discord is never opened.** The mirror already holds all of it
--- titles, every revision, every message and its embeds -- pulled read-only by
-the sync. This reads that file and writes to the test server, so the only
-Discord it can reach is the one it is pointed at, and that one is guarded.
+**Production's Discord is never opened** -- the mirror already holds it all,
+and this only writes to the server it is pointed at. Two guards, because it
+writes: `PRODUCTION_GUILD` is refused outright, and every write goes through
+`ernie_sync.Discord.write()`.
 
-Two guards, because this writes: `PRODUCTION_GUILD` is refused outright the
-way `wipe_test.py` and `seed_test_server.py` refuse it, and every write goes
-through `ernie_sync.Discord.write()`, which refuses unless
-`ALLOW_DISCORD_WRITES` names the guild. That is deliberately a different
-client from the seeder's own -- a second bespoke HTTP client is a second place
-the guard can be forgotten.
+What cannot come across: a bot cannot post as somebody else, so every message
+and thread is Ernie's own (no `Last reply` age, no `started` line, and
+`Complete` takes the easy path). Attachments are not in the mirror.
+Timestamps are today's, so the figures panel reads the lot as one day.
 
-**What cannot come across, and it is worth knowing before reading the board:**
+**Components are not replayed, and that shifts a figure.** Python-Interface-Bot
+posts its proposals as confirm-prompts with buttons; without them an
+unconfirmed prompt arrives looking like a raised ticket -- 51 proposals in a
+clone against production's 50. Left alone: a button that does nothing is
+worse on a test board than an offset of one.
 
-- **Nobody's name.** A bot cannot post as somebody else, so every message
-  arrives authored by the bot. `is_bot` is therefore 1 on all of them, which
-  means `last_human_at` is NULL and no copied card shows its `Last reply`
-  age. The names are put in the text instead so the thread still reads as a
-  conversation; `--no-names` posts the content verbatim.
-- **Who opened the thread.** Same reason. Every copy is Ernie's own, so
-  `witnessed_start` is false and no `started` line appears -- and `Complete`
-  takes the easy path on a thread the bot owns, which is the one production
-  case the sandbox has never been able to rehearse. That is written down in
-  CLAUDE.md and this does not change it.
-- **Attachments.** 329 messages carry one and the files are not in the
-  mirror; the message comes across without it.
-- **Buttons, and this one shifts a figure.** Content and embeds are replayed;
-  **components are not**. Python-Interface-Bot posts its Build and Return
-  embeds as a *confirm this* prompt with buttons attached -- all 50 proposals
-  on production's open cards carry them, and none in a clone does. So an
-  **unconfirmed prompt arrives looking like a raised ticket**: the sandbox
-  reads 51 proposals against production's 50, and gives one card an EReel its
-  real thread was only ever asked about. Left alone deliberately -- the only
-  way to carry `has_buttons` across is to post real components, and a button
-  that does nothing is worse on a test board than an offset of one.
-- **The original timestamps.** Discord stamps a message when it is posted, so
-  a thread from April arrives dated today. The board's ordering comes from
-  `rank`, not from dates, but the figures panel reads `created_at` and will
-  show this lot as one enormous day.
-
-Resumable, because it is a long run of writes and a failure halfway through
-must not start again at the top: every thread and message it creates is
-recorded in a ledger first, and a second run skips what the ledger already
-names. That is the same reasoning `events.sent_steps` follows in the outbox.
+Resumable -- every thread and message is recorded in a ledger before it is
+made, the way `events.sent_steps` works in the outbox.
 
     python tools/clone_prod_threads.py --dry-run
     python tools/clone_prod_threads.py --closed-within 60

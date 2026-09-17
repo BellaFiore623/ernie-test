@@ -1,38 +1,26 @@
 """Fill the stats panel with plausible history, so it can be looked at.
 
-The sandbox is reseeded from scratch, so it has no closures and no ageing --
-the panel is honest and almost empty, which is no use for judging how it
-reads. This invents a past for it.
+A reseeded sandbox has no closures and no ageing, so the panel is honest and
+almost empty -- no use for judging how it reads.
 
-    python tools/fake_stats_data.py --db ernie-test.db
-    python tools/fake_stats_data.py --db ernie-test.db --clear
+    python tools/fake_stats_data.py --db ernie-test.db [--clear]
 
-Two things it is careful about.
-
-**It refuses production.** The figures there are real, and a fake month in
+**It refuses production.** The figures there are real and a fake month in
 them would be believed.
 
-**Everything it does is undoable, including the part it does not add.**
-The invented threads are all prefixed `fake-`, so `--clear` takes exactly
-them and nothing else -- and the *backdating* of real cards is written down
-before it happens, in `fake_backdated`, so `--clear` puts those back too.
-That table is the whole of the lesson from the day this ran against
-production by mistake: the invented rows came out in one command, and the ten
-real threads it had backdated needed a three-week-old backup, because
-"removable" had quietly meant "the rows it inserted". They are also
-written `archived`, which keeps ernie_status away from them: their threads do
-not exist in Discord, and a status message posted at one would fail on every
-outbox pass for ever.
+**Everything is undoable, including what it does not add.** Invented threads
+are prefixed `fake-`; the *backdating* of real cards is recorded in
+`fake_backdated` first, so `--clear` puts those back too. That table is the
+lesson from the day this ran against production by mistake: the invented rows
+came out in one command, and the ten backdated real threads needed a
+three-week-old backup, because "removable" had quietly meant "the rows it
+inserted". Invented threads are written `archived`, which keeps ernie_status
+away from them -- they do not exist in Discord, and a status message aimed at
+one would fail on every outbox pass for ever.
 
-The real seeded cards are not duplicated, only *backdated* -- their threads
-keep their real ids, so the "open longest" rows still click through to a card
-that is really there.
-
-**Everything invented is closed**, and that is deliberate rather than an
-oversight. An invented *open* ticket would sit on the board looking like a
-real one, with no Discord thread behind it and nothing to click through to.
-So the open column is the real seeded cards and only those; it is the two
-flows -- created and closed -- that this fills in.
+**Everything invented is closed**, deliberately: an invented *open* ticket
+would sit on the board with nothing to click through to. Real seeded cards
+are backdated rather than duplicated, so they keep their real thread ids.
 """
 from __future__ import annotations
 
