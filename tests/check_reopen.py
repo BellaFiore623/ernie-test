@@ -2,23 +2,22 @@
 Reopening a ticket by unarchiving its thread.
 
 Ernie has always detected the archived -> active flip, reopened the card and
-posted *"This thread was reopened, so it's back on the Bert board."* The
-event had fired **zero times in five months** across both boards, which
-looked like nobody ever reopening a ticket and was really the guard eating
-them.
+posted *"This thread was reopened, so it's back on the Bert board."* The event
+had fired **zero times in five months** across both boards -- which looked
+like nobody ever reopening a ticket and was really the guard eating them.
 
 The guard exists for a true thing: a bot posting into an archived thread
-unarchives it as a side effect -- a keepalive ping, or Ernie's own
-correction going back into a thread it closed -- and neither is a person
-reopening the work. But it asked *"is the newest message a bot"*, and Ernie
-posts "closed this thread in Bert" and **then** archives, so its own message
-is the newest one in every thread it has ever closed. Every reopen of a
-ticket Ernie closed was read as a bot ping and dropped: the mirror recorded
-the thread open, the card stayed closed, and nothing was said.
+unarchives it as a side effect -- a keepalive ping, or Ernie's own correction
+going back into a thread it closed -- and neither is a person reopening the
+work. But it asked *"is the newest message a bot"*, and Ernie posts "closed
+this thread in Bert" and **then** archives, so its own message is newest in
+every thread it has ever closed. Every reopen of a ticket Ernie closed was
+read as a bot ping and dropped: the mirror recorded the thread open, the card
+stayed closed, nothing was said.
 
-The question that actually distinguishes them is whether a bot message
-arrived **since we last looked**. One already sitting there while the thread
-was archived explains nothing about why it is open now.
+What actually distinguishes them is whether a bot message arrived **since we
+last looked**. One already sitting there while the thread was archived
+explains nothing about why it is open now.
 """
 
 import contextlib

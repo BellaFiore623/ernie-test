@@ -1659,25 +1659,20 @@ def check_lights_chrome_is_grey_and_nothing_hides_in_it() -> bool:
     """
     The field is grey, so the things that carry meaning are the coloured ones.
 
-    A census of the rendered light board found **98.5% of the screen at
-    chroma 10 or more, and only 1.5% reading as grey** -- the chrome alone was
-    68% of it, every token at chroma 13-16 and every one of them blue. That is
-    a coloured application with more colour on top, rather than a grey one
-    with colour where colour means something.
+    A census of the rendered light board: **98.5% of the screen at chroma 10+,
+    1.5% grey**, the chrome alone 68% of it, every token chroma 13-16 and all
+    blue. A coloured application with more colour on top.
 
-    It was reported as everything looking too cool, which was the right
-    instinct with the wrong cause: **dark sits at the same hue**, 213-216
-    against light's 212-217. What differs is the cost. Light's chrome emits
-    **38x** the blue dark's does, so a tint invisible on a near-black surface
-    is a wash on a bright one.
+    Reported as everything looking too cool -- right instinct, wrong cause.
+    **Dark sits at the same hue** (213-216 against light's 212-217); what
+    differs is cost, because light's chrome emits **38x** the blue, so a tint
+    invisible on near-black is a wash on a bright surface.
 
-    **The luminances did not move**, which is what made this safe: each token
-    is the grey of exactly its old luminance, so every ratio the palette
-    depends on is the one it was measured at.
+    **The luminances did not move**: each token is the grey of exactly its old
+    luminance, so every ratio stays the one it was measured at.
 
-    The second half is why grey beat warm, and it is the half that decided it.
-    Measured as chromatic distance (CIELAB a*b*, lightness ignored) from each
-    card fill to the workspace it sits on:
+    Why grey beat warm, and the half that decided it -- chromatic distance
+    (CIELAB a*b*, lightness ignored) from each card fill to its workspace:
 
         ground        worst tag       what vanishes
         cool (was)        1.1         ENG and Medium, into a blue ground

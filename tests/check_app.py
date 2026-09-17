@@ -320,22 +320,20 @@ def check_the_close_warning_is_true_in_one_process() -> bool:
     The warning inverts under a supervisor, and left alone it would have been
     wrong in both halves.
 
-    From source it says: closing Bert loses nothing, because the outbox is
-    another process that goes on posting -- but if you are shutting the whole
-    stack down, leave the rest running another minute. Under `ernie_app` there
-    **is** no rest: closing this window stops the sync and the outbox with it,
-    and `shut_down` brings everything owed forward and sends it. So the advice
+    From source it says: closing Bert loses nothing, the outbox being another
+    process that goes on posting -- but if you are shutting the whole stack
+    down, leave the rest running another minute. Under `ernie_app` there **is**
+    no rest: closing this window stops the sync and the outbox, and
+    `shut_down` brings everything owed forward and sends it. So the advice
     names something the person cannot do, about a loss that cannot happen.
 
-    And it hid the consequence that is real. Bringing an event forward
-    **spends its undo window**: a change made ten seconds before closing goes
-    to the customer thread as it stands, and the chance to take it back goes
-    with it. That is what the supervised wording has to say.
+    And it hid the real consequence. Bringing an event forward **spends its
+    undo window**: a change made ten seconds before closing goes to the
+    customer thread as it stands, and the chance to take it back goes with it.
 
-    Read off the string literals rather than the source text, because the
-    reasoning above each branch quotes the words the other branch uses -- a
-    substring search over the function trips on its own comments, which has
-    happened three times in this project already.
+    Read off the string literals rather than the source text: the reasoning
+    above each branch quotes the words the other branch uses, so a substring
+    search trips on its own comments -- three times in this project already.
     """
     c = Check("the close warning is true in one process")
 
@@ -561,24 +559,22 @@ def check_the_database_exists_before_anything_races_for_it() -> bool:
     """
     The first run on a new machine, which is the run nobody tests.
 
-    `ernie_api.db()` opens the database **read-only** -- `mode=ro`, which
-    cannot create a file that is not there -- and it is right to: the API is a
-    reader. But the API thread, the sync and the outbox all start in the same
-    instant, and on a machine that has never run this there is no file for any
-    of them. Whoever gets there first loses. The API dies on a database that
-    does not exist; or the sync cannot take the write lock `schema.sql` needs,
-    because a reader already has the file open, and dies on "database is
-    locked" instead.
+    `ernie_api.db()` opens the database **read-only** (`mode=ro`, which cannot
+    create a missing file), rightly, being a reader. But the API thread, the
+    sync and the outbox start in the same instant, and on a new machine there
+    is no file for any of them. Whoever gets there first loses: the API dies
+    on a database that does not exist, or the sync cannot take the write lock
+    `schema.sql` needs -- a reader already has the file open -- and dies on
+    "database is locked".
 
     Both die *in a thread*, so nothing reaches the screen: Bert opens on an
-    empty board, the board stays empty, and the traceback is in a log. That is
-    exactly what happened on the first real install -- five launches, the same
-    failure every time, on a build that had been verified end to end against a
-    database that already existed.
+    empty board and the traceback is in a log. Exactly what happened on the
+    first real install: five launches, the same failure, on a build verified
+    end to end against a database that already existed.
 
-    So `main()` opens it once itself, on the main thread, before a single
-    thread starts. `load.connect` applies schema.sql and is idempotent, so
-    this costs an existing database nothing.
+    So `main()` opens it once on the main thread before any thread starts.
+    `load.connect` applies schema.sql and is idempotent, so this costs an
+    existing database nothing.
     """
     c = Check("the database exists before anything races for it")
 
@@ -636,25 +632,23 @@ def check_no_endpoint_leaves_its_connection_open() -> bool:
     """
     A reader left open pins the WAL, and the WAL never checkpoints again.
 
-    Every endpoint closes its connection on the way out. Seven of them did it
-    only on the happy path -- `health`, `events`, `clients`, `client_roster`,
-    `card_detail`, `card_messages` and `check_schema` -- so a request that
-    raised part-way leaked one. Bert polls `/health` and `/events` **twelve
-    times a minute**, so the leaks were not rare.
+    Every endpoint closes its connection on the way out. Seven did it only on
+    the happy path -- `health`, `events`, `clients`, `client_roster`,
+    `card_detail`, `card_messages`, `check_schema` -- so a request that raised
+    part-way leaked one, and Bert polls `/health` and `/events` **twelve times
+    a minute**.
 
-    The consequence is not a slow leak of memory, it is the whole board
-    stopping: a reader holds a WAL snapshot, the snapshot blocks
-    checkpointing, the WAL grows past the database, and writers start timing
-    out. Seen live as `drain failed: database is locked` every five seconds
-    with a 6.59 MB WAL against a 4.58 MB database, and five renames sitting
-    unposted behind it.
+    The consequence is not a slow memory leak, it is the board stopping: the
+    reader holds a WAL snapshot, the snapshot blocks checkpointing, the WAL
+    grows past the database, writers time out. Seen live as `drain failed:
+    database is locked` every five seconds, 6.59 MB WAL against 4.58 MB, five
+    renames unposted behind it.
 
-    The hazard was already written down one function along -- "without it a
-    request that raised part-way left its connection open, and on Windows
-    that is a file handle nothing gives back" -- and `cards` and `stats` were
-    fixed at the time. The other seven were not.
+    The hazard was already written down one function along -- "on Windows that
+    is a file handle nothing gives back" -- and `cards` and `stats` were fixed
+    at the time. The other seven were not.
 
-    Read off the source, because the question is about every path out of the
+    Read off the source, because the question is every path out of the
     function rather than the one a test happens to take.
     """
     c = Check("no endpoint leaves its connection open")

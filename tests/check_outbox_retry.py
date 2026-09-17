@@ -2,26 +2,25 @@
 A retry must not do again what already reached Discord.
 
 Reported as changes showing up in Discord while the card went on saying
-"Pushing to Discord..." -- and the details were not to hand, which is exactly
-what made it hard to place. It reproduces cleanly, and it is worse than the
-symptom.
+"Pushing to Discord...", with no details to hand, which is what made it hard
+to place. It reproduces cleanly and is worse than the symptom.
 
 Posting one event takes up to four writes -- unarchive, rename, message,
-archive -- and creating a ticket takes three: the thread, a note saying who
-started it, then their opening message. Only the *last* write was ever
-recorded, so a failure anywhere threw away the record of everything before
-it. The retry started from the top.
+archive -- and creating a ticket takes three: the thread, a note naming who
+started it, their opening message. Only the *last* was recorded, so a failure
+anywhere threw away the record of everything before it and the retry started
+from the top.
 
-Two of those writes are harmless twice and two are not. Archiving a thread
-that is already archived is the same as archiving it once. Renaming is 2 per
-10 minutes on a shared budget and posts a system message every time; posting
-a message is a message; and opening a thread is a whole second ticket.
+Two of those writes are harmless twice and two are not: archiving an archived
+thread is the same as archiving it once, while renaming is 2 per 10 minutes on
+a shared budget and posts a system message each time, posting a message is a
+message, and opening a thread is a whole second ticket.
 
 Measured before the fix: an archive that failed twice put **three identical
 "marked this complete" messages** into one customer thread, and an opening
-message that failed twice left **three real threads** in the customer channel
-for one ticket -- the board keeping the third, and the sync free to pick the
-other two up later as fresh unassigned cards.
+message that failed twice left **three real threads** for one ticket -- the
+board keeping the third, the sync free to pick the other two up later as
+fresh unassigned cards.
 
 `sent_steps` is the record, written and committed the moment each irreversible
 write lands.
@@ -335,25 +334,23 @@ def check_only_harmless_writes_ride_out_a_blip() -> bool:
     """
     The read path rode out Discord's 5xx and the write path did not.
 
-    `get()` has always retried a 500 with a backoff, because a repeated read
-    costs nothing. `write()` only ever handled 429 and then raised, so a
-    `503` -- which Discord serves often enough to meet twice in one afternoon
-    -- came straight out. Found on a run of six thousand consecutive writes,
-    which is simply more writes in a row than this had ever done; it killed
-    the run twice.
+    `get()` has always retried a 500 with a backoff, a repeated read costing
+    nothing. `write()` only handled 429 and then raised, so a `503` -- which
+    Discord serves often enough to meet twice in an afternoon -- came straight
+    out. Found on a run of six thousand consecutive writes, more in a row than
+    this had ever done; it killed the run twice.
 
-    **It is opt-in, and that is the whole design.** A 5xx does not say
-    whether the request was processed, so an automatic retry on a POST can
-    post twice -- the failure every other check in this file exists to
-    prevent, and the one that once put three identical "marked this complete"
-    messages in a customer thread. So the caller decides, and only where
-    doing it again is genuinely a no-op: archiving an archived thread,
-    editing a message to the text it already holds, pinning a pinned message.
+    **It is opt-in, and that is the design.** A 5xx does not say whether the
+    request was processed, so an automatic retry on a POST can post twice --
+    the failure every other check here exists to prevent, and the one that put
+    three identical "marked this complete" messages in a customer thread. So
+    the caller decides, and only where doing it again is a genuine no-op:
+    archiving an archived thread, editing a message to the text it holds,
+    pinning a pinned message.
 
-    Never a message, a new thread, or a rename. A rename especially: two per
-    ten minutes on a budget shared between both machines, and a system
-    message in the customer thread every time, so a silent retry spends
-    somebody else's allowance.
+    Never a message, a new thread, or a rename -- two per ten minutes on a
+    budget shared between both machines, with a system message each time, so a
+    silent retry spends somebody else's allowance.
     """
     c = Check("only harmless writes ride out a blip")
 

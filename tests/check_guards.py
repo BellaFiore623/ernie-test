@@ -1,32 +1,29 @@
 """
 The guards that stand between a test run and the real board.
 
-Five scripts here can do something to a Discord server that cannot be taken
-back or can put fiction where facts should be: `wipe_test.py` deletes every
-thread in a channel, `seed_test_server.py` creates two dozen,
-`tools/clone_prod_threads.py` recreates a couple of hundred, `ernie_state.py
---check` runs a preflight that writes, and `tools/fake_stats_data.py` invents
-a year of history in a mirror. Each refuses to run against production, and
-each refusal is one comparison against one constant.
+Five scripts can do something to a Discord server that cannot be taken back,
+or put fiction where facts should be: `wipe_test.py` deletes every thread in a
+channel, `seed_test_server.py` creates two dozen, `tools/clone_prod_threads.py`
+recreates a couple of hundred, `ernie_state.py --check` writes a preflight, and
+`tools/fake_stats_data.py` invents a year of history. Each refuses production,
+and each refusal is one comparison against one constant.
 
-**That constant was wrong for the life of the project.** It held a guild id
-that is not this company's, so every one of those guards compared production
-against a server nobody has ever used and waved it through. `wipe_test.py`
-carried the comment "set this to your real guild", and it never was. It was
-found the only way a wrong guard ever is -- by one of them firing on the
-wrong side, when the fake-data tool wrote 257 invented tickets into
-production's mirror. Recovered in full from a backup; nothing reached
-Discord, because production has no ALLOW_DISCORD_WRITES to reach it with.
+**That constant was wrong for the life of the project** -- a guild id that is
+not this company's, so all five compared production against a server nobody
+has ever used and waved it through. `wipe_test.py` carried the comment "set
+this to your real guild", and it never was. Found the only way a wrong guard
+ever is, by one firing on the wrong side: the fake-data tool wrote 257
+invented tickets into production's mirror. Recovered in full from a backup,
+and nothing reached Discord, production having no ALLOW_DISCORD_WRITES.
 
-So this file exists, and it holds two things rather than one. That the copies
-agree -- because a value declared in four places is four chances to fix one
-and believe the job is done. And that each guard still *asks the question*,
-because the failure mode above is a comparison that runs, returns False, and
-looks exactly like a comparison that was never there.
+So this holds two things. That the copies agree, because a value declared in
+four places is four chances to fix one and believe it done. And that each
+guard still *asks the question*, because the failure above is a comparison
+that runs, returns False, and looks exactly like one that was never there.
 
-What it cannot hold is that the value is *correct*: the only thing to check
-it against is production's own env file, which is deliberately not in the
-repo. That stays a person's job, and is written down in CLAUDE.md.
+What it cannot hold is that the value is *correct*: the only thing to check it
+against is production's env file, deliberately not in the repo. A person's
+job, written down in CLAUDE.md.
 """
 
 import ast
