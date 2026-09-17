@@ -990,6 +990,17 @@ archives, Reopen posts and unarchives, and a rename really renames the thread
 and leaves Discord's own type 4 behind. Worth redoing whenever the outbox's
 write path changes, because the seeder cannot cover it.
 
+The status message was rehearsed on the same three on 2026-09-17, when
+`STATUS_BACKFILL` gave it something to reach them with -- they are inherited,
+so nothing could have posted into them before. All three took a message, all
+three **pinned**, one each way: an equipment line, a to-do, and a ticket with
+neither. Then an edit in place on one of them, which is the path that runs for
+the life of a ticket -- one message still, the new work item in it, and the
+pass after it wrote nothing. Pinning was the part worth proving. Archiving
+somebody else's thread needed Manage Threads and silently did not have it,
+so the reasonable worry was that pinning in one would want something too;
+it does not, and **Pin Messages** on the role is the whole of it.
+
 Environment: Windows, Git Bash (MINGW64), Python 3.13, SQLite in WAL mode.
 
 ## Style
