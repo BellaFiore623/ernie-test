@@ -917,6 +917,17 @@ from source -- four processes, four logs, restart one without the others.
 - Closing the window stops the outbox, so it spends the undo window rather
   than waiting it out: it brings every undispatched event forward, drains,
   makes any threads still waiting, and publishes once more.
+  **None of those steps may raise.** `shut_down` ran unguarded, so one failed
+  write threw a traceback out of `main()` -- past the summary line, past the
+  mutex release -- and somebody closing the window got a stack trace instead
+  of the app going away. Found on the second laptop the day two stacks first
+  shared a state channel: a 429 on the final board publish, which two
+  machines editing the same messages makes ordinary rather than exotic.
+  The **order** is what makes the failure cheap to carry on from: everything
+  owed to a customer thread drains *before* the board is published, so the
+  step most likely to fail is also the one that costs least -- the next start
+  publishes again. `tests/check_app.py` holds both shapes, a failed publish
+  and a failed drain.
 - A blocked outbox says so rather than vanishing. Read-only is a legitimate
   way to run, so it is reported, never refused.
 - **The outbox's two beats are about frequency, not blocking.** All five

@@ -852,7 +852,78 @@ def check_the_supervisor_sets_up_what_the_cli_does() -> bool:
     return c.report()
 
 
-CHECKS = (check_no_endpoint_leaves_its_connection_open,
+def check_closing_cannot_raise() -> bool:
+    """Closing the window is the one action that has to work.
+
+    `shut_down` ran unguarded, so one failed write threw a traceback out of
+    `main()` -- past the summary line and past the mutex release -- and the
+    person closing the window got a stack trace instead of the app going
+    away. Seen on the second laptop the day two stacks first shared a state
+    channel: a 429 on the final board publish, which two machines editing the
+    same messages makes ordinary rather than exotic.
+
+    The ordering is what makes it safe to carry on from. Everything owed to a
+    customer thread is drained *before* the board is published, so the step
+    most likely to fail is also the one that costs least -- the next start
+    publishes again.
+    """
+    c = Check("closing cannot raise")
+
+    import ernie_app
+    import ernie_outbox
+    import ernie_state
+
+    class Boom:
+        writes_allowed = True
+
+    said = []
+    keep = (ernie_outbox.drain, ernie_outbox.make_threads, ernie_state.publish)
+    before = os.environ.get("STATE_CHANNEL_ID")
+    try:
+        os.environ["STATE_CHANNEL_ID"] = "chan-1"
+
+        with Board() as b:
+            # The reported shape: the owed half works, the board publish 429s.
+            ernie_outbox.drain = lambda con, d: {"sent": 2}
+            ernie_outbox.make_threads = lambda con, d: {"made": 1}
+            def bang(*a, **k):
+                raise RuntimeError("429 Too Many Requests")
+            ernie_state.publish = bang
+
+            r = ernie_app.shut_down(b.path, Boom(), threading.Event(),
+                                    say=said.append)
+            c.ok(isinstance(r, dict), "it returns rather than raising")
+            c.equal(r.get("drained"), 3,
+                    "and still reports what did go out, which is the half "
+                    "that matters")
+            c.equal(r.get("published"), False, "saying the board did not")
+            c.ok(any("shared board" in t for t in said),
+                 f"and says so rather than swallowing it ({said!r})")
+
+        with Board() as b:
+            # The worse shape: the drain itself fails. Still no traceback.
+            def bang2(*a, **k):
+                raise RuntimeError("database is locked")
+            ernie_outbox.drain = bang2
+            ernie_state.publish = lambda *a, **k: None
+            said.clear()
+            r = ernie_app.shut_down(b.path, Boom(), threading.Event(),
+                                    say=said.append)
+            c.ok(isinstance(r, dict), "a failed drain does not raise either")
+            c.equal(r.get("drained"), 0, "and reports nothing went out")
+            c.ok(any("owed" in t for t in said), "naming what was missed")
+    finally:
+        ernie_outbox.drain, ernie_outbox.make_threads, ernie_state.publish = keep
+        if before is None:
+            os.environ.pop("STATE_CHANNEL_ID", None)
+        else:
+            os.environ["STATE_CHANNEL_ID"] = before
+
+    return c.report()
+
+
+CHECKS = (check_closing_cannot_raise,
+          check_no_endpoint_leaves_its_connection_open,
           check_a_missing_table_is_told_apart_from_a_stale_one,
           check_a_blocked_outbox_says_so,
           check_closing_spends_the_undo_window,

@@ -303,17 +303,38 @@ def shut_down(db: str, outbox_client, stop: threading.Event, say=print):
                  AND datetime(dispatch_after) > datetime('now')""")
         con.commit()
 
-        sent = ernie_outbox.drain(con, outbox_client)
-        made = ernie_outbox.make_threads(con, outbox_client)
+        # Each step is guarded separately, and none of them may raise.
+        # **Closing is the one action that has to work.** This whole function
+        # ran unguarded, so a single failed write threw a traceback out of
+        # main() -- past the summary line, past `del lock` -- and the person
+        # closing the window saw a stack trace instead of the app going away.
+        #
+        # Seen on the second laptop the day two stacks first shared a channel:
+        # a 429 on the final board publish, which two machines editing the
+        # same messages makes ordinary rather than exotic.
+        sent = made = {}
+        try:
+            sent = ernie_outbox.drain(con, outbox_client)
+            made = ernie_outbox.make_threads(con, outbox_client)
+        except Exception as e:                       # noqa: BLE001
+            say(f"  not everything owed went out: {e}")
 
         # 2. The board, one last time, so the other machine sees where things
         #    were left rather than where they were a cycle ago.
+        #
+        #    Failing here costs the least of anything in this function: the
+        #    next start publishes again, and the customer threads were served
+        #    above. That ordering is what makes this safe to report and carry
+        #    on from rather than retry.
         published = False
         channel = os.environ.get("STATE_CHANNEL_ID")
         if channel and outbox_client.writes_allowed:
             import ernie_state
-            ernie_state.publish(outbox_client, channel, db)
-            published = True
+            try:
+                ernie_state.publish(outbox_client, channel, db)
+                published = True
+            except Exception as e:                   # noqa: BLE001
+                say(f"  the shared board was not updated on the way out: {e}")
         return {"drained": sent.get("sent", 0) + made.get("made", 0),
                 "published": published}
     finally:
