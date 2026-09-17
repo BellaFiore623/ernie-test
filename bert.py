@@ -418,8 +418,41 @@ DARK = {
 # and again whenever the desktop says it has changed, so a machine that
 # darkens at sunset takes the board with it. An explicit light or dark is a
 # decision and the desktop does not overrule it.
-THEMES = ("system", "light", "dark")
-THEME_LABEL = {"system": "Follow the desktop", "light": "Light", "dark": "Dark"}
+# A third theme, and the cheapest kind there is to be sure about: DARK with
+# its neutrals re-hued, spread over the same dict so a token added to DARK
+# arrives here too. `check_palette.py` holds all three to the same keys, and
+# a palette built by hand is the one that misses one.
+#
+# **Every L* is held to within 0.16**, which is what makes it safe rather than
+# brave: contrast is a function of luminance alone, so a hue that does not
+# move lightness cannot break a ratio the palette depends on. Measured across
+# every pairing that carries meaning, the worst drift from DARK is 0.103 --
+# ink over canvas 14.63 -> 14.53, and nothing else moves by more.
+#
+# **The hazard is the other axis, and this is better at it than DARK.** A
+# ground with a hue of its own hides whichever tags share it, which is why
+# light's chrome is grey. DARK's ground sits at hue 266 and ENG's fill at 268,
+# so the two are 5.6 apart in CIELAB a*b* -- the closest any tag comes to
+# vanishing in either theme today. Hue 280 is past both ENG and Medium and
+# short of CS at 307, so the worst tag here stands at **10.8**, and every
+# other one is further off than it is in DARK.
+#
+# `low` and the no-tag fill are deliberately the ground's own hue -- they
+# stand off by lightness, which is the whole of what `low` is -- so they are
+# not in that measurement. Measuring them chromatically would be testing for
+# the thing they were designed not to have.
+MIDNIGHT = {
+    **DARK,
+    "ink": "#E6E8F0", "muted": "#9CA1B1", "line": "#313A50",
+    "surface": "#0C203C", "canvas": "#021833", "panel": "#021833",
+    "feed": "#021833", "beside": "#162745", "control": "#0C203C",
+    "well": "#071023", "chip_bg": "#1B2C4A",
+}
+
+
+THEMES = ("system", "light", "dark", "midnight")
+THEME_LABEL = {"system": "Follow the desktop", "light": "Light",
+               "dark": "Dark", "midnight": "Midnight \u2014 dark blue"}
 # What a board with no setting yet opens as: dark, not the desktop.
 # Following the desktop would hand a fresh install whichever the machine
 # happened to be set to, which is a coin toss on the question that has taken
@@ -452,13 +485,22 @@ class Theme:
     def __init__(self):
         self.name = "light"
 
+    # Every palette, by the name a setting holds. A dict rather than a chain
+    # of conditionals: a third theme was two `if`s and a fallback, and the
+    # fallback is what silently makes an unknown name light.
+    _ALL = {"light": LIGHT, "dark": DARK, "midnight": MIDNIGHT}
+    # Which of them have pale ink. `T.dark` is asked by anything choosing a
+    # glyph or a shade for the ground it is on, and the question is about the
+    # ground rather than about which palette is loaded.
+    _DARK_GROUNDS = frozenset({"dark", "midnight"})
+
     def use(self, name: str) -> None:
-        self.name = "dark" if name == "dark" else "light"
-        self._p = DARK if self.name == "dark" else LIGHT
+        self.name = name if name in self._ALL else "light"
+        self._p = self._ALL[self.name]
 
     @property
     def dark(self) -> bool:
-        return self.name == "dark"
+        return self.name in self._DARK_GROUNDS
 
     def __getattr__(self, key):
         # _p resolves off the class, so this never recurses looking for it.
@@ -523,8 +565,14 @@ def desktop_is_dark() -> bool:
 
 
 def resolve_theme(choice: str) -> str:
-    """A stored setting to the palette to actually load."""
-    if choice in ("light", "dark"):
+    """A stored setting to the palette to actually load.
+
+    Anything the settings offer is taken as itself; only "system" is a
+    question, and it is answered with the two the desktop can actually tell us
+    about. A desktop has no way to say "dark, and blue" -- midnight is a
+    choice somebody makes, never one that is inferred.
+    """
+    if choice in Theme._ALL:
         return choice
     return "dark" if desktop_is_dark() else "light"
 

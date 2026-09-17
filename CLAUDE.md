@@ -1050,11 +1050,25 @@ These are the rules that outlive it:
 
 No colour literals in Bert. Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
-both `LIGHT` and `DARK`. A hex typed into a stylesheet works in one theme and
-is wrong in the other, silently, in whichever theme nobody happened to be
-looking at. Settings offers light, dark, or following the desktop; changing it
+every palette. A hex typed into a stylesheet works in one theme and is wrong
+in the others, silently, in whichever nobody happened to be looking at.
+Settings offers light, dark, midnight, or following the desktop; changing it
 rebuilds the window, because each widget styles itself where it is made and
 there is no single sheet to swap -- and a stylesheet missed on a restyle is a
-white panel in a dark board. `tests/check_palette.py` holds the two palettes
-to the same keys, which is the invariant that keeps a theme from crashing only
-for the person using the other one.
+white panel in a dark board. `tests/check_palette.py` holds all three palettes
+to the same keys and to the same floors, which is the invariant that keeps a
+theme from crashing only for the person using it.
+
+**Midnight is `DARK` with its neutrals re-hued**, spread as `{**DARK, ...}` so
+a token added to `DARK` arrives there too. Every L* is held to within 0.16,
+which is what makes a new theme cheap to be sure about: contrast is a function
+of luminance alone, so a hue that does not move lightness cannot break a ratio
+-- worst drift from `DARK` across every pairing that carries meaning is 0.103.
+The hazard is the other axis, and midnight is *better* at it than dark: a
+ground with a hue of its own hides whichever tags share it, and `DARK`'s
+ground at hue 266 sits 5.6 from ENG's fill at 268 -- the closest any tag comes
+to vanishing in either theme. Midnight's 280 is past ENG and Medium and short
+of CS at 307, so its worst tag stands at **10.8**. `low` and the no-tag fill
+are deliberately the ground's own hue and stand off by lightness, so they are
+not in that measurement. `resolve_theme` never infers midnight: a desktop can
+say dark, not "dark, and blue".
