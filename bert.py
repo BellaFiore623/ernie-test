@@ -292,15 +292,22 @@ LIGHT = {
     # whichever tags share it. Grey treats all four alike.
     # Reasoning and measurements: docs/bert-ui.md.
     "ink": "#262626", "muted": "#5F5F5F", "line": "#C6C6C6",
-    "surface": "#FFFFFF", "canvas": "#EEEEEE", "panel": "#E7E7E7",
+    "surface": "#FFFFFF", "canvas": "#EEEEEE", "panel": "#EBEBEB",
     # The activity bar, under the sections either side of the board.
-    "feed": "#E0E0E0",
+    "feed": "#E8E8E8",
     # Raised controls -- the Qt Button role.
     "beside": "#F4F4F4",
     # What a button, a field or a work-item bubble is drawn on: a step under
     # the card, in both themes.
     "control": "#E2E2E2",
-    "well": "#DADADA",
+    # The floor, and it used to be the heaviest thing in the window. Light
+    # spent 7.0 L* separating chrome from workspace and 4.5 lifting a card off
+    # it; dark spends 3.1 and 10.1, so the two were inverted and the bar read
+    # as a slab while the cards did not read as the work. It is 3.2 L* off the
+    # canvas now, which is dark's proportion. What pinned it was `control`:
+    # the toolbar's own boxes were filled with it, so the bar had to stay
+    # underneath -- see `field`.
+    "well": "#E5E5E5",
     # Badge fills, a step under the card rather than over it.
     "amber_bg": "#F9EEDA", "amber_fg": "#79510D",
     "red_bg": "#FAEBEB", "red_fg": "#A12626", "red_edge": "#D54E4E",
@@ -1150,7 +1157,7 @@ def tip_css() -> str:
             f" border:1px solid {T.LINE}; padding:4px 6px; }}")
 
 
-def btn_css() -> str:
+def btn_css(chrome=False) -> str:
     """A plain button, drawn from the palette rather than left to the style.
 
     `BTN_HIT` sets the hit area and the type size and stops there, so Fusion
@@ -1166,8 +1173,9 @@ def btn_css() -> str:
     """
     # The raised-control tone, not the surface: the surface *is* the card a
     # card's buttons are drawn on, so a button wearing it had only its border
-    # to say it was a button.
-    return (f"QPushButton {{ {BTN_HIT} background:{T.CONTROL};"
+    # to say it was a button. `chrome` picks the other ground -- see `field`.
+    return (f"QPushButton {{ {BTN_HIT} background:"
+            f"{T.BESIDE if chrome else T.CONTROL};"
             f" border:1px solid {T.LINE}; border-radius:{BTN_RADIUS}px;"
             f" color:{T.INK}; }}"
             f"QPushButton:hover {{ background:{rgba(T.ACCENT, 0.10)};"
@@ -1184,10 +1192,19 @@ def rgba(hex_colour, alpha):
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def field() -> str:
+def field(chrome=False) -> str:
     """Type into these. A function, not a constant: a constant would be built
-    once at import, in whichever palette happened to be loaded first."""
-    return (f"background:{T.CONTROL}; border:1px solid {rgba(T.INK, 0.28)};"
+    once at import, in whichever palette happened to be loaded first.
+
+    `chrome` says the box is on the toolbar rather than on a card, and the two
+    are different grounds. `control` is defined as a step *under* the card, so
+    on chrome it has to clear `well` from the other side -- and that pinned
+    `well` under it, which is what kept light's bar the heaviest thing in the
+    window. `beside` is the Qt Button role and already the raised tone in both
+    themes, so a control on chrome takes that instead.
+    """
+    return (f"background:{T.BESIDE if chrome else T.CONTROL};"
+            f" border:1px solid {rgba(T.INK, 0.28)};"
             f" border-radius:5px; padding:4px 6px; color:{T.INK};")
 
 
@@ -2784,11 +2801,11 @@ class EquipChip(QPushButton):
         self._paint()
 
     def _paint(self):
-        # On, it is the accent; off, it is a control sitting a step under the
-        # bar it is on -- the same relationship every other control here has
-        # to the surface behind it.
+        # On, it is the accent; off, it is a raised control on chrome. The
+        # filter row is `well`, not a card, so this takes `beside` -- see
+        # `field`, where the same distinction is written down.
         self.setStyleSheet(
-            f"QPushButton {{ color:{T.MUTED}; background:{T.CONTROL};"
+            f"QPushButton {{ color:{T.MUTED}; background:{T.BESIDE};"
             f" border:1px solid {T.LINE}; border-radius:10px;"
             f" padding:3px 10px; }}"
             f"QPushButton:hover {{ border-color:{T.ACCENT}; }}"
@@ -5785,7 +5802,7 @@ class Bert(QMainWindow):
 
         self.client_box = Combo()
         self.client_box.setMinimumWidth(CLIENT_BOX_MIN_W)
-        self.client_box.setStyleSheet(btn_css())
+        self.client_box.setStyleSheet(btn_css(chrome=True))
         self.client_box.setCursor(Qt.PointingHandCursor)
         self.client_box.currentIndexChanged.connect(self._client_picked)
         self._client_sig = None
@@ -5973,7 +5990,7 @@ class Bert(QMainWindow):
         # The same frame as the client and title boxes. It had no styling at
         # all, so it fell back to Qt's own, which against a dark toolbar is
         # near enough invisible to look like there is no box there.
-        self.search.setStyleSheet(field())
+        self.search.setStyleSheet(field(chrome=True))
         # Qt's placeholder grey is faint for the same reason the work item
         # entry sets this: the ordinary muted text colour is legible.
         pal = self.search.palette()

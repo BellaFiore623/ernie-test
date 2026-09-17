@@ -1279,6 +1279,59 @@ def check_a_control_sits_under_the_card_it_is_on() -> bool:
     return c.report()
 
 
+def check_a_control_on_chrome_stands_off_the_bar() -> bool:
+    """A control has two grounds, and the palette only ever designed for one.
+
+    `control` is defined as a step *under* the card, which is right on a card.
+    The toolbar's own boxes were filled with it too -- the search field, the
+    client dropdown, the equipment chips -- and there the relationship is the
+    other way up: the bar is behind them, so they have to clear it.
+
+    That pinned `well`. It could never rise past `control` without the search
+    box inverting, so light's floor stayed 7.0 L* under its workspace while
+    dark's sits 3.1 under -- the bar reading as the heaviest thing in the
+    window while the cards, at 4.5 L* over the canvas against dark's 10.1, did
+    not read as the work. Nothing caught it because every check measured a
+    control against a *card*.
+
+    `beside` is the Qt Button role and already the raised tone in both themes,
+    so a control on chrome takes that and `well` is free.
+    """
+    c = Check("a control on chrome stands off the bar")
+
+    # Light is 1.15 and dark 1.28. The floor is under both: it catches the
+    # relationship inverting or going flat, not a value somebody preferred.
+    CHROME_MIN = 1.10
+    for name, palette in (("light", bert.LIGHT), ("dark", bert.DARK)):
+        got = contrast(palette["beside"], palette["well"])
+        c.ok(got >= CHROME_MIN,
+             f"{name}: a control on the bar stands off it "
+             f"({got:.2f} >= {CHROME_MIN})")
+        c.ok(lum(palette["beside"]) > lum(palette["well"]),
+             f"{name}: and stands *over* it, the way a raised control does")
+        # The other half of the sandwich is unchanged: on a card it is still
+        # `control`, and still under it.
+        c.ok(lum(palette["control"]) < lum(palette["neutral"][1]),
+             f"{name}: while a control on a card is still under the card")
+
+    # And the three that sit on chrome ask for it, rather than taking the
+    # card's tone because that is what the helper happened to default to.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    c.ok("field(chrome=True)" in src, "the search box says it is on chrome")
+    c.ok("btn_css(chrome=True)" in src, "and so does the client dropdown")
+    c.ok("T.BESIDE" in src, "and the equipment chips take the raised tone")
+
+    # The whole point of freeing `well`: light's floor is no longer further
+    # from its workspace than dark's is from its own.
+    for a, b in (("well", "canvas"),):
+        light = lum(bert.LIGHT[b]) - lum(bert.LIGHT[a])
+        c.ok(contrast(bert.LIGHT[a], bert.LIGHT[b]) <= 1.10,
+             f"light's floor is now a step under its workspace, not a band "
+             f"({contrast(bert.LIGHT[a], bert.LIGHT[b]):.3f} <= 1.10)")
+
+    return c.report()
+
+
 def check_the_light_ramp_has_five_levels() -> bool:
     """
     A grey workspace with bright work surfaces, not one bright field.
@@ -1845,6 +1898,7 @@ CHECKS = (check_nothing_freezes_a_colour,
           check_a_card_is_edged_in_its_own_tag,
           check_a_control_sits_under_the_card_it_is_on,
           check_the_light_ramp_has_five_levels,
+          check_a_control_on_chrome_stands_off_the_bar,
           check_a_filter_says_how_many_it_holds,
           check_a_status_gives_up_its_noun_not_its_state,
           check_the_board_is_centred_and_keeps_its_scrollbar,

@@ -976,6 +976,29 @@ relationship instead, which is 5-7x. `tests/check_palette.py` holds both: the
 light ramp must be four real steps in order, and dark's must be the three its
 range can carry.
 
+**A control has two grounds, and the palette only designed for one.** The
+toolbar's own boxes -- the search field, the client dropdown, the equipment
+chips -- were filled with `control`, which is defined as a step *under* the
+card. On chrome the relationship is the other way up: the bar is behind them,
+so they have to clear it. That quietly pinned `well`, which could never rise
+past `control` without the search box inverting.
+
+Measured in CIELAB L*, which is what the eye reads: light spent **7.0** of its
+floor-to-card range separating chrome from workspace and **4.5** lifting a
+card off it; dark spends **3.1 and 10.1**. The two were inverted, so light's
+bar read as the heaviest thing in the window while its cards -- the work --
+barely rose out of the background. Nothing caught it because every check
+measured a control against a *card*.
+
+`beside` is the Qt Button role and already the raised tone in both themes, at
+1.27x over `well` in each, so a control on chrome takes that instead and the
+floor is free. `well` is `#E5E5E5`, 3.2 L* under the canvas, which is dark's
+proportion; `feed` and `panel` come up with it to keep the four steps in
+order. The workspace and the cards did not move -- deepening the neutrals to
+widen a gap that was already right is how light came to look like slate the
+first time. `check_palette.py` holds the new relationship, and it goes red on
+the old `well`.
+
 **A control is drawn a step *under* the card it sits on, in both themes.**
 `control` is what a button, a field and a work-item bubble are filled with. It
 used to be `surface`, which was right while a card was a tint and the surface
