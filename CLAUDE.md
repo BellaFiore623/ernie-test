@@ -465,6 +465,20 @@ in `docs/bert-ui.md` now.
   call in the tree: a POST carrying `retry_5xx` fails the check, and so does
   a rename.
 - One editor at a time, and the second click offers to finish the first.
+
+**Slate is hue 195, and it is the one that found the gamut limit.** It sits in
+the 133-degree gap between OPS at 133 and Medium at 266, the widest empty
+stretch on the wheel, and its worst tag is 10.8. But blue and wine take chroma
+21 at L* 8 and round-trip with their lightness intact, while **teal at that
+chroma clips** -- and a clipped channel moves L*, 1.55 of it, which took the
+worst ratio drift from 0.05 to 0.433 and broke the very thing holding L* was
+there to protect. So each of its tokens carries the most chroma sRGB will hold
+at its own lightness, found by walking chroma *down* until the value
+round-trips. Down rather than by halving: 8-bit rounding makes the fit
+non-monotonic, and a binary search over it returned `chip_bg` at chroma 1.9
+between neighbours at 9 and 15 -- a grey chip in a teal room. **Check the L*
+drift on any new hue before trusting the ratios**, because a palette that
+clips is one where holding lightness has quietly stopped holding anything.
   `editor_is_busy()` used to say no and stop, leaving somebody to find the
   other card themselves. It now offers Save / Discard / Keep editing, with
   *keep editing* as the default because it is the one that loses nothing. An
@@ -1052,7 +1066,7 @@ No colour literals in Bert. Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 every palette. A hex typed into a stylesheet works in one theme and is wrong
 in the others, silently, in whichever nobody happened to be looking at.
-Settings offers light, dark, midnight, plum, or following the desktop; changing it
+Settings offers light, dark, midnight, plum, slate, or following the desktop; changing it
 rebuilds the window, because each widget styles itself where it is made and
 there is no single sheet to swap -- and a stylesheet missed on a restyle is a
 white panel in a dark board. `tests/check_palette.py` holds all three palettes

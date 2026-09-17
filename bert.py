@@ -462,24 +462,47 @@ PLUM = {
     "well": "#200816", "chip_bg": "#442035",
 }
 
+# Hue 195, in the 133-degree gap between OPS at 133 and Medium at 266 -- the
+# widest empty stretch on the wheel, which is why the sweep liked it.
+#
+# **Teal is the one of these that sRGB cannot hold at full chroma**, and that
+# is worth knowing before the next one. Blue and wine take chroma 21 at L* 8
+# and round-trip with their lightness intact; teal at the same chroma clips,
+# and a clipped channel moves L* -- 1.55 of it, which took the worst ratio
+# drift from 0.05 to 0.433 and quietly broke the thing holding L* was there to
+# protect. So each token here carries the most chroma sRGB will hold at its
+# own lightness, found by walking chroma down until the value round-trips.
+# Down rather than by halving: 8-bit rounding makes the fit non-monotonic, and
+# a binary search over it returned chip_bg at chroma 1.9 between neighbours at
+# 9 and 15 -- a grey chip in a teal room.
+SLATE = {
+    **DARK,
+    "ink": "#E0EBEA", "muted": "#8DA6A5", "line": "#184040",
+    "surface": "#012424", "canvas": "#031B1B", "panel": "#031B1B",
+    "feed": "#031B1B", "beside": "#002D2D", "control": "#012424",
+    "well": "#001414", "chip_bg": "#033232",
+}
+
 # **Every palette, by the name a setting holds, and the one place that knows
 # they exist.** `check_palette.py` walks this rather than keeping a list of
 # its own: a palette added there and missed at one of the ten sites that
 # check a floor is a theme held in nine places and not the tenth, which is
 # exactly the shape of failure these checks exist to catch.
-PALETTES = {"light": LIGHT, "dark": DARK, "midnight": MIDNIGHT, "plum": PLUM}
+PALETTES = {"light": LIGHT, "dark": DARK, "midnight": MIDNIGHT,
+            "plum": PLUM, "slate": SLATE}
 
 # Which of them have pale ink. `T.dark` is asked by anything choosing a glyph
 # or a shade for the ground it is on, and the question is about the ground
 # rather than about which palette happens to be loaded.
-DARK_GROUNDS = frozenset({"dark", "midnight", "plum"})
+DARK_GROUNDS = frozenset({"dark", "midnight", "plum", "slate"})
 
 # "system" is not a palette, it is a question -- so it is added here rather
 # than living in PALETTES and having to be excluded from every walk.
 THEMES = ("system",) + tuple(PALETTES)
 THEME_LABEL = {"system": "Follow the desktop", "light": "Light",
                "dark": "Dark", "midnight": "Midnight \u2014 dark blue",
-               "plum": "Plum \u2014 dark wine"}
+               "plum": "Plum \u2014 dark wine",
+               "slate": "Slate \u2014 dark teal"}
 # What a board with no setting yet opens as: dark, not the desktop.
 # Following the desktop would hand a fresh install whichever the machine
 # happened to be set to, which is a coin toss on the question that has taken
