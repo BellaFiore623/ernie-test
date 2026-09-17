@@ -496,8 +496,13 @@ def main() -> None:
                 allow_writes_for=os.environ.get("ALLOW_DISCORD_WRITES"))
     print(f"ernie_status {ernie_version.describe()}")
     counts = publish(d, con, a.db)
-    print(f"posted {counts['posted']}, edited {counts['edited']}, "
-          f"pinned {counts['pinned']}, failed {counts['failed']}")
+    note = (f"posted {counts['posted']}, edited {counts['edited']}, "
+            f"pinned {counts['pinned']}, failed {counts['failed']}")
+    # Same reason the outbox line carries it: a pass that did three of
+    # thirty-seven must not read as one that finished.
+    if counts.get("left"):
+        note += f", {counts['left']} still to go"
+    print(note)
 
 
 if __name__ == "__main__":
