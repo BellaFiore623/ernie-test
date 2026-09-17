@@ -575,19 +575,15 @@ def card_skin(data, editing=False):
     """Fill and outline for one ticket, wherever it is drawn.
 
     A ticket wears its **tag** -- PROD, OPS, ENG, CS -- not its priority. The
-    tag is what the ticket is; the priority is where it currently sits, which
-    the band it is in already says, and saying it twice spent the board's
-    whole colour budget on the half nobody was reading.
+    tag is what the ticket is; the priority is where it sits, which the band
+    already says, and saying it twice spent the whole colour budget on the
+    half nobody was reading.
 
-    Needs attention is the exception, and outranks the tag: red, because it is
-    the one state that is asking for somebody rather than describing the work.
+    Needs attention outranks the tag: red, being the one state asking for
+    somebody rather than describing the work. An unreadable thread keeps its
+    fill and is outlined at 2px, so it reads as outlined rather than coloured.
 
-    An unreadable thread keeps whatever fill it has and is outlined at 2px, so
-    it reads as outlined rather than merely coloured.
-
-    The card and its row in the side rail have to agree about this, and used
-    to say it separately -- which is how they came to fill it red in two
-    places at once.
+    The card and its rail row have to agree, and used to say it separately.
     """
     stripe, tint, _ = T.QUEUE.get(data.get("queue") or "", T.NEUTRAL)
     edge = stripe
@@ -1669,19 +1665,13 @@ def elided_chip(text, bg, fg, room):
 def ticket_url(base, key):
     """Where a PIP key lives, or "" if it cannot be said.
 
-    Pure, and separate from the chip that shows it, for the reason
-    `build_standing` is: the decision is the part worth being sure about, and
-    a check can exercise it without a QApplication -- which these checks
-    deliberately never make, because a widget built without one does not
-    raise, it aborts the process.
+    Pure, and separate from the chip, for the reason `build_standing` is: a
+    check can exercise it without a QApplication, which these checks never
+    make -- a widget built without one aborts the process rather than raising.
 
-    **No Jira call is involved anywhere.** This is string arithmetic; the
-    desktop opens the result against the reader's own session. Confirmed
-    against production's own confirmation messages, which carry exactly this
-    URL beside the key they announce.
-
-    Empty for a missing half, so the chip cannot exist pointing nowhere --
-    the rule "Get the new build" follows about `BERT_UPDATE_URL`.
+    **No Jira call anywhere.** String arithmetic; the desktop opens the result
+    against the reader's own session. Empty for a missing half, so the chip
+    cannot exist pointing nowhere.
     """
     if not base or not key:
         return ""
@@ -1979,28 +1969,21 @@ def client_stands_for(typed, short) -> bool:
 def client_resolve(typed, roster, opened_with="") -> str:
     """The name to save instead of what was typed, or "" to keep it as typed.
 
-    Asked for after `bravon` saved as `bravon`: the box had been offering
-    *Bravo Environments* the whole time and the person did not notice the
-    slip, which is the ordinary way a typo survives -- somebody who knew they
-    had mistyped would have picked from the list.
+    For the ordinary way a typo survives: `bravon` saved as `bravon` while the
+    box had been offering *Bravo Environments* the whole time.
 
     **Exactly one candidate, or nothing happens.** `dukes` returns Duke's
     Omaha and Duke's Root Control, and choosing between two customers is the
-    wrong-customer failure this whole feature exists to prevent. Two is not a
-    near miss to be resolved; it is a question for a person.
+    wrong-customer failure this exists to prevent. Two is a question for a
+    person, not a near miss to resolve.
 
     **And only for a name somebody has just typed.** A card that arrived
-    carrying an unknown client -- a retired customer, or one from before the
-    roster existed -- is not a mistake anybody is making now, and rewriting
-    it because an editor was opened would change tickets nobody edited. The
-    same guard `client_note` uses, for the same reason, and what keeps
-    `is_dirty` honest: opening a card must not make it dirty.
+    carrying an unknown client is not a mistake anybody is making now, and
+    rewriting it because an editor was opened would change tickets nobody
+    edited -- which is also what keeps `is_dirty` honest.
 
-    A name the roster already knows is left alone, aliases included: `Dukes
-    Root Control` is a misspelling the board has used nine times and the
-    alias table points it at one customer, so it already resolves.
-
-    Pure, so the decision can be exercised without a QApplication.
+    A name the roster knows is left alone, aliases included. Pure, so the
+    decision can be exercised without a QApplication.
     """
     typed = (typed or "").strip()
     if not typed:
@@ -2594,19 +2577,17 @@ CLIENT_NONE = "__no_client__"    # cards whose title names nobody
 def client_key(name, roster) -> str:
     """The one label a client's many spellings should be counted under.
 
-    The board's open cards carry **35 distinct client names across 53
-    tickets**, and four of them are one customer: `bravon`, `bravo`, `Bravo`
-    and `Bravo Environmental`. Keyed on the string as typed, a filter would
-    offer four Bravos and never show all seven of their tickets together --
-    which is the whole mess the roster and the alias table exist to undo, so
-    it would be a poor place to start ignoring them.
+    The board's open cards carry 35 distinct client names across 53 tickets,
+    four of them one customer: `bravon`, `bravo`, `Bravo`, `Bravo
+    Environmental`. Keyed on the string as typed, a filter would offer four
+    Bravos and never show their seven tickets together.
 
-    An alias is an exact answer, not a resemblance: the table was written by
-    `reconcile_aliases`, which resolves through the ticket's Client CR key and
-    refuses to merge on similarity. Nothing here compares strings loosely.
+    An alias is an exact answer, not a resemblance: `reconcile_aliases`
+    resolves through the Client CR key and refuses to merge on similarity.
+    Nothing here compares strings loosely.
 
-    A name that resolves to nobody is its own key, because a customer exists
-    before Jira hears about them and their tickets still have to be findable.
+    A name resolving to nobody is its own key -- a customer exists before Jira
+    hears about them, and their tickets still have to be findable.
     """
     name = (name or "").strip()
     if not name:
@@ -2651,20 +2632,18 @@ def client_counts(cards, roster):
 def client_typos(cards, roster):
     """The spellings on the board that are provably wrong, and how many.
 
-    Grouping by the resolved customer is what makes `bravon` and `Bravo
-    Environmental` one answer -- and it also makes the mistake **disappear**,
-    which is the half worth keeping visible. A filter list that hides the
-    thing you would want to repair is a filter list that quietly protects it.
+    Grouping by resolved customer makes `bravon` and `Bravo Environmental`
+    one answer -- and makes the mistake disappear, which is the half worth
+    keeping visible. A filter list that hides what you would want to repair
+    quietly protects it.
 
-    **Provably wrong, not merely unfamiliar.** A spelling counts here only if
-    the roster knows who it means, through the alias table, *and* it is not a
-    shortening somebody types on purpose -- `client_stands_for` is the same
-    line `client_resolve` draws, so `Bravo` stands for Bravo Environmental
-    and never goes red while `bravon` stands for nothing and does.
+    **Provably wrong, not merely unfamiliar.** A spelling counts only if the
+    roster knows who it means *and* it is not a deliberate shortening --
+    `client_stands_for` draws the same line `client_resolve` does, so `Bravo`
+    never goes red and `bravon` does.
 
-    A name Jira has never heard of is left alone: it may be a customer who
-    exists before Jira hears about them, and marking that as an error would
-    be the board being wrong about the world rather than the other way round.
+    A name Jira has never heard of is left alone: a customer can exist before
+    Jira hears about them.
     """
     out = {}
     for c in cards or []:
@@ -3072,24 +3051,15 @@ class Card(QFrame):
         self.done_btn.setIconSize(QSize(12, 12))
         self.done_btn.clicked.connect(lambda: self.board.complete(self.thread_id))
 
-        # Not while there is work left on it. A card is a list of what is
-        # still to do, so closing one with bubbles on it says the ticket is
-        # finished while the card says it is not.
+        # Not while there is work left on it: a card is a list of what is
+        # still to do. The bubbles are drawn directly above this button, so
+        # the disabled control sits beside its reason, and the tooltip says
+        # what to do. The server refuses it too, since this half goes stale --
+        # the other machine can add an item inside the 5s poll.
         #
-        # The bubbles are drawn directly above this button, so the disabled
-        # control sits beside the reason for it; the tooltip carries what to
-        # do about it, both of which are one click in the editor.
-        #
-        # The server refuses it as well, because this half can go stale: the
-        # board is up to five seconds behind, and the other machine can add
-        # an item inside that window.
-        #
-        # **Only the count is set here; `set_writable` is what disables the
-        # button.** Calling setEnabled(False) at this point looked right and
-        # did nothing: `set_writable` runs at the end of this function and
-        # again on every change of connection state, and it was handing the
-        # button straight back. Reported as the button not being greyed out
-        # while the warning behind it worked perfectly.
+        # **Only the count is set here; `set_writable` disables the button.**
+        # setEnabled(False) at this point does nothing: `set_writable` runs at
+        # the end of this function and hands it straight back.
         self._work_left = len(items)
         if items:
             n = self._work_left
@@ -3956,23 +3926,16 @@ class Card(QFrame):
     def _age_days(ts):
         """Whole days since `ts`, or None where there is no usable one.
 
-        None and 0 are different answers and both draw nothing, which is why
-        they are told apart here rather than at the label: no timestamp means
-        no person has ever posted in the thread, and 0 means somebody posted
-        today. The second is the common case on a live board; the first is
-        what the sandbox is full of, because the seeder writes every message
-        as the bot.
+        None and 0 are different answers though both draw nothing: no
+        timestamp means nobody has ever posted in the thread, 0 means somebody
+        posted today. The sandbox is full of the first, because the seeder
+        writes every message as the bot.
 
-        A timestamp with no timezone is read as UTC rather than refused.
-        Everything that writes one here is already UTC -- Discord's own, and
-        SQLite's `datetime('now')`, which is UTC and carries no offset -- so
-        attaching one is reading the value rather than guessing at it.
-        **Without that it was not a wrong number, it was a dead card**:
-        subtracting a naive datetime from an aware one raises TypeError,
-        which is not ValueError, so it escaped `_build_view` and the whole
-        card failed to draw. The same mismatch is already written down as a
-        SQL trap in CLAUDE.md -- Python writes a `T`, SQLite writes a space --
-        and this is that trap one language up.
+        A naive timestamp is read as UTC rather than refused -- everything
+        writing one here already is. **Without that it was not a wrong
+        number, it was a dead card**: naive minus aware raises TypeError, not
+        ValueError, so it escaped `_build_view` and the card failed to draw.
+        The same mismatch CLAUDE.md records as a SQL trap, one language up.
         """
         # A string or it is nothing: the column is TEXT, so this is the shape
         # it always arrives in, and asking rather than catching keeps a real
@@ -4474,12 +4437,11 @@ class RailRow(QFrame):
 class RailBandHead(QWidget):
     """A band's name in the running order, with a rule running off it.
 
-    This used to be a bare coloured bar, which said a band started here and
-    never said which -- you counted down from the top to work it out. The word
-    says it outright, and says it in the neutral ink: a card already wears its
-    tag, the board already tints its band headers, and spending a third colour
-    on the same fact is what the tag rule exists to stop. The rule is what
-    carries the eye across; it is a hairline, not a bar.
+    A bare coloured bar said a band started here but never which -- you
+    counted down from the top. The word says it outright, in the neutral ink:
+    spending a third colour on a fact the card's tag and the board's header
+    already carry is what the tag rule exists to stop. The rule carries the
+    eye across, and is a hairline rather than a bar.
 
     Clicking it collapses the band. A long board puts High and Low a screen
     apart, and folding what is between them is the difference between a drag
@@ -4954,13 +4916,12 @@ class Rail(QWidget):
 class Stats(QWidget):
     """The board over time, in the space to the right of it.
 
-    The board says what is on the plate now. None of it says whether that is
-    getting better or worse, how long a ticket takes, or which ones have been
-    open since April. Each figure earns its place by answering something the
-    board cannot: a page of statistics nobody acts on is furniture, and the
-    first one that turns out to be wrong takes the credibility of the others
-    with it. There were four; "no ticket raised" was dropped after Julian
-    read it, which is the same standard the other three are kept to.
+    The board says what is on the plate now, not whether that is getting
+    better or worse, how long a ticket takes, or what has been open since
+    April. Each figure earns its place by answering something the board
+    cannot: the first one that turns out to be wrong takes the credibility of
+    the others with it. There were four -- "no ticket raised" was dropped
+    after Julian read it.
 
     Sized like the running order and for the same reasons -- a range rather
     than a fixed width, so the splitter handle has something to move; folded
@@ -4978,14 +4939,10 @@ class Stats(QWidget):
         self.setMinimumWidth(STATS_MIN_W)
         self.setMaximumWidth(STATS_MAX_W)
         self.resize(STATS_WIDTH, self.height())
-        # Scoped, like Rail's. Unscoped it cascades into every child and into
-        # the tooltips those children own.
-        # A plain QWidget subclass ignores a stylesheet background
-        # unless it says so: Qt only paints one for widgets that opt
-        # in. Without this the rule below did nothing at all -- proved
-        # by setting it to magenta and seeing the window through it --
-        # and it went unnoticed for as long as this and the window
-        # behind it were the same colour.
+        # Scoped, like Rail's: unscoped it cascades into every child and
+        # their tooltips. And a plain QWidget subclass ignores a stylesheet
+        # background unless it opts in -- without this the rule below did
+        # nothing, unnoticed while this and the window behind it matched.
         self.setAttribute(Qt.WA_StyledBackground, True)
         # The canvas, the same as the running order. It was put on the floor
         # on the reasoning that the rail and the board are worked in and the
@@ -5196,22 +5153,18 @@ class Stats(QWidget):
     def _moves(self, data):
         """Where tickets went when somebody retagged them.
 
-        `PROD -> OPS  21`. The pair is the fact -- how much production work
-        turns out to be operations -- so both ends are named on every row
-        rather than grouping by one of them; PROD appearing in six rows for
-        six reasons is what grouping by the origin would give.
+        `PROD -> OPS  21`. The pair is the fact, so both ends are named on
+        every row -- grouping by the origin would put PROD in six rows for six
+        reasons.
 
-        **Which pairs are counted is Ernie's decision, not this one.**
-        `TAG_MOVES_COUNTED` is the list and the query applies it, so the rows
-        drawn here are the whole of what was counted and cannot fail to make
-        their own total. Filtering at this end instead would have produced a
-        block quietly showing a fraction of its own figure.
+        **Which pairs count is Ernie's decision, not this one.** The query
+        applies `TAG_MOVES_COUNTED`, so these rows are the whole of what was
+        counted and cannot fail to make their own total; filtering at this end
+        would show a fraction of its own figure.
 
-        The bar is the destination's colour, because the arrow already says
-        which way it went and the tag it *became* is what a reader is
-        counting. It is measured against the biggest pair, like the completed
-        bars: the question is which move is common, not what share of all
-        moves any one of them is.
+        The bar is the destination's colour -- the arrow already says which
+        way -- and is measured against the biggest pair, like the completed
+        bars: which move is common, not what share of all moves it is.
         """
         moves = (data or {}).get("moves") or []
         box = QVBoxLayout()
@@ -5724,10 +5677,9 @@ class Bert(QMainWindow):
     def _filter_row(self):
         """Client, then equipment, then the way back out of both.
 
-        **Client first**, because it is the broader question: *whose* tickets
-        before *which kind*. Read the other way round the row asks you to
-        pick a piece of equipment before you have said who you are looking
-        at, which is not the order anybody arrives with.
+        **Client first**, the broader question: *whose* tickets before
+        *which kind*. The other way round asks you to pick equipment before
+        saying who you are looking at.
 
         Chips for equipment, a dropdown for the client: four kinds fit across
         a row and 35 client names do not. Chips rather than checkboxes, and
@@ -5746,15 +5698,9 @@ class Bert(QMainWindow):
         lay.setSpacing(6)
 
 
-        # **A dropdown, where equipment gets chips.** Four kinds of equipment
-        # fit across a row; the open board carries **35 distinct client names
-        # over 53 tickets**, which is a list you scan rather than a set of
-        # buttons you read.
-        #
-        # Beside the chips rather than out at the far edge: the two narrow
-        # the same board in the same way, and a control that does the same
-        # job belongs where the eye already is. It was across the row first,
-        # which put a gap between two halves of one idea.
+        # **A dropdown, where equipment gets chips.** Four kinds fit across a
+        # row; 35 client names are a list you scan. Beside the chips rather
+        # than at the far edge -- the two narrow the same board the same way.
         caption = QLabel("Client")
         caption.setStyleSheet(f"color:{T.MUTED}; font-size:11px;"
                               f" background:transparent;")
@@ -6533,25 +6479,19 @@ class Bert(QMainWindow):
     def open_settings(self, pending=None):
         """Settings, with the theme previewing as it is picked.
 
-        A theme is the one setting nobody can judge from its name, and the
-        dialog used to ask for it and then show the answer only after OK --
-        so choosing it was a guess, and changing your mind meant opening the
-        window again. Picking one now restyles the board underneath and puts
-        the dialog straight back, which reads as the control simply working.
+        A theme is the one setting nobody can judge from its name, so picking
+        one restyles the board underneath and puts the dialog straight back.
 
-        It has to go through the whole rebuild, because that is the only
+        It goes through the whole window rebuild because that is the only
         restyle there is: every stylesheet is written where its widget is
         made, so there is no sheet to swap and no way to be sure a live
-        restyle missed none of the seventy-six. The dialog is therefore
-        closed and opened again rather than kept -- the window it was parented
-        to is the one being replaced.
+        restyle missed none of the seventy-six. The dialog is closed and
+        reopened because the window it was parented to is being replaced.
 
-        **Nothing is stored until OK.** A preview only calls `apply_theme`;
-        the fresh window loads what is actually on disk, so Cancel has
-        something true to go back to and a board previewed into a theme
-        nobody chose puts itself right. `pending` carries whatever had been
-        typed into the dialog across the rebuild, so a name half entered is
-        not lost to looking at a colour.
+        **Nothing is stored until OK.** A preview only calls `apply_theme`
+        and the fresh window loads what is on disk, so Cancel has something
+        true to go back to. `pending` carries what had been typed across the
+        rebuild, so a half-entered name is not lost to looking at a colour.
         """
         seed = {**self.settings, **(pending or {})}
         dlg = SettingsDialog(self, seed, self.health)
@@ -6871,19 +6811,13 @@ class Bert(QMainWindow):
     def _tick_wal(self):
         """Say when the write-ahead log has stopped checkpointing.
 
-        A healthy WAL fills and empties every few seconds. One that keeps
-        growing means a reader is holding a snapshot so it cannot be
-        checkpointed -- and the symptom nobody sees is that writers then
-        start timing out: a Complete that never reaches its thread, a change
-        log posting the same line over and over. It has happened twice,
-        at 6.59 MB against a 4.58 MB database and at 33 MB against 4.68 MB,
-        and both times the first sign was somebody noticing Ernie had gone
-        quiet.
+        A reader holding a snapshot stops the WAL being checkpointed, and the
+        symptom nobody sees is writers timing out: a Complete that never
+        reaches its thread, a change log posting the same line repeatedly.
 
-        Bigger than the database it belongs to is the line, because a WAL
-        that checkpoints never gets near it. Amber there, and red past twice
-        the size, which is the difference between something to watch and
-        something to act on -- and acting on it is restarting the stack.
+        Bigger than its own database is the line, because a WAL that
+        checkpoints never gets near it. Amber there, red past twice the size
+        -- the difference between watching it and restarting the stack.
         """
         w = (self.health or {}).get("wal") or {}
         standing = wal_standing(w)
@@ -7857,23 +7791,19 @@ class Bert(QMainWindow):
     def _hold_scroll(self):
         """Put both lists back where they were looking after a rebuild.
 
-        render() tears every card down and builds it again whenever the data
-        changes, so the scrollbar loses its place. Ticking one work bubble off
-        a card halfway down a fifty-ticket board threw the view somewhere else
-        entirely -- the same thing the activity feed did after an undo, and
-        fixed the same way.
+        render() tears every card down and rebuilds it, so the scrollbar loses
+        its place -- ticking one bubble off a card halfway down a fifty-ticket
+        board threw the view somewhere else entirely.
 
-        The pixel alone is not enough, which is what it used to keep. All the
-        height above the view belongs to other cards, and any of it can change
-        between rebuilds: sixteen cards above gaining a line each moved the
-        view a card and a half while the scrollbar read exactly the same
-        number. So the card at the top of the view is noted and put back at
-        the same height, and the pixel is only the fallback for when that card
-        has gone -- completed, or filtered out by a search.
+        **The pixel alone is not enough.** All the height above the view
+        belongs to other cards and any of it can change between rebuilds:
+        sixteen cards above gaining a line each moved the view a card and a
+        half while the scrollbar read the same number. So the card at the top
+        of the view is noted and put back at the same height, and the pixel is
+        the fallback for when that card has gone.
 
-        Bands have no scroll area of their own; the two lists that scroll are
-        the board column and the rail, which is the pair _edge_scroll walks
-        for the same reason.
+        Bands have no scroll area of their own; the two that scroll are the
+        board column and the rail, the pair `_edge_scroll` walks.
         """
         if self.dragging:
             # _edge_scroll owns the scrollbars while a card is in the air, and

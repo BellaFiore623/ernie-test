@@ -296,19 +296,15 @@ REQUIRED_COLUMNS = {
 def check_schema() -> None:
     """Refuse to start on a database this build cannot read, and say the fix.
 
-    **A missing table and a missing column are different problems with
-    different remedies, and saying which is the whole point of this.** A
-    column is what `migrations/` is for. A *table* is not: schema.sql is all
-    CREATE TABLE IF NOT EXISTS and `ernie_load.connect()` applies it on every
-    open, so the table appears the moment anything opens the database that
-    way -- and the migration for that table's column, run against a database
-    with no table, correctly does nothing.
+    **A missing table and a missing column need different remedies, and
+    saying which is the whole point.** A column is what `migrations/` is for.
+    A *table* is not: schema.sql is all CREATE TABLE IF NOT EXISTS and
+    `ernie_load.connect()` applies it on every open, so the table appears the
+    moment anything opens the database -- and that table's column migration,
+    run against a database with no table, correctly does nothing.
 
-    Told to run a migrate_*.py, somebody in that position runs it, is told
-    "no such table -- schema.sql creates it on the next open", starts the API
-    again and gets the same refusal. Found against a copy of production's own
-    mirror, which predates `release_seen` and `client_collisions` and is
-    exactly the database the first real run there will meet.
+    Naming a migration there sends somebody in a circle: run it, be told "no
+    such table", start the API, get the same refusal.
     """
     con = db()
     try:
@@ -495,19 +491,17 @@ def open_items(con, thread_id: str) -> list[dict]:
 def guard_work_done(items, doing: str = "close"):
     """Refuse to close a ticket that still has work on it.
 
-    A card is a list of what is left to do, so closing one with bubbles still
-    on it says the ticket is finished while the board says it is not. There
-    is always a way through and both are one click in the editor: tick a
-    bubble off, or take it off the card with the X.
+    A card is a list of what is left, so closing one with bubbles on it says
+    the ticket is finished while the board says it is not. Both ways through
+    are one click in the editor: tick it off, or take it off with the X.
 
-    Bert disables its own button in this state, and this is the half that
-    does not depend on a board being up to date -- the other machine can add
-    an item between a poll and a click.
+    Bert disables its own button too; this is the half that does not depend on
+    a board being up to date, since the other machine can add an item between
+    a poll and a click.
 
-    It cannot hold on the Discord side and is not meant to. Archiving a
-    thread closes its card whatever the work items say, because Discord is
-    the source of truth; 21 of production's closures arrived that way. This
-    is "Bert will not let you", not "it cannot happen".
+    It cannot hold on the Discord side and is not meant to -- archiving closes
+    a card whatever the work items say, and 21 of production's closures
+    arrived that way. "Bert will not let you", not "it cannot happen".
     """
     if items:
         n = len(items)
@@ -1236,18 +1230,14 @@ def client_roster():
     """
     The customer list from Jira, for the editor to offer.
 
-    Different question from /clients above, which answers "what is on my
-    board" for the filter. This one answers "who are our customers", which is
-    the list you pick a name out of when you are naming a thread.
+    Not /clients above, which answers "what is on my board" for the filter.
+    This answers "who are our customers" -- the list you pick a name from.
 
-    Offered clients only -- a summary marked *INACTIVE*, *PENDING* or *PAUSED*
-    stays in the table and keeps naming the cards that already carry it, but
-    is not put forward for new ones.
+    Offered clients only: *INACTIVE*, *PENDING* or *PAUSED* stays in the table
+    and keeps naming cards that carry it, but is not put forward for new ones.
 
-    `name` rides along with every row because `short_name` is not always
-    unique: 'IPI : El Paso' and 'IPI : *REP*' are two live customers that both
-    shorten to IPI, and the summary is the only thing that tells them apart.
-    Rows that need it are flagged, so the editor does not have to work it out.
+    `name` rides along because `short_name` is not unique -- 'IPI : El Paso'
+    and 'IPI : *REP*' both shorten to IPI. Rows that need it are flagged.
     """
     con = db()
     try:
@@ -1646,23 +1636,15 @@ def undo(event_id: str, body: ActorBody):
             conflict("not_undoable",
                      "That thread was opened in Discord. Undo can't unmake it.")
         if e["verb"] == "completed" and e["new_value"] == CLOSED_IN_DISCORD:
-            # Undo would clear completed_at and the very next sync would see
-            # the thread still archived and close the card again -- a card
-            # that comes back on the board for five seconds and leaves, for
-            # ever. Reopen is the verb that actually settles it: it posts to
-            # the thread, and posting to an archived thread unarchives it, so
-            # Discord and the board agree afterwards.
-            # Says where the action is, because it is not here. Bert never
-            # asks for completed cards -- `include_completed` is not in it --
-            # so a closed ticket is off the board and the one Reopen it has,
-            # in the edit-conflict dialog, cannot be reached for one. The
-            # advice used to be "reopen it instead", naming something nobody
-            # could do from the window they were reading it in.
+            # Undo would clear completed_at and the next sync would see the
+            # thread still archived and close the card again -- back on the
+            # board for five seconds and gone, for ever.
             #
-            # Unarchiving is the real route, and it only became one today:
-            # until the reopen guard learned to ignore Ernie's own messages,
-            # unarchiving a thread Ernie had announced a closure in did
-            # nothing at all.
+            # The message names unarchiving because that is the only route the
+            # reader has: Bert never asks for completed cards, so a closed
+            # ticket is off the board and its one Reopen button cannot be
+            # reached. "Reopen it instead" named something nobody could do
+            # from the window they were reading it in.
             conflict("not_undoable",
                      "That ticket was closed in Discord, so undo can't reach "
                      "it. Unarchive the thread in Discord and the card comes "
