@@ -86,6 +86,7 @@ def now() -> str:
 ADDED_COLUMNS = (
     ("release_seen", "minimum", "TEXT NOT NULL DEFAULT ''"),
     ("threads", "seen_open_at", "TEXT"),
+    ("changelog_sent", "swallowed", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -99,7 +100,42 @@ def add_missing_columns(con) -> list[str]:
         if have and col not in have:
             con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
             done.append(f"{table}.{col}")
+            if (table, col) == ("changelog_sent", "swallowed"):
+                _mark_swallowed_history(con)
+    con.commit()
     return done
+
+
+def _mark_swallowed_history(con) -> None:
+    """Say which of the old NULL-message_id rows were swallowed on purpose.
+
+    Runs once, the pass that adds the column, because before it existed the
+    two meanings were not written down anywhere -- and they have to be told
+    apart from what *is* recorded rather than guessed at.
+
+    `changelog_state.started_at` is the line, and it is exact rather than
+    approximate. `catch_up()` runs before `mark_initialised()`, always and
+    only at switch-on, so every row it wrote is stamped earlier; and nothing
+    can `claim()` before the log is initialised, because initialising is what
+    lets a drain happen at all. So a NULL row at or before that instant is
+    catch_up's, and one after it is a real claim. Measured on production:
+    26 rows inside 0.2ms, and started_at a fraction of a millisecond later.
+
+    No `changelog_state` row means the log has never been switched on here,
+    so there is no history to have swallowed and nothing to mark.
+
+    `datetime()` on both sides, which is the house rule and costs nothing
+    here: it truncates to the second, and the second either side of
+    initialisation cannot hold a real claim. The first drain after switch-on
+    has an empty `pending()` -- catch_up has just marked every existing event
+    as logged -- and anything arriving after it has to outlast its undo window
+    before `settled()` will hand it over. Minutes, not microseconds.
+    """
+    con.execute(
+        """UPDATE changelog_sent SET swallowed = 1
+           WHERE message_id IS NULL
+             AND datetime(sent_at) <= datetime(
+                   (SELECT started_at FROM changelog_state WHERE id = 1))""")
 
 
 def connect(path: str, timeout: float = 15.0) -> sqlite3.Connection:

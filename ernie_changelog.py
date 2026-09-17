@@ -148,10 +148,18 @@ def pending(con, limit: int = BATCH) -> list:
     return [r for r in rows if settled(r)][:limit]
 
 
-def mark(con, event_id: str, message_id: str | None) -> None:
+def mark(con, event_id: str, message_id: str | None,
+         swallowed: bool = False) -> None:
+    """Record that this channel is done with an event.
+
+    `swallowed` says a NULL message_id is the log working rather than the log
+    failing -- see `unresolved()`, which is the whole reason the two have to
+    be written down differently.
+    """
     con.execute(
-        "INSERT OR REPLACE INTO changelog_sent (event_id, message_id, sent_at)"
-        " VALUES (?,?,?)", (event_id, message_id, now_iso()))
+        "INSERT OR REPLACE INTO changelog_sent"
+        " (event_id, message_id, sent_at, swallowed) VALUES (?,?,?,?)",
+        (event_id, message_id, now_iso(), 1 if swallowed else 0))
 
 
 def claim(con, event_id: str) -> None:
@@ -188,8 +196,12 @@ def release(con, event_id: str) -> bool:
     rather than swallowed.
     """
     try:
+        # `swallowed = 0` as well as the NULL, so this can only ever undo a
+        # claim. Handing a swallowed row back would put a line from before
+        # the log was switched on into `pending()` -- which is the one thing
+        # catch_up exists to prevent.
         con.execute("DELETE FROM changelog_sent WHERE event_id=? "
-                    "AND message_id IS NULL", (event_id,))
+                    "AND message_id IS NULL AND swallowed = 0", (event_id,))
         con.commit()
         return True
     except Exception as err:
@@ -206,10 +218,20 @@ def unresolved(con, limit: int = BATCH) -> list:
     failed after a successful post. The two are not tellable apart from here,
     which is exactly why they are reported for a person to look at instead of
     being retried -- retrying is how the duplicates happened.
+
+    A swallowed row is none of that and must not appear here. `catch_up()`
+    writes the same NULL message id for everything already in the database
+    when the log is switched on, and the flag is the only thing separating
+    "never posted, on purpose, and never will be" from "may or may not have
+    reached the channel". Without it this reported production's entire
+    pre-log history -- 26 rows -- on every pass from 2026-09-15 onwards,
+    which is worse than saying nothing: a genuinely lost line would have sat
+    in the middle of it unnoticed.
     """
     return con.execute(
         "SELECT event_id, sent_at FROM changelog_sent "
-        "WHERE message_id IS NULL ORDER BY sent_at LIMIT ?",
+        "WHERE message_id IS NULL AND swallowed = 0 "
+        "ORDER BY sent_at LIMIT ?",
         (limit,)).fetchall()
 
 
@@ -249,7 +271,11 @@ def catch_up(con, note: str = "") -> int:
         """SELECT event_id FROM events
            WHERE event_id NOT IN (SELECT event_id FROM changelog_sent)""").fetchall()
     for r in rows:
-        mark(con, r["event_id"], None)
+        # swallowed, not claimed. Both are a row with no message id, and
+        # without the flag `unresolved()` reads every one of these as a line
+        # that may or may not have reached the channel -- reporting the whole
+        # of the history this deliberately skipped, on every pass, for ever.
+        mark(con, r["event_id"], None, swallowed=True)
     con.commit()
     if rows and note:
         print(f"{note}: {len(rows)} existing events marked as already logged")

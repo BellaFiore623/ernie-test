@@ -484,7 +484,16 @@ CREATE TABLE IF NOT EXISTS changelog_state (
 CREATE TABLE IF NOT EXISTS changelog_sent (
     event_id   TEXT PRIMARY KEY REFERENCES events(event_id),
     message_id TEXT,
-    sent_at    TEXT NOT NULL
+    sent_at    TEXT NOT NULL,
+    -- Why this row has no message_id, because two very different facts wear
+    -- that shape. `claim()` writes NULL meaning "about to post, and if we
+    -- never come back nobody knows whether it landed" -- which is an alarm.
+    -- `catch_up()` writes NULL meaning "deliberately swallowed at switch-on,
+    -- never posted and never will be" -- which is the log working. Without
+    -- this column `unresolved()` reported the second as the first, for ever:
+    -- 26 rows on production, every pass, burying the real thing it exists to
+    -- surface.
+    swallowed  INTEGER NOT NULL DEFAULT 0
 );
 
 
