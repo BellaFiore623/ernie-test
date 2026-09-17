@@ -23,7 +23,7 @@ stacks.** That is the rest of this page.
 
 That is a different question from the one above, and you answer it first.
 
-**The installed build is the normal way.** `Ernie-<version>-setup.exe` in the
+**The installed build is the normal way.** `Bert-<version>-setup.exe` in the
 shared Drive folder is one download and one double-click: no Python, no
 clone, no command line. It runs the sync, the outbox, the API and Bert as one
 program. Take this unless you are changing the code.

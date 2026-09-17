@@ -353,10 +353,17 @@ from source -- four processes, four logs, restart one without the others.
 
 ### Handing it to somebody
 
-`python build.py --installer` produces `dist/Ernie-<version>-setup.exe` --
+`python build.py --installer` produces `dist/Bert-<version>-setup.exe` --
 96 MB of program compressed to about 31, which is what goes in the shared
 Drive folder. The folder is also what `BERT_UPDATE_URL` points a browser at,
 so *Get the new build* lands somebody on the thing they need to run.
+
+**One installer in the folder, and the rest a level down.** The folder is
+what a browser is pointed at, so every build sitting in it side by side is a
+list to choose from -- and the largest number is only obviously the newest to
+somebody who already knows how these are numbered. The current build is the
+only `.exe` in the folder; the ones before it move into `old-installers/`
+beside it, which keeps them without asking anybody to read past them.
 
 **Two branches.** Work happens on `development`; `main` is what has been
 built and handed out. The split protects nothing on its own -- production and
@@ -372,7 +379,7 @@ python build.py --version 0.9.1                # bumps VERSION; no build needed 
 git commit -am "0.9.1"                         # the tag has to point at the bump
 git tag v0.9.1
 python build.py --installer                    # ~80s, from a clean tree
-# upload dist/Ernie-0.9.1-setup.exe to the Drive folder
+# upload dist/Bert-0.9.1-setup.exe to the Drive folder
 # edit the pinned note in #ernie-state:  **Release** 0.9.1
 ```
 
