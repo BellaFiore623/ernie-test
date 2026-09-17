@@ -671,27 +671,16 @@ def check_adoption_is_careful_about_what_it_adopts() -> bool:
 def check_a_pin_does_not_wedge_the_connection() -> bool:
     """The lock that stalled production for ten minutes on 2026-09-17.
 
-    `pin_pending` iterated `con.execute(...)` directly, which is a lazy
-    cursor: it holds a read transaction open on this connection for the whole
-    loop, and the loop does an HTTP PUT per row. The sync commits on its own
-    connection while that PUT is in flight, so the UPDATE afterwards asks
-    SQLite to upgrade a snapshot that is now stale. It refuses -- immediately,
-    and `busy_timeout` cannot help, because waiting is not what resolves it.
+    `pin_pending` iterated `con.execute(...)` directly -- a lazy cursor,
+    holding a read transaction open across the HTTP PUT in the loop. The sync
+    commits underneath, so the UPDATE is a stale-snapshot upgrade, which
+    SQLite refuses outright. The refusal leaves that transaction open, so
+    every later write on the outbox's one connection fails too, and the
+    snapshot pins the WAL: 48 MB against a 16 MB database.
 
-    The failed write is the small half. The refused upgrade leaves the
-    transaction open, so every later write on that connection fails the same
-    way, and the outbox is one thread and one connection: the status message,
-    the drain, the state channel and the change log, all of it, until the
-    process restarts. That stale snapshot is also what pins the WAL, which is
-    how 16 MB of database came to carry 48 MB of write-ahead log.
-
-    Latent for the life of the project. This query only returns rows when
-    something is waiting to be pinned, and production had three status
-    messages, all pinned months earlier. The backfill made three unpinned
-    rows a pass -- the first traffic that could ever reach it.
-
-    No threads and no sleeping: a Discord whose write() commits on a second
-    connection is exactly the race, made to happen every time.
+    Latent for the life of the project -- this query only returns rows when
+    something is waiting to be pinned. A Discord whose write() commits on a
+    second connection is the race, made to happen every time.
     """
     c = Check("a pin cannot wedge the outbox's connection")
 

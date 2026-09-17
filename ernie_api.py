@@ -284,8 +284,7 @@ REQUIRED_COLUMNS = {
     "messages": ["author_display", "type"],
     "new_threads": ["rank", "sent_steps"],
     # Also not read here. Without it the change log cannot tell a line it
-    # deliberately skipped from one that may or may not have been posted, so
-    # it reports the whole of the pre-log history as unresolved for ever.
+    # skipped from one that may or may not have posted.
     "changelog_sent": ["swallowed"],
     # Purely a cache -- rewritten from Discord every minute -- but a missing
     # column here is a board that cannot be told a build is mandatory, and

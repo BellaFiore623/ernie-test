@@ -109,27 +109,17 @@ def add_missing_columns(con) -> list[str]:
 def _mark_swallowed_history(con) -> None:
     """Say which of the old NULL-message_id rows were swallowed on purpose.
 
-    Runs once, the pass that adds the column, because before it existed the
-    two meanings were not written down anywhere -- and they have to be told
-    apart from what *is* recorded rather than guessed at.
+    Runs once, on the pass that adds the column: before it existed the two
+    meanings were not recorded, so they have to be told apart from what is.
 
-    `changelog_state.started_at` is the line, and it is exact rather than
-    approximate. `catch_up()` runs before `mark_initialised()`, always and
-    only at switch-on, so every row it wrote is stamped earlier; and nothing
-    can `claim()` before the log is initialised, because initialising is what
-    lets a drain happen at all. So a NULL row at or before that instant is
-    catch_up's, and one after it is a real claim. Measured on production:
-    26 rows inside 0.2ms, and started_at a fraction of a millisecond later.
+    `changelog_state.started_at` is the line, and it is exact. `catch_up()`
+    runs before `mark_initialised()` and only at switch-on, so its rows are
+    stamped earlier; nothing can `claim()` before the log is initialised. No
+    `changelog_state` row means nothing was ever swallowed here.
 
-    No `changelog_state` row means the log has never been switched on here,
-    so there is no history to have swallowed and nothing to mark.
-
-    `datetime()` on both sides, which is the house rule and costs nothing
-    here: it truncates to the second, and the second either side of
-    initialisation cannot hold a real claim. The first drain after switch-on
-    has an empty `pending()` -- catch_up has just marked every existing event
-    as logged -- and anything arriving after it has to outlast its undo window
-    before `settled()` will hand it over. Minutes, not microseconds.
+    `datetime()` on both sides is the house rule and costs nothing: it
+    truncates to the second, and no real claim can land in that second --
+    the first drain after switch-on has an empty `pending()`.
     """
     con.execute(
         """UPDATE changelog_sent SET swallowed = 1

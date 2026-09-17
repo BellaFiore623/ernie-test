@@ -634,10 +634,8 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
                 try:
                     st = ernie_status.publish(d, con, db)
                     if st["posted"] or st["edited"]:
-                        # `left` is inherited threads a backfill has not
-                        # reached yet. Said out loud for the reason the state
-                        # channel says it: three of thirty-seven must not read
-                        # as a pass that finished.
+                        # `left` is what a backfill has not reached yet:
+                        # three of thirty-seven must not read as finished.
                         note = (f"posted {st['posted']}, edited {st['edited']}")
                         if st.get("left"):
                             note += f", {st['left']} still to go"

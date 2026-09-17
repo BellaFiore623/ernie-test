@@ -44,13 +44,10 @@ from ernie_sync import Discord, load_env
 
 POLL_SECONDS = 30
 
-# How many threads a backfill pass may speak into. The same shape as every
-# other per-item budget here -- ANNOUNCE_MAX 3, PUBLISH_MAX 10, CLOSURE_CHECKS
-# 20, RESCAN_PER_CYCLE 12 -- and for the same reason: the cost of a backfill
-# is not the API calls, it is 37 notifications landing in people's sidebars at
-# once. Cards are taken in board order and a thread that has one is not posted
-# into again, so the budget walks down the board rather than starving the
-# bottom of it.
+# How many threads a backfill pass may speak into. The same shape as
+# ANNOUNCE_MAX, PUBLISH_MAX and CLOSURE_CHECKS, and for the same reason: the
+# cost is not the API calls, it is 37 notifications at once. Board order, and
+# a thread that has one is skipped, so the budget walks down the board.
 BACKFILL_MAX = 3
 
 # What a band is called to somebody reading a thread rather than the board.
@@ -84,24 +81,15 @@ FIELD_MAX = 1024              # Discord's cap on a field value
 def backfilling() -> bool:
     """Whether this machine may give an inherited thread a status message.
 
-    Off unless `STATUS_BACKFILL` is set. The default is silence because the
-    rule it relaxes was a good one: a first sync inherits every thread there
-    has ever been, and posting into all of those is not a thing to do to a
-    channel people are working in.
+    Off unless `STATUS_BACKFILL` is set, because a first sync inherits every
+    thread there has ever been and posting into all of those is not a thing to
+    do to a channel people are working in. What makes it worth switching on is
+    that `wanted()` skips archived threads separately, so the set this reaches
+    is the *open* ones -- 37 of production's 927 on 2026-09-17, against a
+    board carrying a status on 2 cards of 39.
 
-    What changed is the number. That rule was decided against production's
-    889 inherited threads -- but `wanted()` skips an archived thread anyway,
-    separately, so the set a backfill actually speaks into is the *open* ones.
-    Measured 2026-09-17: 40 open against 927 total, of which 37 were inherited
-    and would otherwise stay silent for ever. Those are live tickets -- a
-    keepalive bot pings them every three days, so nothing is open by accident
-    -- and they are exactly what the status message was built for. The board
-    was carrying it on 2 cards of 39.
-
-    Unlike the change log and the closure announcements this is safe on more
-    than one machine: `adopt()` looks in the thread before posting, so a
-    second board finds the first board's message and edits it rather than
-    adding another.
+    Safe on more than one machine, unlike the change log and the closure
+    announcements: `adopt()` looks in the thread before posting.
     """
     return (os.environ.get("STATUS_BACKFILL", "").strip().lower()
             in ("1", "true", "yes", "on"))
@@ -263,21 +251,15 @@ def wanted(con, cards: list[ernie_state.Card], backfill: int = 0,
     """The cards whose threads should carry a status message, and how many
     inherited ones are still waiting.
 
-    Two filters, and both are about not shouting into threads that are not
-    ours to shout into. An archived thread is skipped because Discord refuses
-    a post to it -- and unarchiving to say "closed" would drag a finished
-    ticket back into everybody's sidebar. That one is absolute.
+    An archived thread is skipped absolutely: Discord refuses a post to one,
+    and unarchiving to say "closed" would drag a finished ticket back into
+    everybody's sidebar.
 
-    A thread Ernie merely inherited on a first sync gets nothing **unless a
-    backfill is switched on**, and then only `backfill` of them per pass. The
-    budget counts threads being spoken into for the first time and nothing
-    else: an inherited thread that already has a status is maintained like any
-    other, or the board would fill its budget every pass re-listing work it
-    had already done and never reach the rest.
-
-    `left` is the ones still without a message, so a pass that did three of
-    thirty-seven does not read as one that finished -- the same reason the
-    state channel's bounded publish carries it.
+    An inherited thread gets nothing unless a backfill is switched on, and
+    then only `backfill` a pass. The budget counts threads being spoken into
+    for the first time and nothing else, or it would be filled every pass by
+    work already done and never reach the rest. `left` is what is still
+    without a message, so three of thirty-seven does not read as finished.
     """
     out, room, left = [], backfill, 0
     for card in cards:
@@ -431,27 +413,12 @@ def pin_pending(d: Discord, con) -> int:
     Never fatal: a thread at the 50-pin cap still gets its status.
     """
     done = 0
-    # **fetchall, and the word is load-bearing.** `for r in con.execute(...)`
-    # is a lazy cursor: it holds a read transaction open on this connection
-    # for the whole loop, and the loop does an HTTP PUT per row. While that
-    # PUT is in flight the sync commits on its own connection, so the UPDATE
-    # below is asking SQLite to upgrade a read snapshot that is now stale --
-    # which it refuses with "database is locked", immediately, and which
-    # `busy_timeout` cannot help with because waiting is not what resolves it.
-    #
-    # Worse than the failed write: the refused upgrade leaves the transaction
-    # open, so every later write on this connection fails the same way. The
-    # outbox is one thread and one connection, so that is the status message,
-    # the drain, the state channel and the change log, until the process is
-    # restarted. It is also the reader pinning the WAL, which then grows
-    # without bound.
-    #
-    # Latent for the life of the project and unreachable until 2026-09-17:
-    # this query only returns rows when something is waiting to be pinned, and
-    # production had 3 status messages, all pinned months ago. The backfill
-    # made 3 unpinned rows a pass, which is the first traffic that could
-    # reach it -- 48 MB of WAL against a 16 MB database, and the outbox
-    # stalled for ten minutes.
+    # fetchall, not a lazy cursor. Iterating con.execute() directly holds a
+    # read transaction open across the HTTP PUT below; the sync commits
+    # underneath it, so the UPDATE becomes a stale-snapshot upgrade, which
+    # SQLite refuses outright and busy_timeout cannot wait out. The refusal
+    # leaves that transaction open, wedging every later write on the outbox's
+    # one connection and pinning the WAL. Stalled production 2026-09-17.
     for r in con.execute(
             "SELECT * FROM thread_status WHERE pinned = 0").fetchall():
         try:
@@ -489,10 +456,8 @@ def main() -> None:
 
     if a.dry_run:
         cards = ernie_state.load_board(a.db)
-        # The real budget and the real stored rows, so --dry-run answers what
-        # the next pass would actually do rather than what it could do with no
-        # limit -- which is the question somebody switching the backfill on is
-        # asking.
+        # The real budget and stored rows, so this answers what the next pass
+        # would do rather than what it could do unbounded.
         keep, left = wanted(con, cards,
                             backfill=BACKFILL_MAX if backfilling() else 0,
                             have=stored(con))
@@ -520,8 +485,7 @@ def main() -> None:
     counts = publish(d, con, a.db)
     note = (f"posted {counts['posted']}, edited {counts['edited']}, "
             f"pinned {counts['pinned']}, failed {counts['failed']}")
-    # Same reason the outbox line carries it: a pass that did three of
-    # thirty-seven must not read as one that finished.
+    # Same reason the outbox line carries it.
     if counts.get("left"):
         note += f", {counts['left']} still to go"
     print(note)
