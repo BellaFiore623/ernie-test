@@ -4,6 +4,10 @@
 setup has been tested on production, because one of the two open questions
 below can only be answered by watching two real boards disagree.
 
+That test is now running, it has produced two real disagreements, and it has
+turned up a concrete cost of the one-machine rule that was not on this page
+when it was written -- see *The one event that is already per-machine*.
+
 ## The problem, in one sentence
 
 `#ernie-logs` records the board's history, and it only records it while **one
@@ -85,6 +89,61 @@ replay. Under this design its changes are logged by nobody, silently. So
 somebody setting up a second stack will read it — `TESTING.md`, the RTF, and
 the comment in the env template, all three of which currently say the
 opposite.
+
+## The one event that is already per-machine, and is being lost
+
+Found 2026-09-18 on production, reported as: Chris's board showed that a move
+of his on `PROD: Rhino` had been overruled, and **the change log never
+mentioned it** -- it carried only the winner's changes.
+
+That is not a bug in the log. It is the one-machine rule meeting the one event
+type the rule's premise does not cover.
+
+The premise above is that **both boards hold the whole history**: a change
+replays through `#ernie-state` and each machine ends up with its own row for
+it, which is why two loggers would post every line twice. `overruled` breaks
+that. It is written by `note_discarded()` only on the board whose change was
+**thrown away**, and the winning board never learns a clash happened at all --
+it cannot, because from its side nothing conflicted. Its value went up and
+stayed up.
+
+So the record of a discarded change exists on exactly one machine, and it is
+never the machine running the logger unless the logger happens to be the one
+that lost. In the sighting above the logger was on the winning machine, so the
+line could not be written by anybody.
+
+**This matters more than an ordinary missing line.** Every other event is a
+change that happened, and the board's final state records it whether the log
+does or not. This is the only one that records a change that *did not* happen
+-- somebody's edit being dropped -- and it is the only thing in the system that
+can quietly lose work. The feed on the losing machine is currently the whole
+of the audit trail for it, which is one laptop and no further.
+
+### What it changes about this plan
+
+It removes the objection to a second logger for this verb, and it is worth
+being exact about why: `overruled` cannot duplicate, because it never exists
+on two machines. Every other verb can and does.
+
+That suggests the per-machine design below should carry a **per-verb** floor
+rather than an all-or-nothing switch -- a machine that is not the nominated
+logger still logs the events that only it can have. Whether that is worth the
+second key in the env, against simply finishing the per-machine design and
+logging everything from everywhere, is the question to settle. The shape to
+avoid is a third rule kept by hand: a "primary" flag that somebody has to
+remember to set on exactly one of two machines is the same trap
+`CHANGELOG_CHANNEL_ID` and `ANNOUNCE_THREAD_CHANGES` already are.
+
+### Done in the meantime
+
+Not the cross-machine half, which is this plan. But the wording, because it
+was wrong wherever it *did* get logged: `describe()` had no branch for the
+verb and fell through to the generic ending, reading `overruled on *PROD:
+Rhino*` -- naming neither the field nor the value. It now reads
+**`Bella Fiore overruled priority on PROD: Rhino -- 'high' was dropped`**, and
+`note_discarded` keeps the field and the lost value in separate columns so the
+feed's sentence and the log's do not have to strip each other's half out of
+one string.
 
 ## Open questions — settle these before writing code
 

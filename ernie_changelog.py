@@ -112,6 +112,17 @@ def describe(e) -> str:
         return f"edited {where}" + (f" — {new}" if new else "")
     if verb == "renamed":
         return f"renamed {where} → *{new}*"
+    if verb == "overruled":
+        # The one line here that reports something NOT happening: a change made
+        # on this machine that the shared board threw away. `actor_name` is the
+        # board that won, `new` names the fields and `old` carries what was
+        # lost, which is the half worth printing -- "overruled" on its own says
+        # a collision happened without saying what it cost.
+        #
+        # Without this it fell through to the generic ending and read
+        # "overruled on *PROD: Rhino*", naming neither the field nor the value.
+        lost = f" — {old} was dropped" if old else ""
+        return f"overruled {new or 'a change'} on {where}{lost}"
     if verb == "undo_correction":
         return f"retracted an update on {where}"
     if verb == "started":

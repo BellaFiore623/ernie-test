@@ -844,8 +844,12 @@ def note_discarded(con, tid: str, by: str | None, discarded: list) -> None:
     somebody's change was overruled -- and a feed that says it three times for
     one pull is the feed reporting the mechanism instead of the outcome.
     """
+    # Field names in `new`, the values they had in `old`, and nothing repeated
+    # between them -- the feed says "your priority" and the change log says
+    # "overruled priority ... was 'high'", and neither should have to strip the
+    # other's half out of a single string.
     fields = ", ".join(_FIELD_WORD.get(f, f) for f, _, _ in discarded)
-    mine = "; ".join(f"{_FIELD_WORD.get(f, f)} {o!r}" for f, o, _ in discarded)
+    mine = "; ".join(repr(o) for _, o, _ in discarded)
     log_event(con, thread_id=tid, verb="overruled", actor=by or "the other board",
               old=mine, new=fields)
 
