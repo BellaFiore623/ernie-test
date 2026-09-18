@@ -45,14 +45,25 @@ class FakeBert:
         self.completing = set()
         self.rendered = 0
         self.warned = 0
+        # Which cards were taken off the board without a rebuild. Recorded
+        # rather than stubbed away, because a closure arriving from the other
+        # laptop is meant to reach this even while the payload is parked.
+        self.dropped = []
         self.banner = Nothing()
         self.refresh_btn = Nothing()
 
     def render(self):
         self.rendered += 1
 
+    # The real one, not a stand-in: whether a closed card leaves a parked
+    # board is exactly what is being asked here.
+    _drop_cards_that_left = bert.Bert._drop_cards_that_left
+
     def _tick_freshness(self):
         pass
+
+    def _hide_closed_card(self, tid):
+        self.dropped.append(tid)
 
     def _tick_wal(self):
         pass
@@ -509,6 +520,113 @@ def check_a_closing_editor_asks_to_be_looked_at() -> bool:
     return c.report()
 
 
+def check_a_card_the_other_board_closed_leaves_this_one() -> bool:
+    """A closure from the other laptop takes the card away, editor or not.
+
+    `_hide_closed_card` was written for exactly this and was only ever reached
+    from Bert's own Close button -- so it covered the one case a single machine
+    can produce, and a closure arriving from the **other** board parked the
+    poll like any other payload and hid nothing. On a two-laptop board a ticket
+    somebody else finished sat there looking open for as long as an editor
+    stayed open.
+
+    That is the same bug that was already fixed once locally, which is why the
+    fix is a call rather than a mechanism.
+
+    The card being edited is never dropped. Hiding it would take the widget
+    somebody is typing into off the screen with the typing still in it;
+    `_flag_edited_underneath` has already said it has gone, which is the honest
+    half, and closing the editor is theirs to do.
+    """
+    c = Check("a card the other board closed leaves this one")
+
+    # Editing Y while X is closed on the other machine.
+    # The board has to be drawn before an editor can be open on it, so the
+    # first poll lands with nothing held -- otherwise it parks too and
+    # `self.cards` never fills, which is not the state being described.
+    b = FakeBert()
+    b.on_loaded(poll("X", "Y"))
+    b.editing_card = "Y"
+    b.dropped.clear()
+    b.on_loaded(poll("Y"))               # X has gone from the payload
+
+    c.equal(b.dropped, ["X"], "the closed card is taken off the board")
+    c.ok(b._pending, "and the payload is still parked for when it closes")
+    c.equal(on(b), ["X", "Y"],
+            "self.cards is untouched, because the rebuild is what parks")
+
+    # The edited card itself, gone from the payload. It must stay put.
+    b = FakeBert()
+    b.on_loaded(poll("Y"))
+    b.editing_card = "Y"
+    b.dropped.clear()
+    b.on_loaded(poll())
+    c.equal(b.dropped, [],
+            "the card being edited is never dropped out from under the typing")
+
+    # Nothing closed: nothing taken away.
+    b = FakeBert()
+    b.on_loaded(poll("X", "Y"))
+    b.editing_card = "Y"
+    b.dropped.clear()
+    b.on_loaded(poll("X", "Y"))
+    c.equal(b.dropped, [], "an ordinary poll takes nothing off the board")
+
+    # And with no editor open it is render()'s job, as it always was.
+    b = FakeBert()
+    b.on_loaded(poll("X"))
+    b.dropped.clear()
+    before = b.rendered
+    b.on_loaded(poll())
+    c.equal(b.dropped, [], "with no editor open, the rebuild does it")
+    c.equal(b.rendered, before + 1, "which is the ordinary path")
+
+    return c.report()
+
+
+def check_already_closed_offers_a_way_forward() -> bool:
+    """Refusing a save is not the same as throwing the typing away.
+
+    The server refuses an edit to a closed ticket -- `code: completed`, naming
+    whoever closed it and hinting to reopen -- and Bert has offered "Reopen and
+    retry" for a while. What it did not offer was **keep editing**, and
+    dismissing the box with the X returned True: settled, editor closed, typing
+    gone. That contradicted `_edit_conflict`'s own docstring, which says backing
+    out of the question leaves the typing where it is, and the `stale` branch
+    beside it never had the problem because it answers on `dlg.choice`.
+
+    Three ways out now, with keep editing as the default and the escape, for
+    the reason the one-editor dialogs have it: it is the one that loses
+    nothing. And the informative text says what reopening costs -- it brings
+    the ticket back on both boards and posts into the thread -- because whoever
+    closed it meant to, and that is a bigger act than the edit being saved.
+    """
+    c = Check("already closed offers a way forward")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    body = src[src.index("def _edit_conflict"):]
+    body = body[:body.index(chr(10) + "    def ", 10)]
+    branch = body[body.index('if e.code == "completed"'):body.index('if e.code != "stale"')]
+
+    for label, needle in (
+            ("reopen and save", "Reopen and save"),
+            ("discard", "Discard my changes"),
+            ("keep editing", "Keep editing")):
+        c.ok(needle in branch, f"it offers {label}")
+    c.ok("setDefaultButton(stay)" in branch,
+         "with keep editing as the default -- the one that loses nothing")
+    c.ok("setEscapeButton(stay)" in branch,
+         "and as the escape, so dismissing the box keeps the typing")
+    c.ok("return hit is discard" in branch,
+         "only discarding settles the write; anything else leaves the editor")
+    c.ok("both boards" in branch,
+         "and it says reopening reaches the other board and the thread")
+    c.ok("Reopen and retry" not in branch,
+         "the old two-button version is gone")
+
+    return c.report()
+
+
 CHECKS = (check_a_closing_editor_asks_to_be_looked_at,
           check_free_board, check_editor_holds, check_drag_still_holds,
           check_other_hold_reparks, check_stale_hold_dropped,
@@ -516,4 +634,6 @@ CHECKS = (check_a_closing_editor_asks_to_be_looked_at,
           check_the_place_is_a_card_not_a_number,
           check_a_ticket_with_no_thread_has_not_left_the_board,
           check_a_resize_does_not_tear_down_an_open_editor,
-          check_the_missed_redraw_is_not_lost)
+          check_the_missed_redraw_is_not_lost,
+          check_a_card_the_other_board_closed_leaves_this_one,
+          check_already_closed_offers_a_way_forward)

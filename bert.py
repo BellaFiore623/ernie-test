@@ -6691,6 +6691,7 @@ class Bert(QMainWindow):
         # follow the editor closing.
         if self.editing_card:
             self._flag_edited_underneath(incoming)
+            self._drop_cards_that_left(incoming)
             self._pending = p
             return
 
@@ -7322,15 +7323,36 @@ class Bert(QMainWindow):
         dialog, or a retry that fails -- leaves the typing where it is.
         """
         if e.code == "completed":
+            # Three ways out, with **keep editing as the default**, the same
+            # shape the one-editor dialogs use and for the same reason: it is
+            # the one that loses nothing.
+            #
+            # It had two, and dismissing the box with the X returned True --
+            # which settles the write, closes the editor and throws the typing
+            # away. That contradicted this method's own docstring, and the
+            # `stale` branch below never had the problem, because it answers on
+            # `dlg.choice` and an unanswered dialog has none.
             box = QMessageBox(self)
             box.setWindowTitle("Already closed")
             box.setText(e.detail.get("message", "This ticket is closed."))
-            box.setInformativeText("Your changes were not saved. Reopen the "
-                                   "ticket if you still need to change it.")
-            reopen = box.addButton("Reopen and retry", QMessageBox.AcceptRole)
-            box.addButton("Discard my changes", QMessageBox.RejectRole)
+            # Reopening is not a smaller act than the edit, and the button used
+            # not to say so. It brings the ticket back on **both** boards and
+            # posts into the customer thread -- so somebody weighing it against
+            # a one-word correction should be told, rather than finding out
+            # from the thread afterwards.
+            box.setInformativeText(
+                "Your changes were not saved.\n\n"
+                "Reopening brings the ticket back on both boards and says so "
+                "in the thread. Whoever closed it meant to.")
+            reopen = box.addButton("Reopen and save", QMessageBox.AcceptRole)
+            discard = box.addButton("Discard my changes",
+                                    QMessageBox.DestructiveRole)
+            stay = box.addButton("Keep editing", QMessageBox.RejectRole)
+            box.setDefaultButton(stay)
+            box.setEscapeButton(stay)
             box.exec()
-            if box.clickedButton() is reopen:
+            hit = box.clickedButton()
+            if hit is reopen:
                 try:
                     self.api.reopen(tid, self.name())
                     self.api.edit(tid, fields, self.name(), base=base, force=True)
@@ -7338,7 +7360,9 @@ class Bert(QMainWindow):
                     QMessageBox.warning(self, "Couldn't save", str(err))
                     return False
                 return True
-            return True         # they chose to discard, which settles it
+            # Discarding settles it; keeping, or dismissing the box without
+            # answering, leaves the editor and the typing exactly where it is.
+            return hit is discard
 
         if e.code != "stale":
             QMessageBox.warning(self, "Couldn't save", str(e))
@@ -7414,6 +7438,35 @@ class Bert(QMainWindow):
             if self.editing_card:
                 self._hide_closed_card(tid)
         self.refresh()
+
+    def _drop_cards_that_left(self, incoming):
+        """Take away cards that are no longer on the board, editor or no editor.
+
+        `_hide_closed_card` was written for this and only ever reached from
+        Bert's own Close button, so it covered the one case a single machine
+        can produce. A closure arriving from the **other** board parks the poll
+        like any other payload and nothing hid anything -- so on a two-laptop
+        board a ticket somebody else finished sat there looking open for as
+        long as an editor stayed open, which is the same bug that was already
+        fixed once locally.
+
+        The card being edited is never dropped, whatever the payload says.
+        Hiding it would take the widget somebody is typing into off the screen
+        with the typing still in it; `_flag_edited_underneath` has already told
+        them it is gone, which is the honest half, and the editor is theirs to
+        close.
+
+        Absent from the payload means closed or archived -- `/cards` sends the
+        whole open board -- and it is the same inference
+        `_flag_edited_underneath` makes one line above. No more aggressive than
+        the render that happens anyway when the editor closes; it just does not
+        wait for it.
+        """
+        here = {c["thread_id"] for c in incoming}
+        for card in self.cards:
+            tid = card["thread_id"]
+            if tid != self.editing_card and tid not in here:
+                self._hide_closed_card(tid)
 
     def _hide_closed_card(self, tid):
         """Drop a card off both lists without rebuilding either.
