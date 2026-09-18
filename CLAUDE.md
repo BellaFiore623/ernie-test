@@ -30,6 +30,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `run.sh` | Starts the whole stack as four processes, for working from source. `./run.sh test bert` |
 | `bert.cmd` | Double-clickable launcher for a tester who runs only Bert. |
 | `stack.cmd` | Double-clickable launcher for a tester who runs their own stack. |
+| `sandbox.cmd` | Double-clickable launcher for the **installed** Bert pointed at the sandbox. A shortcut's Target does not reliably expand `%LOCALAPPDATA%`, and the installer's own shortcut carries a literal path with the build machine's username -- editing it by hand gave a shortcut that never launched, with nothing in the log because the exe was never reached. Passes both `--env` and `--db`, because `--db` alone defaults to production's mirror. |
 | `tools/q.py` | Ad-hoc SQL helper, **read-only unless `--write`**. `python tools/q.py "SELECT ..." ernie-test.db` |
 | `tools/wal_watch.py` | Watches for the reader that pins the WAL, while it is happening. Holds one connection, passive-checkpoints on a beat, names what was running. The one tool here that must be read-write. |
 | `tools/backfill_message_types.py` | Fetches Discord's message `type` for rows written before the column existed. Read-only against Discord, writes one column, resumable. |
