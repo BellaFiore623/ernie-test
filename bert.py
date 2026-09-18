@@ -7577,8 +7577,8 @@ class Bert(QMainWindow):
         if not self._guard():
             return
         try:
-            self.api.send_now(eid, self.actor())
-            self._toast("Sending now\u2026")
+            self.api.send_now(eid, self.name())
+            self.notify("Sending now\u2026")
         except Conflict as e:
             # Every one of these means it is already out of this row's hands,
             # so there is nothing to retry and nothing to force.

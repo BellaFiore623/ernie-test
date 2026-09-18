@@ -627,6 +627,69 @@ def check_already_closed_offers_a_way_forward() -> bool:
     return c.report()
 
 
+def check_every_self_call_resolves() -> bool:
+    """A handler must not call a method that does not exist.
+
+    `send_now` called `self.actor()` and then `self._toast(...)`, and neither
+    exists -- the accessor every other write uses is `self.name()` and the
+    toast is `self.notify()`. Reported from a real click: "bert object has no
+    attribute actor". The second one was still waiting behind it and would have
+    been the very next thing hit.
+
+    Nothing caught it, and the reason is worth keeping in mind: the checks
+    around it tested the pure decision (`send_offered`) and the endpoint
+    (`api.send_now` against a real database), which is the right shape for
+    both -- and between them sat a five-line handler that nothing ever called,
+    because calling it needs a QApplication and a live window.
+
+    So this reads the class instead of running it. Every `self.X` in `Bert` has
+    to be a method defined there, an attribute assigned there, or something
+    QMainWindow provides. It is the cheapest possible stand-in for clicking
+    every button, and it would have caught both of these before they shipped.
+    """
+    c = Check("every self call resolves")
+
+    # QMainWindow's own surface. Imported for `hasattr` on the *class*, which
+    # needs no QApplication -- constructing a widget without one aborts the
+    # process, which is why this walks source rather than building a window.
+    from PySide6.QtWidgets import QMainWindow
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    cls = next(n for n in ast.parse(src).body
+               if isinstance(n, ast.ClassDef) and n.name == "Bert")
+
+    defined = set()
+    for node in ast.walk(cls):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defined.add(node.name)
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Attribute) and \
+                        getattr(t.value, "id", "") == "self":
+                    defined.add(t.attr)
+        if isinstance(node, ast.AnnAssign) and \
+                isinstance(node.target, ast.Attribute):
+            if getattr(node.target.value, "id", "") == "self":
+                defined.add(node.target.attr)
+
+    unresolved = {}
+    for node in ast.walk(cls):
+        if isinstance(node, ast.Attribute) and \
+                getattr(node.value, "id", "") == "self":
+            if node.attr not in defined and not hasattr(QMainWindow, node.attr):
+                unresolved.setdefault(node.attr, node.lineno)
+
+    c.ok(len(defined) > 100,
+         f"the walk found the class ({len(defined)} names defined on it)")
+    named = ", ".join(f"self.{k} at line {v}"
+                      for k, v in sorted(unresolved.items(), key=lambda kv: kv[1]))
+    c.ok(not unresolved,
+         f"every self.X resolves to a method, an attribute or QMainWindow"
+         + (f" -- these do not: {named}" if unresolved else ""))
+
+    return c.report()
+
+
 CHECKS = (check_a_closing_editor_asks_to_be_looked_at,
           check_free_board, check_editor_holds, check_drag_still_holds,
           check_other_hold_reparks, check_stale_hold_dropped,
@@ -636,4 +699,5 @@ CHECKS = (check_a_closing_editor_asks_to_be_looked_at,
           check_a_resize_does_not_tear_down_an_open_editor,
           check_the_missed_redraw_is_not_lost,
           check_a_card_the_other_board_closed_leaves_this_one,
-          check_already_closed_offers_a_way_forward)
+          check_already_closed_offers_a_way_forward,
+          check_every_self_call_resolves)
