@@ -8052,6 +8052,19 @@ class Bert(QMainWindow):
                     f"<span style='color:{T.LINE}'> &middot; </span>"
                     f"<b>{cut(detail, 44)}</b>")
 
+        # A change of ours the shared board threw away. It is not something
+        # anybody did here, so it names the board that won rather than a
+        # person doing something to a ticket -- and it is the one row in the
+        # feed that reports a loss.
+        if e["verb"] == "overruled":
+            what = cut(new or "a change", 30)
+            line = (f"<b>{who}</b>'s board overruled your "
+                    f"<b>{what}</b> on {thread}")
+            if full and old:
+                line += (f"<span style='color:{T.MUTED}'> &middot; "
+                         f"was {old}</span>")
+            return line
+
         return f"<b>{who}</b> {e['verb'].replace('_', ' ')} {thread}"
 
     @staticmethod

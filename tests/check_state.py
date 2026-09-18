@@ -26,6 +26,8 @@ import ernie_api as api
 import ernie_outbox as outbox
 import ernie_state as S
 
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
 
 def a_board(b: Board) -> list:
     """A few cards across the bands, one of them closed."""
@@ -1119,7 +1121,171 @@ def check_a_failed_write_keeps_what_was_typed() -> bool:
     return c.report()
 
 
-CHECKS = (check_agreed_at, check_health_guard, check_summary_stamp,
+def check_an_undo_does_not_lose_to_a_respace() -> bool:
+    """One field's decision must not be overruled by another field's drift.
+
+    Production, 2026-09-18, the first day two boards ran against one channel.
+    Chris moved a card out of Needs Attention on his laptop. Bella's machine
+    pulled it and applied it. She undid that on her board -- and the next pull
+    put it straight back and wrote a **second identical event**, leaving the
+    card at his value with one event undone and one standing.
+
+    Her undo moved `priority`. His board had meanwhile republished the card
+    with a different `rank`, which is housekeeping and nobody's decision.
+    Comparing the whole payload at once read that as "both moved", so the
+    channel won and her change was discarded -- and the pass logged nothing,
+    because the line only fires on `applied` and `unknown`.
+
+    Resolved per field, both changes survive: she moved priority and he did
+    not, so hers stands and publish sends it; he moved rank and she did not,
+    so his rank is taken. Which is what resolving against a base is for.
+    """
+    c = Check("an undo does not lose to a respace")
+    saved = S.fetch_state
+    try:
+        with Board() as b:
+            tid = b.card("PROD: Castro Valley - 15Sept26 - EReel-1079 loaner",
+                         "unassigned", 1000.0)
+            b.con.commit()
+
+            def payload(priority, rank):
+                return {"v": S.FORMAT_VERSION, "thread": tid,
+                        "priority": priority, "rank": rank,
+                        "completed": False, "work": [],
+                        "by": "The Ghost of Chris",
+                        "at": "2026-09-18T15:45:43.477862+00:00"}
+
+            channel = {tid: {"message_id": "m1", "payload": payload("low", 1000.0)}}
+            S.fetch_state = lambda d, cid: channel
+
+            r = S.reconcile(None, "chan", b.path)
+            c.equal(len(r["applied"]), 1, "his move is applied")
+            c.equal(b.con.execute("SELECT priority FROM cards WHERE thread_id=?",
+                                  (tid,)).fetchone()["priority"], "low",
+                    "and the card is in his band")
+
+            # Her undo, exactly as the API's priority_changed branch does it.
+            ev = b.con.execute(
+                "SELECT event_id, old_value FROM events WHERE thread_id=? "
+                "AND verb='priority_changed' ORDER BY rowid LIMIT 1",
+                (tid,)).fetchone()
+            b.con.execute("UPDATE cards SET priority=?, updated_at=? "
+                          "WHERE thread_id=?",
+                          (ev["old_value"], S.now_iso(), tid))
+            b.con.execute("UPDATE events SET undone_at=?, undone_by=? "
+                          "WHERE event_id=?", (S.now_iso(), "Bella Fiore",
+                                               ev["event_id"]))
+            b.con.commit()
+
+            # Nothing has changed up there yet, so ours simply stands.
+            r = S.reconcile(None, "chan", b.path)
+            c.equal(len(r["ahead"]), 1, "with the channel unchanged, ours stands")
+
+            # His board republishes the same card with a respaced rank. This is
+            # the pull that used to revert her.
+            channel[tid] = {"message_id": "m1", "payload": payload("low", 1500.0)}
+            r = S.reconcile(None, "chan", b.path)
+            row = b.con.execute("SELECT priority, rank FROM cards WHERE thread_id=?",
+                                (tid,)).fetchone()
+            c.equal(row["priority"], "unassigned",
+                    "her undo survives a remote respace -- the bug was this "
+                    "coming back as 'low'")
+            c.equal(row["rank"], 1500.0, "and his rank is still taken")
+            c.equal(len(r["conflicts"]), 0,
+                    "a respace against a band change is not a conflict")
+            c.equal(b.con.execute(
+                "SELECT COUNT(*) FROM events WHERE thread_id=? AND "
+                "verb='priority_changed'", (tid,)).fetchone()[0], 1,
+                "and no second event is written -- there were two")
+    finally:
+        S.fetch_state = saved
+    return c.report()
+
+
+def check_a_real_conflict_still_says_so() -> bool:
+    """Both moved the same field: the channel wins, and the feed is told.
+
+    The rule is unchanged and deliberate -- the channel is the shared copy, so
+    it wins. What was missing is the second half of the sentence the docstring
+    has always carried: "the losing change is named in the feed rather than
+    vanishing". It was not named anywhere, in the feed or the log.
+    """
+    c = Check("a real conflict still says so")
+    saved = S.fetch_state
+    try:
+        with Board() as b:
+            tid = b.card("PROD: Trekk - 04aug26 - SSD0008", "unassigned", 1000.0)
+            b.con.commit()
+
+            def payload(priority):
+                return {"v": S.FORMAT_VERSION, "thread": tid,
+                        "priority": priority, "rank": 1000.0,
+                        "completed": False, "work": [], "by": "Chris",
+                        "at": "2026-09-18T15:45:43+00:00"}
+
+            channel = {tid: {"message_id": "m1", "payload": payload("low")}}
+            S.fetch_state = lambda d, cid: channel
+            S.reconcile(None, "chan", b.path)          # settle on low
+
+            # She moves it to critical here; his board says medium.
+            b.con.execute("UPDATE cards SET priority='critical', updated_at=? "
+                          "WHERE thread_id=?", (S.now_iso(), tid))
+            b.con.commit()
+            channel[tid] = {"message_id": "m1", "payload": payload("medium")}
+
+            r = S.reconcile(None, "chan", b.path)
+            c.equal(len(r["conflicts"]), 1, "it is reported as a conflict")
+            c.equal(r["conflicts"][0]["discarded"], ["priority"],
+                    "naming the field that lost, so the log can say it")
+            c.equal(b.con.execute("SELECT priority FROM cards WHERE thread_id=?",
+                                  (tid,)).fetchone()["priority"], "medium",
+                    "the channel still wins, which is the rule")
+
+            row = b.con.execute(
+                "SELECT verb, old_value, new_value, actor_name, dispatch_after "
+                "FROM events WHERE thread_id=? AND verb='overruled'",
+                (tid,)).fetchone()
+            c.ok(row, "and an event says a change of ours was discarded")
+            if row:
+                c.ok("critical" in (row["old_value"] or ""),
+                     f"carrying what was lost ({row['old_value']!r})")
+                c.equal(row["dispatch_after"], None,
+                        "with no dispatch -- this happened here, it is not "
+                        "news for the customer thread")
+
+            # And it must not be offered as undoable: undoing the note would
+            # not bring the change back, because the channel still holds theirs.
+            c.ok("overruled" in (ROOT / "ernie_api.py").read_text(encoding="utf-8"),
+                 "and the API refuses to undo it")
+    finally:
+        S.fetch_state = saved
+    return c.report()
+
+
+def check_a_conflict_is_not_silent() -> bool:
+    """The pass has to say a change was thrown away.
+
+    `state: applied N` fired only on `applied` or `unknown`, so a pull that
+    resolved a conflict printed **nothing at all**. That is how an undo came to
+    be reverted with the log showing one line for two applies, and it is the
+    reason the cause took a database query to find rather than a glance.
+    """
+    c = Check("a conflict is not silent")
+
+    body = (ROOT / "ernie_sync.py").read_text(encoding="utf-8")
+    fn = body[body.index("def pull_state"):body.index("def run(")]
+    c.ok('r["conflicts"]' in fn, "the pull looks at the conflicts it resolved")
+    c.ok("stderr" in fn.split('r["conflicts"]')[1][:400],
+         "and says so on stderr, with the other alarms")
+    c.ok("discarded" in fn, "naming what was lost rather than only counting")
+
+    return c.report()
+
+
+CHECKS = (check_an_undo_does_not_lose_to_a_respace,
+          check_a_real_conflict_still_says_so,
+          check_a_conflict_is_not_silent,
+          check_agreed_at, check_health_guard, check_summary_stamp,
           check_a_given_up_change_is_not_pending_for_ever,
           check_the_attempt_limit_is_one_number,
           check_closing_knows_about_the_shared_board,

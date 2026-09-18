@@ -151,7 +151,7 @@ class Card:
 #
 # Cards are taken in board order and a written one is unchanged next pass, so
 # the cap walks down the board rather than starving the bottom of it.
-PUBLISH_MAX = 10
+PUBLISH_MAX = 6
 
 # Seconds between the card messages a publish writes.
 #
@@ -173,7 +173,7 @@ PUBLISH_MAX = 10
 # Ten writes at this pace is about eleven seconds, well inside the 30s the
 # publish beat allows and inside the channel's budget even with both machines
 # spending it at once.
-WRITE_PACE = 1.1
+WRITE_PACE = 2.2
 
 
 def now_iso() -> str:
@@ -247,6 +247,51 @@ def parse(content: str) -> dict | None:
 def prose_of(content: str) -> str:
     """The human half of a card message, without the fenced payload."""
     return FENCE.sub("", content or "").strip()
+
+
+# The fields a card's payload actually carries a decision in. Resolved one at
+# a time against the base, because they are independent decisions and the
+# card is not: judging the whole payload at once made **an undo lose to a rank
+# respace**.
+#
+# Seen on production 2026-09-18. Chris moved a card out of Needs Attention on
+# his board, Bella's machine applied it, she undid it -- and the next pull put
+# it straight back and wrote a second identical event. Her undo moved
+# `priority`; his board had meanwhile republished the card with a different
+# `rank`, which is housekeeping rather than anybody's decision. Whole-payload
+# comparison read that as "both moved", the channel won, and her undo was
+# discarded with nothing in the log or the feed to say so.
+#
+# Per field: priority resolves against priority. In that case she moved
+# priority and he did not, so hers stands and publish sends it; he moved rank
+# and she did not, so his rank is taken. Both changes survive, which is the
+# whole point of resolving against a base rather than a clock.
+FIELDS = ("priority", "rank", "completed", "work")
+
+
+def resolve(base: dict | None, ours: dict, theirs: dict):
+    """Three-way per field. Returns (winning fields, taken, discarded).
+
+    `taken` is the fields where the channel's value won, so an empty one means
+    ours stands whole and there is nothing to apply. `discarded` is the fields
+    where **both** moved -- the channel still wins, being the shared copy, but
+    a change of ours is being dropped and somebody has to be told.
+    """
+    out, taken, discarded = {}, [], []
+    for f in FIELDS:
+        mine, yours = ours.get(f), theirs.get(f)
+        out[f] = yours
+        if mine == yours:
+            continue
+        was = base.get(f) if base else None
+        if base is None or mine == was:
+            taken.append(f)              # only the channel moved
+        elif yours == was:
+            out[f] = mine                # only we moved; ours stands
+        else:
+            taken.append(f)              # both moved: the shared copy wins
+            discarded.append((f, mine, yours))
+    return out, taken, discarded
 
 
 def state_only(p: dict) -> dict:
@@ -784,6 +829,27 @@ def log_event(con, *, thread_id, verb, actor, old=None, new=None, at=None) -> st
     return eid
 
 
+# How a field reads in the sentence the feed shows.
+_FIELD_WORD = {"priority": "priority", "rank": "position",
+               "completed": "completion", "work": "work items"}
+
+
+def note_discarded(con, tid: str, by: str | None, discarded: list) -> None:
+    """Write down that a change of ours lost to the shared copy.
+
+    `dispatch_after` is NULL like everything else applied from the channel:
+    this happened here, it is not news for the customer thread.
+
+    One row for the card rather than one per field, because it is one event --
+    somebody's change was overruled -- and a feed that says it three times for
+    one pull is the feed reporting the mechanism instead of the outcome.
+    """
+    fields = ", ".join(_FIELD_WORD.get(f, f) for f, _, _ in discarded)
+    mine = "; ".join(f"{_FIELD_WORD.get(f, f)} {o!r}" for f, o, _ in discarded)
+    log_event(con, thread_id=tid, verb="overruled", actor=by or "the other board",
+              old=mine, new=fields)
+
+
 def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
     """
     Write one remote payload into the local mirror, and say what moved.
@@ -1076,8 +1142,6 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
 
             theirs, ours = state_only(p), state_only(local[tid])
             base = bases.get(tid)
-            they_moved = base is None or theirs != base
-            we_moved = base is not None and ours != base
 
             compared.append(tid)
 
@@ -1089,17 +1153,36 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
                     con.commit()
                 report["settled"] += 1
                 continue
-            if we_moved and not they_moved:
+
+            winning, taken, discarded = resolve(base, ours, theirs)
+            if not taken:
+                # Every field that differs is one we moved and they did not.
+                # Ours stands whole and publish() sends it.
                 report["ahead"].append(tid)
                 continue
 
-            changed = apply_card(con, p)
-            where = "conflicts" if (we_moved and they_moved) else "applied"
+            # Their values only where they won. Where we won, the payload
+            # carries our own value, so apply_card leaves that field alone --
+            # it compares every field against the row before writing it.
+            changed = apply_card(con, {**p, **winning})
+            if discarded:
+                # The promise this machinery has always made in its docstring
+                # and never kept: the losing change is named rather than
+                # vanishing. Before this it was dropped in silence, and the
+                # pass did not even log a line.
+                note_discarded(con, tid, p.get("by"), discarded)
+            where = "conflicts" if discarded else "applied"
             report[where].append({"thread": tid, "changed": changed,
-                                  "by": p.get("by")})
+                                  "by": p.get("by"),
+                                  "discarded": [f for f, _, _ in discarded]})
             if dry_run:
                 con.rollback()
             else:
+                # The base is what the CHANNEL holds, not what we resolved to.
+                # A field we won is not up there yet, so it has to keep looking
+                # like a change of ours until publish sends it -- writing the
+                # resolved value here would make our own change look settled
+                # and it would never go.
                 save_base(con, tid, entry["message_id"], p)
                 con.commit()       # per card, so the write lock is never held long
 

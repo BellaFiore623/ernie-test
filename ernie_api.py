@@ -1643,6 +1643,14 @@ def undo(event_id: str, body: ActorBody):
         if e["verb"] == "started":
             conflict("not_undoable",
                      "That thread was opened in Discord. Undo can't unmake it.")
+        # A record that the shared board threw a change away. Undoing the
+        # record would not bring the change back -- the channel holds the
+        # other value and the next pull would apply it again. Make the change
+        # again instead, and it goes up with the next publish.
+        if e["verb"] == "overruled":
+            conflict("not_undoable",
+                     "That is a note that the shared board overruled a change, "
+                     "not the change itself. Make it again and it will go out.")
         if e["verb"] == "completed" and e["new_value"] == CLOSED_IN_DISCORD:
             # Undo would clear completed_at and the next sync would see the
             # thread still archived and close the card again -- back on the

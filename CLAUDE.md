@@ -830,11 +830,16 @@ other's API. Priority, rank, work items and completion live in
   -- every pass, on both machines, so neither board's changes reach the other.
   The rename budget already documented exactly this property (`scope: shared`,
   so a second Ernie gets no allowance of its own) and nobody applied it here.
-  `WRITE_PACE` is 1.1s between card writes: ten of them is about eleven
-  seconds, inside the 30s the publish beat allows and inside the channel's
-  budget with both machines spending it at once. Found the day two stacks
-  first shared a production channel, when a card moved on one board took six
-  minutes to reach the other.
+  `WRITE_PACE` is 2.2s between card writes and `PUBLISH_MAX` is 6, so a pass
+  is about thirteen seconds and two machines together put roughly one write a
+  second into the channel. **1.1s and ten was still too fast**, which only
+  showed once both boards were live and busy: one drag changes the position of
+  dozens of cards, so every pass wrote a full budget from both machines at
+  once and the 429s came back -- `edited 10, 17 still to go` with a publish
+  failing either side of it. Found the day two stacks first shared a
+  production channel, when a card moved on one board took six minutes to reach
+  the other, and resized the same afternoon when the first fix proved to be
+  half of one.
 - **A publish pass is bounded, `PUBLISH_MAX` card messages at a time.** A
   card message carries its position in the band and `positions()` is computed
   across the whole board, so closing one ticket shifts everything below it
@@ -849,8 +854,36 @@ other's API. Priority, rank, work items and completion live in
   board rather than starving the bottom of it, and the counts carry `left`
   so a pass that wrote ten of forty does not read as one that finished.
 - Conflicts resolve three-way against `state_sync`, never by comparing the
-  two machines' clocks. Both moved means the channel wins, and the losing
-  change is named in the feed rather than vanishing.
+  two machines' clocks. Both moved means the channel wins, being the shared
+  copy, and the losing change is named in the feed rather than vanishing.
+- **Resolved per field, because the fields are independent decisions and the
+  card is not.** Judging the whole payload at once made **an undo lose to a
+  rank respace**. Production, 2026-09-18, the first day two boards shared one
+  channel: Chris moved a card out of Needs Attention, Bella's machine applied
+  it, she undid it -- and the next pull put it straight back and wrote a second
+  identical event, leaving one undone and one standing with the card at his
+  value. Her undo moved `priority`; his board had republished the card with a
+  different `rank`, which is housekeeping and nobody's decision. Whole-payload
+  comparison read that as "both moved".
+  `FIELDS` is `priority`, `rank`, `completed`, `work` and `resolve()` walks
+  them one at a time, so in that case hers stands for priority and his is
+  taken for rank -- both changes survive, which is what a base is for.
+  `apply_card` is handed the winning value per field and already compares every
+  field against the row before writing it, so a field we won is left alone.
+  **The base stays what the channel holds**, not what was resolved to: a field
+  we won is not up there yet, and recording the resolved value would make our
+  own change look settled and it would never publish.
+- **A discarded change is said out loud, in both places.** The docstring
+  promised the feed would name it and nothing did -- not the feed, not the log.
+  `note_discarded()` writes an `overruled` event carrying what was lost, with
+  `dispatch_after` NULL like everything else applied from the channel, and undo
+  refuses it: the note is not the change, and undoing it would not bring the
+  change back while the channel still holds theirs. `pull_state` prints
+  conflicts to stderr with the other alarms, which it never did -- the line
+  fired only on `applied` and `unknown`, so a conflict-resolved pull printed
+  **nothing at all**. That is why one undo reverted twice showed a single
+  `applied 1` in the log, and why the cause took a database query rather than a
+  glance. `tests/check_state.py` holds all of it.
 - Applying a remote change writes an event with `dispatch_after` NULL. The
   machine that made it already queued its own message; a dispatch here would
   post it twice.

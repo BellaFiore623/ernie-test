@@ -796,6 +796,20 @@ def pull_state(con, d: Discord, db: str) -> None:
             for hit in r["applied"]:
                 print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
                       + "; ".join(hit["changed"]))
+        # Its own line, and to stderr, because this is the one outcome where
+        # somebody's change was thrown away. It printed nothing at all until
+        # 2026-09-18: the test above asks only about `applied` and `unknown`,
+        # so a conflict-resolved pull was indistinguishable from a quiet one --
+        # which is how an undo came to be reverted twice with the log showing
+        # a single "applied 1".
+        if r["conflicts"]:
+            print(f"[{now()[:19]}] state: !! {len(r['conflicts'])} card(s) "
+                  f"had a change of ours overruled by the channel",
+                  file=sys.stderr)
+            for hit in r["conflicts"]:
+                lost = ", ".join(hit.get("discarded") or []) or "?"
+                print(f"    {hit['thread'][-6:]} lost {lost} to "
+                      f"{hit['by'] or 'the other board'}", file=sys.stderr)
     except Exception as e:
         print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
 
