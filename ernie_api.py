@@ -1620,6 +1620,67 @@ def finish_work_item(thread_id: str, item_id: str, body: ActorBody):
         con.close()
 
 
+@app.post("/events/{event_id}/send_now")
+def send_now(event_id: str, body: ActorBody):
+    """Bring one queued change forward, instead of waiting out its window.
+
+    The undo window is 60 seconds of being able to change your mind for free,
+    and the cost of it is that a change somebody is certain about sits on the
+    board saying *Pushing to Discord...* for a minute. This is the way to say
+    you are certain: it sets `dispatch_after` to now, the drain picks it up on
+    its 5-second beat, and the card stops waiting.
+
+    **Pressing it spends the window rather than skipping it.** Once the
+    message is in the thread, undo posts a correction instead of being silent
+    -- which is exactly why this is worth having as a button someone presses
+    on purpose. It is the opposite of undo, and it asks the same question.
+
+    One statement, and the same one `ernie_app.shut_down` runs over every
+    queued event when the window closes: this is that, for one row, on demand.
+
+    Silent changes are not offered it. A reorder and every band move that is
+    not in or out of `critical` carry no `dispatch_after` at all -- there is
+    no message for them to be waiting on, and what somebody waits for there is
+    the state-channel publish, which is a whole pass and not one row's to
+    force.
+    """
+    require_actor(body.actor)
+    con = rw()
+    try:
+        cached = replay(con, body.key)
+        if cached:
+            return cached
+
+        e = con.execute("SELECT * FROM events WHERE event_id=?",
+                        (event_id,)).fetchone()
+        if not e:
+            raise HTTPException(404, "no such event")
+        if e["dispatch_after"] is None:
+            conflict("nothing_to_send",
+                     "That change is never posted to the thread, so there is "
+                     "nothing waiting to go.")
+        if e["undone_at"]:
+            conflict("already_undone", "That change was undone.")
+        if e["posted_at"]:
+            conflict("already_sent", "That is already in the thread.")
+        # Claimed means the outbox is mid-write on it. Moving the timestamp
+        # under a pass that is already talking to Discord buys nothing and
+        # muddies what the retry sees.
+        if e["claimed_at"]:
+            conflict("posting", "Ernie is posting this right now.",
+                     at=e["claimed_at"])
+
+        con.execute(
+            "UPDATE events SET dispatch_after = datetime('now') "
+            "WHERE event_id=?", (event_id,))
+        result = {"event_id": event_id, "due": "now"}
+        remember(con, body.key, result)
+        con.commit()
+        return result
+    finally:
+        con.close()
+
+
 @app.post("/events/{event_id}/undo")
 def undo(event_id: str, body: ActorBody):
     """

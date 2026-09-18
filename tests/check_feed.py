@@ -21,9 +21,10 @@ import pathlib
 import re
 from datetime import datetime, timedelta, timezone
 
-from support import Check, iso
+from support import Board, Check, iso
 
 import bert
+import ernie_api as api
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -1298,6 +1299,95 @@ def check_an_old_row_stops_offering_undo() -> bool:
     return c.report()
 
 
+def check_send_now_brings_one_change_forward() -> bool:
+    """The opposite of undo, and the confirmation is the button itself.
+
+    A change waits out `UNDO_WINDOW_S` before Ernie posts it, which is 60
+    seconds of being able to change your mind for free -- and 60 seconds of a
+    card saying *Pushing to Discord...* to somebody who is already certain.
+    This is how they say so: `dispatch_after` comes forward and the drain
+    takes it on its 5-second beat.
+
+    Pressing it **spends** the window rather than skipping it. Afterwards
+    undoing posts a correction into the thread instead of being silent, which
+    is exactly why it is a button somebody presses rather than the window
+    being shorter for everybody.
+
+    The same statement `ernie_app.shut_down` already runs over every queued
+    event when the window closes, for one row and on demand.
+    """
+    c = Check("send now brings one change forward")
+
+    # -- what the feed offers it on, as a pure decision --------------------
+    def row(**kw):
+        base = {"dispatch_after": "2026-09-18T15:00:00+00:00",
+                "posted_at": None, "undone_at": None, "claimed_at": None}
+        return {**base, **kw}
+
+    c.ok(bert.send_offered(row()), "a change still inside its window is offered")
+    c.ok(not bert.send_offered(row(dispatch_after=None)),
+         "a silent change is not -- a reorder posts nothing, so there is "
+         "nothing waiting to go and what it waits on is a whole publish")
+    c.ok(not bert.send_offered(row(posted_at="2026-09-18T15:01:00+00:00")),
+         "nor is one already in the thread")
+    c.ok(not bert.send_offered(row(undone_at="2026-09-18T15:01:00+00:00")),
+         "nor one that was undone")
+    c.ok(not bert.send_offered(row(claimed_at="2026-09-18T15:01:00+00:00")),
+         "nor one the outbox is mid-write on -- /events sends claimed_at, so "
+         "the button is absent rather than refused by a dialog")
+
+    # -- and it really moves the row ---------------------------------------
+    with Board() as b:
+        tid = b.card("PROD: Acme - 01Sep26 - a thing")
+        b.con.execute(
+            """INSERT INTO events (event_id, thread_id, verb, actor_name,
+                                   occurred_at, dispatch_after)
+               VALUES ('ev-1', ?, 'completed', 'Bella', datetime('now'),
+                       datetime('now', '+60 seconds'))""", (tid,))
+        b.con.commit()
+        was, api.DB = api.DB, b.path
+        try:
+            due = b.con.execute(
+                "SELECT COUNT(*) FROM v_outbox_due WHERE event_id='ev-1'"
+            ).fetchone()[0]
+            c.equal(due, 0, "it is not due while it is inside its window")
+
+            api.send_now("ev-1", api.ActorBody(actor="Bella Fiore"))
+
+            due = b.con.execute(
+                "SELECT COUNT(*) FROM v_outbox_due WHERE event_id='ev-1'"
+            ).fetchone()[0]
+            c.equal(due, 1, "and the outbox picks it up straight after")
+
+            # The row is unchanged in every other way: this hurries a change,
+            # it does not alter one.
+            e = b.con.execute("SELECT * FROM events WHERE event_id='ev-1'").fetchone()
+            c.equal(e["posted_at"], None, "it is not marked sent here")
+            c.equal(e["undone_at"], None, "nor undone")
+            c.equal(e["verb"], "completed", "and it is still the same change")
+
+            # A silent change has nothing to bring forward, and says so rather
+            # than quietly doing nothing.
+            b.con.execute(
+                """INSERT INTO events (event_id, thread_id, verb, actor_name,
+                                       occurred_at, dispatch_after)
+                   VALUES ('ev-2', ?, 'reordered', 'Bella', datetime('now'),
+                           NULL)""", (tid,))
+            b.con.commit()
+            try:
+                api.send_now("ev-2", api.ActorBody(actor="Bella Fiore"))
+                c.ok(False, "a silent change is refused")
+            except Exception as err:
+                detail = getattr(err, "detail", {})
+                code = detail.get("code") if isinstance(detail, dict) else None
+                c.equal(code, "nothing_to_send",
+                        "a silent change is refused by name, not by doing nothing")
+        finally:
+            api.DB = was
+
+    return c.report()
+
+
 CHECKS = (check_a_rename_can_be_taken_back,
           check_a_timestamp_with_no_timezone_does_not_kill_the_card,
           check_a_cards_buttons_never_leave_the_card,
@@ -1327,4 +1417,5 @@ CHECKS = (check_a_rename_can_be_taken_back,
           check_an_open_row_keeps_the_spacing,
           check_a_feed_row_reads_as_a_row,
           check_a_feed_row_sits_on_one_line,
-          check_an_old_row_stops_offering_undo)
+          check_an_old_row_stops_offering_undo,
+          check_send_now_brings_one_change_forward)

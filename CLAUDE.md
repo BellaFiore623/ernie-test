@@ -408,6 +408,23 @@ in `docs/bert-ui.md` now.
   went anywhere is the feed reporting the dragging rather than the outcome.
 - Undo inside the window deletes nothing from Discord because nothing was
   ever sent. Undo after it posts a correction message instead.
+- **Send now spends the window rather than skipping it**, which is the whole
+  reason it is a button somebody presses and not a shorter window for
+  everybody. A change waits out `UNDO_WINDOW_S` before Ernie posts it, and
+  that is sixty seconds of a card saying *Pushing to Discord…* to somebody who
+  is already certain; this is how they say so. It sets `dispatch_after` to now
+  and the drain takes it on the 5s beat -- the same statement
+  `ernie_app.shut_down` already runs over every queued event when the window
+  closes, for one row and on demand. There is no confirmation dialog: the
+  button **is** the confirmation, and a dialog on top of a deliberate press
+  asks the same question twice.
+  `send_offered()` is the pure decision and excludes four rows. A silent
+  change carries no `dispatch_after` at all, so there is nothing waiting to go
+  -- what somebody waits on there is the state-channel publish, which is a
+  whole pass and not one row's to force. One already posted, one undone, and
+  one the outbox is mid-write on: `/events` sends `claimed_at`, so the button
+  is simply absent rather than offered and then refused by a dialog nobody
+  learns anything from. `tests/check_feed.py`.
 - A rename is undoable, and Bert spent a long time not saying so. `undo`
   has handled one all along -- inside the window it cancels the event, which
   is the whole job because nothing left the machine, and after it queues a

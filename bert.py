@@ -601,6 +601,27 @@ def undo_offered(e: dict, now=None) -> bool:
         <= UNDO_OFFERED_S
 
 
+def send_offered(e: dict) -> bool:
+    """Whether this row is still waiting to be posted, so it can be hurried.
+
+    Pure, like `undo_offered` beside it and for the same reason.
+
+    Three things have to be true, and each excludes a different row. It has a
+    `dispatch_after`, so there is a message coming at all -- a reorder and
+    every band move that is not in or out of `critical` carry none, and what
+    somebody waits for on those is the state-channel publish, which is a whole
+    pass and not one row's to force. It has not gone yet. And it has not been
+    undone, which is the other way a row stops being owed.
+
+    A claimed row is excluded too. `/events` sends `claimed_at`, so the
+    button can simply not be there while the outbox is mid-write, rather
+    than being offered and then refused by a dialog nobody learns
+    anything from.
+    """
+    return (bool(e.get("dispatch_after")) and not e.get("posted_at")
+            and not e.get("undone_at") and not e.get("claimed_at"))
+
+
 def wal_standing(wal: dict | None) -> str:
     """What to say about the write-ahead log: "", "watch" or "act".
 
@@ -1450,6 +1471,9 @@ class Api:
 
     def undo(self, eid, actor, force=False):
         return self._post(f"/events/{eid}/undo", {"actor": actor, "force": force})
+
+    def send_now(self, eid, actor):
+        return self._post(f"/events/{eid}/send_now", {"actor": actor})
 
 
 class Poller(QThread):
@@ -7342,6 +7366,28 @@ class Bert(QMainWindow):
             QMessageBox.warning(self, "Couldn't undo", str(e))
         self.refresh()
 
+    def send_now(self, eid):
+        """Spend the rest of the undo window on purpose.
+
+        No confirmation dialog. The button is the confirmation -- that is the
+        whole reason it exists rather than the window simply being shorter --
+        and a dialog on top of a deliberate press is a second question about
+        the same decision.
+        """
+        if not self._guard():
+            return
+        try:
+            self.api.send_now(eid, self.actor())
+            self._toast("Sending now\u2026")
+        except Conflict as e:
+            # Every one of these means it is already out of this row's hands,
+            # so there is nothing to retry and nothing to force.
+            QMessageBox.information(self, "Already on its way",
+                                    e.detail.get("message", str(e)))
+        except Exception as e:
+            QMessageBox.warning(self, "Couldn't send that yet", str(e))
+        self.refresh()
+
     def editor_is_busy(self, tid):
         """True if another card's editor is in the way and stays there.
 
@@ -7988,6 +8034,33 @@ class Bert(QMainWindow):
                 b.setEnabled(self.writable() and offered)
                 b.clicked.connect(lambda _, i=e["event_id"]: self.undo(i))
                 uc.addWidget(b)
+
+                # The opposite of the button above it, and only while there is
+                # still a choice to make: a change waits out its undo window
+                # before Ernie posts it, and somebody who is certain should not
+                # have to watch the card say *Pushing to Discord...* for a
+                # minute. Pressing it spends the window rather than skipping
+                # it -- after this, undoing posts a correction.
+                if send_offered(e) and not e.get("posted_at"):
+                    sn = QPushButton("Send now")
+                    sn.setToolTip(
+                        "Post this to the thread straight away instead of "
+                        "waiting out the minute.\n\n"
+                        "After it has gone, undoing posts a correction into "
+                        "the thread rather than being silent.")
+                    sn.setCursor(Qt.PointingHandCursor)
+                    sn.setStyleSheet(
+                        f"QPushButton {{ {BTN_HIT}"
+                        f" border:1px solid {T.LINE}; border-radius:5px;"
+                        f" color:{T.MUTED}; background:transparent; }}"
+                        f"QPushButton:hover {{ color:{T.INK};"
+                        f" border-color:{T.MUTED}; }}"
+                        f"QPushButton:disabled {{ color:{T.LINE};"
+                        f" border-color:{T.LINE}; }}")
+                    sn.setEnabled(self.writable())
+                    sn.clicked.connect(
+                        lambda _, i=e["event_id"]: self.send_now(i))
+                    uc.addWidget(sn)
             self.feed_lay.addWidget(row)
             row.show()
 
