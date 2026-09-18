@@ -662,6 +662,16 @@ clips is one where holding lightness has quietly stopped holding anything.
   wrote -- "keep theirs" and "discard my changes" close the editor, because
   the person said so; a retry that fails, or a dialog closed without
   answering, leaves the typing where it is.
+  **The already-closed branch broke that rule and now keeps it.** It had
+  two buttons, and dismissing the box returned `True` -- settled, editor
+  closed, typing gone -- which is the opposite of what the sentence above
+  promises. The `stale` branch beside it never had the problem, because it
+  answers on `dlg.choice` and an unanswered dialog has none. Three ways out
+  now, with *keep editing* as both the default and the escape, and only
+  discard settling the write. The text says what reopening costs: it brings
+  the ticket back on **both** boards and posts into the customer thread,
+  which is a larger act than the edit being saved, and whoever closed it
+  meant to.
 - Bert's close warning owes two different debts, and must count both.
   `queued` is events waiting out their undo window before Ernie posts them to
   the customer thread; `sharing.waiting_to_send` is cards that have moved since
