@@ -29,6 +29,7 @@ from support import Board, Check, FakeDiscord
 
 import bert
 import ernie_api as api
+import ernie_changelog as cl
 import ernie_load as load
 import ernie_state as S
 import ernie_sync
@@ -355,7 +356,90 @@ def check_both_edit_the_same_ticket() -> bool:
         a.close(); b.close()
     return c.report()
 
-CHECKS = (check_both_move_the_same_card,
+def check_every_machine_logs_its_own() -> bool:
+    """`#ernie-logs` no longer depends on one nominated machine staying up.
+
+    A change is made on exactly one board, so that board owns the line.
+    `events.replayed` is what makes it safe: the other board's copy arrives with
+    a fresh id and would otherwise post the same line again.
+
+    Two exceptions, and each is a fact only one machine has.
+
+    **A replay undone here.** Undoing somebody else's change sets `undone_at` on
+    *our* copy; their original never learns, so their machine will not strike its
+    line -- and if ours stayed quiet the record would assert a change that was
+    taken back. Measured before the fix: her log had her line and his had
+    nothing at all, so the undo was invisible. It goes out as its own line
+    rather than a strikethrough, because a message somebody else posted cannot
+    be edited from here.
+
+    **An overruled change.** `note_discarded` writes it only on the board that
+    lost, so it is not a replay of anything and passes `replayed=False`. This is
+    what the one-machine rule could never record: in the sighting that started
+    it, the nominated logger was the board that *won*, so the line existed
+    nowhere.
+    """
+    c = Check("every machine logs its own")
+    CHANNEL.clear()
+    a, b = Laptop("Bella Fiore"), Laptop("Chris")
+    try:
+        tid = same_thread(a, b, "PROD: Ledger - 18Sep26 - a thing", "medium")
+        a.publish(); b.pull()
+        for m in (a, b):
+            cl.mark_initialised(m.con)
+            m.con.commit()
+
+        def settled_lines(m):
+            # Nothing is logged until it has settled, so age everything past
+            # the undo window rather than sleeping through it.
+            m.con.execute(
+                "UPDATE events SET occurred_at=datetime('now','-600 seconds')")
+            m.con.commit()
+            return [cl.render(e) for e in cl.pending(m.con)]
+
+        a.api(api.move_card, tid,
+              api.MoveBody(actor="Bella Fiore", priority="low"))
+        a.publish(); b.pull()
+
+        eq(c, "the board that made it has a line", len(settled_lines(a)), 1)
+        eq(c, "and the board that only replayed it has none",
+           len(settled_lines(b)), 0)
+
+        # He undoes her change on his board, which needs force because it was
+        # not his.
+        ev = b.events(tid, "priority_changed")[0]
+        b.api(api.undo, ev["event_id"],
+              api.ActorBody(actor="Chris", force=True))
+        b.publish(); a.pull()
+
+        his = settled_lines(b)
+        eq(c, "once he undoes it, his board has the line", len(his), 1)
+        c.ok(his and "undone by Chris" in his[0],
+             "saying who undid it -- it used to say nothing anywhere")
+        c.ok(his and "Bella Fiore" in his[0],
+             "and whose change it was")
+
+        # And an overruled change, which exists on one machine only.
+        CHANNEL.clear()
+        other = same_thread(a, b, "PROD: Apex - 12Sep26 - a thing", "medium")
+        a.publish(); b.pull()
+        a.api(api.move_card, other,
+              api.MoveBody(actor="Bella Fiore", priority="low"))
+        b.api(api.move_card, other, api.MoveBody(actor="Chris", priority="high"))
+        a.publish(); b.pull()
+
+        lost = [l for l in settled_lines(b) if "overruled" in l]
+        eq(c, "the board that lost logs that it was overruled", len(lost), 1)
+        c.ok(lost and "'high'" in lost[0], "carrying what was dropped")
+        won = [l for l in settled_lines(a) if "overruled" in l]
+        eq(c, "and the board that won says nothing about it, having no such row",
+           len(won), 0)
+    finally:
+        a.close(); b.close()
+    return c.report()
+
+CHECKS = (check_every_machine_logs_its_own,
+          check_both_move_the_same_card,
           check_both_edit_the_same_ticket,
           check_close_while_the_other_edits,
           check_count_the_announcements)

@@ -1,12 +1,26 @@
 # Every machine logs its own changes
 
-**Status: planned, not started.** Deferred deliberately until the two-machine
-setup has been tested on production, because one of the two open questions
-below can only be answered by watching two real boards disagree.
+**Status: done 2026-09-18.** Kept as the record of why, and of the open question
+that turned out to be sharper than this page thought.
 
-That test is now running, it has produced two real disagreements, and it has
-turned up a concrete cost of the one-machine rule that was not on this page
-when it was written -- see *The one event that is already per-machine*.
+**Open question 1 was worse than described.** The page had it as a lost
+strikethrough. Run on the two-board harness it is *silence*: under per-machine
+logging her original never learns it was undone, and his copy is a replay the
+design excludes -- so her log posted her line, his posted nothing, and the
+record asserted a change that had been taken back.
+
+The way out taken is none of the three listed. **A replay is logged when it has
+been undone here**, as its own line rather than a strikethrough, because a
+message somebody else posted cannot be edited from this machine. It keeps the
+strikethrough for the ordinary same-machine case, which is nearly all of them,
+and it is never quiet. `render` already reads that row as "made, and undone
+by", so no wording was needed.
+
+**Open question 2 is answered the same way.** An `overruled` row exists only on
+the board that lost, so it is not a replay of anything and `note_discarded`
+passes `replayed=False`. That is the line the one-machine rule could never
+record, and the reason this plan got picked up: in the sighting that started it,
+the nominated logger was the board that won.
 
 ## The problem, in one sentence
 

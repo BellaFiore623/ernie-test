@@ -276,7 +276,10 @@ INVENTED_PREFIX = "fake-"
 REQUIRED_COLUMNS = {
     "cards": ["client_override"],
     "clients": ["short_name", "offered"],
-    "events": ["claimed_at", "sent_steps"],
+    # replayed is what lets every machine log to its own channel without
+    # doubling every line; without it pending() cannot tell one board's change
+    # from the other board's copy of it.
+    "events": ["claimed_at", "sent_steps", "replayed"],
     "work_items": ["item_id", "done_at"],
     # Not read here, but the sync writes them every cycle and would fail one
     # thread at a time. Better to say so once, at startup, with the fix.

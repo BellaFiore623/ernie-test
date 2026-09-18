@@ -113,6 +113,10 @@ ADDED_COLUMNS = (
     ("release_seen", "minimum", "TEXT NOT NULL DEFAULT ''"),
     ("threads", "seen_open_at", "TEXT"),
     ("changelog_sent", "swallowed", "INTEGER NOT NULL DEFAULT 0"),
+    # Defaulting to 0 is right for every row already there: a board that has
+    # been logging on its own has logged them, and one that has not is about
+    # to have `catch_up` swallow the lot.
+    ("events", "replayed", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

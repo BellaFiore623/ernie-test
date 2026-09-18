@@ -640,9 +640,9 @@ def run(con, d: Discord, db: str, *, interval: int = POLL_SECONDS,
                 except Exception as e:
                     print(f"[{now()[:19]}] status failed: {e}", file=sys.stderr)
 
-            # The durable record, if there is somewhere to keep it. Both boards
-            # hold the whole history, so only one machine should set this -- two
-            # would write every line twice.
+            # The durable record, if there is somewhere to keep it. Every
+            # machine may set this now: a change is made on one board and that
+            # board logs it, which `events.replayed` is what tells apart.
             log_channel = os.environ.get("CHANGELOG_CHANNEL_ID")
             if log_channel and d.writes_allowed:
                 try:

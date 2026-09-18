@@ -822,7 +822,8 @@ def save_base(con, thread_id: str, message_id: str | None, payload: dict) -> Non
         (thread_id, message_id, json.dumps(state_only(payload)), now_iso()))
 
 
-def log_event(con, *, thread_id, verb, actor, old=None, new=None, at=None) -> str:
+def log_event(con, *, thread_id, verb, actor, old=None, new=None, at=None,
+              replayed: bool = True) -> str:
     """
     Put a replayed change into the local feed.
 
@@ -833,13 +834,22 @@ def log_event(con, *, thread_id, verb, actor, old=None, new=None, at=None) -> st
     occurred_at is the payload's timestamp, not now, so a change made while
     this machine was offline lands in the feed where it happened rather than
     at the top.
+
+    **`replayed` is what keeps `#ernie-logs` from doubling every line** now
+    that every machine logs. It is True for everything written from a payload,
+    because the board that made the change logs it. `note_discarded` passes
+    False: an overruled change is not a replay of anything -- it exists on
+    this machine and nowhere else, and it is the one row the log could never
+    see under the old one-machine rule.
     """
     eid = str(uuid.uuid4())
     con.execute(
         """INSERT INTO events (event_id, occurred_at, actor_name, thread_id,
-                               verb, old_value, new_value, dispatch_after)
-           VALUES (?,?,?,?,?,?,?,NULL)""",
-        (eid, at or now_iso(), actor, thread_id, verb, old, new))
+                               verb, old_value, new_value, dispatch_after,
+                               replayed)
+           VALUES (?,?,?,?,?,?,?,NULL,?)""",
+        (eid, at or now_iso(), actor, thread_id, verb, old, new,
+         1 if replayed else 0))
     return eid
 
 
@@ -864,8 +874,12 @@ def note_discarded(con, tid: str, by: str | None, discarded: list) -> None:
     # other's half out of a single string.
     fields = ", ".join(_FIELD_WORD.get(f, f) for f, _, _ in discarded)
     mine = "; ".join(repr(o) for _, o, _ in discarded)
+    # Not a replay: this happened here and exists nowhere else, so this machine
+    # is the only one that can ever log it. Under the old one-machine rule it
+    # was invisible whenever the logger was the board that won -- which is how
+    # it was reported.
     log_event(con, thread_id=tid, verb="overruled", actor=by or "the other board",
-              old=mine, new=fields)
+              old=mine, new=fields, replayed=False)
 
 
 def apply_card(con: sqlite3.Connection, p: dict,

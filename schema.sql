@@ -334,6 +334,15 @@ CREATE TABLE IF NOT EXISTS events (
     discord_message_id TEXT,
     attempts        INTEGER NOT NULL DEFAULT 0,
     last_error      TEXT,
+    -- Whether this row is this machine's copy of somebody else's change,
+    -- arriving through `#ernie-state` rather than being made here.
+    --
+    -- It is what lets every machine log to `#ernie-logs` instead of one
+    -- nominated machine. A change is made on exactly one board, so the board
+    -- that made it owns the line and nobody's uptime decides whether the
+    -- record exists. `ernie_state.log_event` is the only place a replay is
+    -- written, which is what made this one column rather than a survey.
+    replayed        INTEGER NOT NULL DEFAULT 0,
     -- Irreversible things already done in Discord for this row, written the
     -- moment each one lands. Posting an event takes up to four writes and
     -- only the last one used to be recorded, so a failure anywhere threw

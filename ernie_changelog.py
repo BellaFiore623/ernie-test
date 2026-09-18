@@ -9,10 +9,15 @@ as it goes.
     python ernie_changelog.py --once --env ernie-test.env --db ernie-test.db
     python ernie_changelog.py --backfill    # include everything already in the db
 
-Inert until CHANGELOG_CHANNEL_ID is set, and **only one machine should set
-it**. Both boards hold the whole history -- their own changes and replays of
-the other's -- so two of these logging into one channel writes every line
-twice.
+Inert until CHANGELOG_CHANNEL_ID is set, and **every machine may set it**. A
+change is made on exactly one board, so that board owns the line: nobody's
+uptime decides whether the record exists, and there is no machine to nominate.
+
+`events.replayed` is what makes that safe. Both boards hold the whole history
+-- their own changes and replays of the other's, arriving with a fresh id --
+and without the flag two of these wrote every line twice. `pending()` has the
+two exceptions, each a fact only one machine holds: a replay undone here, and
+a change of ours the shared board overruled.
 
 Nothing reads this back. Deleting the channel and unsetting the variable
 leaves no trace beyond a table nothing looks at.
@@ -151,12 +156,29 @@ def render(e) -> str:
 
 
 def pending(con, limit: int = BATCH) -> list:
-    """Settled events this channel hasn't been told about, oldest first."""
+    """Settled events this machine owns and this channel hasn't been told about.
+
+    **Every machine logs, and each logs only what it did.** A change is made on
+    exactly one board, so that board owns the line: nobody's uptime decides
+    whether the record exists, and there is no machine to nominate. What makes
+    that safe is `events.replayed` -- one board's change arrives on the other as
+    a replay with a fresh id, and without the flag both would post it.
+
+    **Except a replay that was undone here**, which is a local act and the one
+    exception worth the clause. Undoing somebody else's change sets `undone_at`
+    on *our* copy; their original never learns, so their machine will not strike
+    its line and ours would say nothing at all. The record would then assert a
+    change that was taken back, which is worse than the doubling this design
+    fixes. Logged as its own line rather than a strikethrough, because a message
+    somebody else posted cannot be edited from here -- `render` already reads
+    that row as "made, and undone by", which says both halves.
+    """
     rows = con.execute(
         """SELECT e.*, v.name AS thread_name
            FROM events e
            LEFT JOIN v_thread_current v ON v.thread_id = e.thread_id
            WHERE e.event_id NOT IN (SELECT event_id FROM changelog_sent)
+             AND (e.replayed = 0 OR e.undone_at IS NOT NULL)
            ORDER BY e.occurred_at
            LIMIT ?""", (limit * 4,)).fetchall()
     return [r for r in rows if settled(r)][:limit]

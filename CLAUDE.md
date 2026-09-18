@@ -1028,10 +1028,24 @@ A durable record of every change, in its own channel, for looking back at
 rather than reading as it goes. Customer threads only hear the handful of
 changes worth interrupting somebody for; this gets all of them.
 
-- Inert unless `CHANGELOG_CHANNEL_ID` is set, and only one machine should set
-  it: both boards hold the whole history, so two loggers write every line
-  twice. It is uncommented in the installed env and left commented in the
-  copy that gets handed out.
+- Inert unless `CHANGELOG_CHANNEL_ID` is set, and **every machine may set it.**
+  A change is made on exactly one board, so that board owns the line: nobody's
+  uptime decides whether the record exists, and there is no machine to nominate.
+  `events.replayed` is what makes it safe -- the other board's copy arrives
+  through `#ernie-state` with a fresh id, and without the flag two loggers wrote
+  every line twice, which is why this was one machine until 2026-09-18.
+  **Two exceptions, each a fact only one machine holds.** A replay **undone
+  here**: undoing somebody else's change stamps `undone_at` on *our* copy, their
+  original never learns, so their machine will not strike its line -- and if ours
+  stayed quiet the record would assert a change that was taken back. Measured
+  before the fix: her log had her line, his had nothing, and the undo was
+  invisible. It goes out as its own line rather than a strikethrough, because a
+  message somebody else posted cannot be edited from here, and `render` already
+  reads that row as "made, and undone by". And an **overruled** change, which
+  `note_discarded` writes only on the board that lost, so it passes
+  `replayed=False` -- the line the old rule could never record, because in the
+  sighting that started it the nominated logger was the board that *won*.
+  `tests/check_two_boards.py`.
 - The channel is `#change-log` in the sandbox and `#ernie-logs` in
   production. The name is nowhere in the code; the env carries an id.
 - Switch it on before the writes. `catch_up()` marks everything not yet sent
@@ -1064,8 +1078,7 @@ changes worth interrupting somebody for; this gets all of them.
   -- retrying is what caused the duplicates. This is `post_one`'s claim,
   write, record, one channel along.
 
-The one-machine rule is liftable and `plans/changelog-per-machine.md` says
-how. The rest: `docs/discord.md`.
+The rest: `docs/discord.md`.
 
 ## The customer list
 
