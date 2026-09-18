@@ -18,10 +18,12 @@ windows open for a minute, and one process cannot ask that.
 import ast
 import os
 import pathlib
+import re
 import threading
 
 from support import Board, Check, iso
 
+import ernie_api
 import ernie_app
 
 
@@ -800,6 +802,76 @@ def check_an_installed_copy_can_migrate_itself() -> bool:
     return c.report()
 
 
+def check_every_endpoint_is_actually_routed() -> bool:
+    """A decorator belongs to the function under it, and only that one.
+
+    `/health` spent four releases -- 0.9.5 through 0.9.8 -- answering with
+    three numbers about the write-ahead log, because `wal_state()` was
+    inserted directly beneath the `@app.get("/health")` that belonged to
+    `health()` and took it. `health()` was then an ordinary function nobody
+    called.
+
+    Nothing looked broken. The route existed, returned 200, and served valid
+    JSON; it was simply the wrong function's JSON. Everything Bert reads off
+    that answer went quiet at once and none of it could say why -- the update
+    check, the shared-board indicator, the unsent-changes warning, the sync
+    age, the client roster, the Jira links on cards. The WAL strip the commit
+    was *adding* did not work either, because Bert reads `health["wal"]` and
+    the reply had no such key.
+
+    Found by asking why no card showed a Jira link, four releases later.
+
+    Two invariants, and the second is the one that generalises: the path maps
+    to the function named for it, and the answer carries every key Bert reads
+    out of it.
+    """
+    c = Check("every endpoint is actually routed")
+
+    routed = {r.path: r.endpoint.__name__
+              for r in ernie_api.app.routes if hasattr(r, "endpoint")}
+    c.equal(routed.get("/health"), "health",
+            "/health is served by health(), not by a helper beneath its decorator")
+    c.ok("wal_state" not in routed.values(),
+         "and wal_state is a block inside that answer, not an endpoint of its own")
+
+    # A path served twice is the same mistake with both halves present.
+    paths = [r.path for r in ernie_api.app.routes if hasattr(r, "endpoint")]
+    dupes = {p for p in paths if paths.count(p) > 1}
+    c.ok(not dupes, f"no path is registered twice ({sorted(dupes) or 'none'})")
+
+    # What Bert actually reads off the answer. Read from bert.py rather than
+    # listed here, so a key it starts using is covered without this being
+    # edited -- the listed-copy problem these checks exist to catch.
+    bert_src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    wanted = set()
+    for m in re.finditer(r"health\s*or\s*\{\}\)\.get\(\s*[\"']([a-z_]+)",
+                         bert_src):
+        wanted.add(m.group(1))
+    for m in re.finditer(r"self\.health\.get\(\s*[\"']([a-z_]+)", bert_src):
+        wanted.add(m.group(1))
+    for m in re.finditer(r"\(self\.health\s*or\s*\{\}\)\.get\(\s*[\"']([a-z_]+)",
+                         bert_src):
+        wanted.add(m.group(1))
+    c.ok(wanted, f"bert reads {len(wanted)} key(s) off /health ({sorted(wanted)})")
+
+    with Board() as b:
+        b.card("PROD: Acme - 01Sep26 - a thing")
+        was, ernie_api.DB = ernie_api.DB, b.path
+        try:
+            answer = ernie_api.health()
+        finally:
+            ernie_api.DB = was
+
+    missing = sorted(k for k in wanted if k not in answer)
+    c.ok(not missing,
+         f"and every one of them is in the answer ({missing or 'none missing'})")
+    # The two that went quietest, named so the failure says what broke.
+    c.ok("wal" in answer, "the WAL block is in it")
+    c.ok("jira_url" in answer, "and so is the Jira address the card links to")
+
+    return c.report()
+
+
 def check_the_supervisor_sets_up_what_the_cli_does() -> bool:
     """
     The same bug three times, so this is the check for the shape of it.
@@ -937,4 +1009,5 @@ CHECKS = (check_closing_cannot_raise,
           check_the_installer_and_the_app_agree,
           check_the_database_exists_before_anything_races_for_it,
           check_an_installed_copy_can_migrate_itself,
-          check_the_supervisor_sets_up_what_the_cli_does)
+          check_the_supervisor_sets_up_what_the_cli_does,
+          check_every_endpoint_is_actually_routed)

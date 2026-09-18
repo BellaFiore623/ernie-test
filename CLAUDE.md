@@ -81,6 +81,23 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   when it was found. The other seven were not, which is the ordinary way a
   rule kept by hand is kept: once. `tests/check_app.py` walks every function
   that opens a connection and fails on any that can return without closing.
+- **A decorator belongs to the function under it, and `/health` proves how
+  quietly that fails.** `wal_state()` was inserted directly beneath the
+  `@app.get("/health")` that belonged to `health()` and took it, so for four
+  releases -- 0.9.5 to 0.9.8, both installed laptops -- `/health` answered
+  with three numbers about the write-ahead log and `health()` was a function
+  nobody called. Nothing looked broken: the route existed, returned 200 and
+  served valid JSON, just the wrong function's. Everything Bert reads off it
+  went quiet at once with nothing to point at -- the update check, the
+  shared-board indicator, the unsent-changes warning, the sync age, the client
+  roster, the Jira link on a card. **Including the WAL strip that commit was
+  adding**, because Bert reads `health["wal"]` and the reply had no such key,
+  which is why the strip "had never been drawn".
+  Found four releases later by asking why no card showed a Jira link.
+  `tests/check_app.py` holds two invariants, and the second is the one that
+  generalises: `/health` maps to `health`, and every key Bert reads off the
+  answer is in it -- read out of `bert.py` rather than listed, so a key it
+  starts using is covered without the check being edited.
 - `if __name__ == "__main__":` stays at the very end of every file.
   `uvicorn.run()` blocks, so anything appended below it never registers.
   This has already caused a "route not found" bug once.

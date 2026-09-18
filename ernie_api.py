@@ -528,7 +528,9 @@ def root():
     return {"service": "ernie", "docs": "/docs"}
 
 
-@app.get("/health")
+# Not an endpoint. `health()` below is the endpoint, and this is one block
+# inside its answer -- it had this route for three releases, because it was
+# inserted directly under the decorator that belonged to `health` and took it.
 def wal_state() -> dict:
     """How big the write-ahead log is against the database it belongs to.
 
@@ -553,8 +555,14 @@ def wal_state() -> dict:
             "ratio": round(wal / main, 2) if main else 0.0}
 
 
+@app.get("/health")
 def health():
-    """Is Ernie alive, and how stale is the mirror?"""
+    """Is Ernie alive, and how stale is the mirror?
+
+    Bert polls this twelve times a minute and reads nearly everything it shows
+    about the stack out of the answer, so a key missing here is a feature
+    missing there and nothing says why.
+    """
     con = db()
     try:
         last = con.execute(
