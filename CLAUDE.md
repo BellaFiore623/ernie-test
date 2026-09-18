@@ -49,6 +49,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `plans/` | Work decided on but not started, with the reasoning and the open questions. A plan here is a thing to pick up, not a thing that is done. |
 | `docs/` | Why things are the way they are: `bert-ui.md`, `discord.md`, `clients.md`, `releases.md`. Not needed to make a change safely -- needed to understand one. |
 | `tests/check_two_boards.py` | Phase 5 without two laptops: two databases and a dict standing in for `#ernie-state`, with the real API, publish and reconcile between them. **Stub both `fetch_state` and `fetch_channel`** -- publish reads the channel before deciding anything, so stubbing one leaves it reasoning against an empty one. |
+| `tests/check_three_boards.py` | The same harness with a third machine. Everything in the merge is pairwise and two boards converge trivially; three is where a machine pulls a channel that has already resolved somebody else's change. Holds the three properties a shared board is worthless without: it stops writing, it ends in one state, and which machine published first does not decide what that state is. |
 | `tests/` | `python tests/run.py`. Standard library, no network, no database of yours -- the fixture builds one from `schema.sql` in a temp directory. |
 | `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |
 | `TESTING.md` | Hand this to the tester. Both setups, start to finish. |
@@ -957,6 +958,18 @@ other's API. Priority, rank, work items and completion live in
   and a written one is unchanged next pass, so the budget walks down the
   board rather than starving the bottom of it, and the counts carry `left`
   so a pass that wrote ten of forty does not read as one that finished.
+- **It holds for three machines, not just two, and that was measured rather
+  than assumed.** Everything in the merge is pairwise -- `resolve()` compares
+  one board against one base, `apply_card` merges one payload -- and two boards
+  converge trivially because the channel is the only other party. Three is
+  where a machine pulls a channel that has *already* resolved somebody else's
+  change while its own base is older than both. Checked: three people each
+  adding a bubble keep all three, three moving one card converge on one band
+  with the two losers each saying so, **all six publish orders end identically**,
+  and a machine joining a board already in motion adopts rather than fighting.
+  `WRITE_PACE` has to be zeroed in those checks, or `publish` sleeps 2.2s a card
+  against a stand-in channel with no bucket to spend -- it took the suite from
+  36s to 67s before that line, and back to 34s after.
 - Conflicts resolve three-way against `state_sync`, never by comparing the
   two machines' clocks. Both moved means the channel wins, being the shared
   copy, and the losing change is named in the feed rather than vanishing.

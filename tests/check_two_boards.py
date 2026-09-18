@@ -35,6 +35,14 @@ import ernie_sync
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
+# The stand-in channel has no rate-limit bucket, so the pace between card
+# writes buys nothing here and costs a great deal: `publish` sleeps
+# `WRITE_PACE` per card, which is 2.2s, and this module publishes about a
+# dozen times. It took the suite from 36s to 67s before this line. Zeroed for
+# the module rather than per check, because every check here publishes -- the
+# same call `check_changelog` makes, for the same reason.
+S.WRITE_PACE = 0
+
 
 CHANNEL = {}          # thread_id -> {message_id, payload, content}
 class Laptop:
