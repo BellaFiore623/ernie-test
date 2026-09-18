@@ -1022,7 +1022,8 @@ def cards(
             stuck[r["thread_id"]] = r["n"]
 
         # The second debt. A reorder, and every band move that is not in or out of
-        # critical, is silent by design and carries no dispatch_after at all -- it
+        # any band change at all, is silent by design and carries no
+        # dispatch_after -- it
         # appears here and nowhere else. Same comparison /health makes, both sides
         # written by this machine, so the other laptop's clock has no say in it.
         unshared: set[str] = set()
@@ -1435,13 +1436,24 @@ def move_card(thread_id: str, body: MoveBody):
             (body.priority, new_rank, now_iso(), thread_id))
 
         if card["priority"] != body.priority:
-            # In or out of critical is the one band change the thread should
-            # hear about. The rest is board housekeeping -- posting every
-            # nudge between high and medium would be noise in a customer
-            # thread, and nobody reading it could act on it.
-            loud = "critical" in (card["priority"], body.priority)
+            # **Never posted to the thread.** Priority is how this board
+            # arranges its own work, and the customer thread is where the work
+            # is discussed -- a line in it saying a ticket moved between two of
+            # our bands is something nobody reading it can act on.
+            #
+            # In or out of `critical` used to post, on the reasoning that it
+            # was the one band change worth interrupting somebody for. Asked
+            # for by Julian on 2026-09-18 and dropped: he does not want
+            # priority in the threads at all, and the activity feed and the
+            # change log are where it belongs. It had fired 3 times in
+            # production against 5 silent moves.
+            #
+            # It still writes an event, so the feed, the change log, undo and
+            # the shared board all see it exactly as before. `dispatch_after`
+            # NULL is the whole of the change: nothing is queued, so nothing
+            # posts, so undoing one is always free.
             log_event(con, thread_id=thread_id, verb="priority_changed", actor=actor,
-                      old=card["priority"], new=body.priority, post=loud)
+                      old=card["priority"], new=body.priority, post=False)
         else:
             # Where it sat, and where it now sits, counted against the cards it
             # is ordered among -- `ranks` already leaves this card out, so

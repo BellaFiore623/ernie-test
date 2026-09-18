@@ -389,9 +389,25 @@ posting to Discord came to own splitter handles and feed row heights. It is
 in `docs/bert-ui.md` now.
 
 - `dispatch_after` = when Ernie may post. `NULL` means never post.
-- Priority moves are silent except in or out of `critical`, which posts. Every
-  other band change, and every reorder within a band, is board housekeeping:
-  posting each nudge between high and medium is noise in a customer thread.
+- **A priority move never reaches the customer thread**, in any direction.
+  Priority is how this board arranges its own work; a line in a customer
+  thread saying a ticket moved between two of our bands is something nobody
+  reading it can act on. Reorders within a band were always silent for the
+  same reason.
+  In or out of `critical` used to post, on the reasoning that it was the one
+  band change worth interrupting somebody for. Asked for by Julian on
+  2026-09-18 and dropped -- he does not want priority in the threads at all,
+  and said the activity log was where it belonged. It had fired 3 times in
+  production against 5 silent moves.
+  **Everything except the thread still sees it.** The event is written exactly
+  as before, so the feed has it, the change log logs it once it has settled,
+  the shared board carries the new band, and undo still offers it -- now always
+  free, because nothing ever left the machine. `post=False` at the one call
+  site is the whole of the change; `ernie_outbox`'s wording for it is kept and
+  marked historical, because a machine that has been switched off can come
+  back holding a row queued before this. `tests/check_board_order.py` holds
+  both halves, since the half that matters most is the one that must *keep*
+  working.
 - A `reordered` event carries the band and the card's position in it,
   before and after, as `band:position` in `old_value` / `new_value` --
   `high:5` -> `high:3`, which reads as "High 5th -> 3rd". Not the rank: that is

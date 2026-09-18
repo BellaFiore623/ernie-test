@@ -17,6 +17,7 @@ from support import Board, Check, iso
 
 import bert
 import ernie_api as api
+import ernie_changelog as cl
 import ernie_extract as ex
 import ernie_load as load
 import ernie_state as S
@@ -764,6 +765,81 @@ def check_a_clients_spellings_are_one_entry() -> bool:
     return c.report()
 
 
+def check_a_band_move_never_reaches_the_thread() -> bool:
+    """Priority is this board's own arrangement, not news for the customer.
+
+    In or out of `critical` used to post, on the reasoning that it was the one
+    band change worth interrupting somebody for. Julian asked on 2026-09-18
+    for priority out of the threads altogether -- a line saying a ticket moved
+    between two of our bands is something nobody reading that thread can act
+    on -- and said the activity log was where it belonged. It had fired 3 times
+    in production against 5 silent moves.
+
+    Both halves matter, so both are here. **Nothing is queued**, in any
+    direction including critical. And **everything else still sees it**: the
+    event is written, so the feed has it, the change log logs it once it has
+    settled, the shared board carries the new band, and undo still offers it --
+    now always silently, because nothing ever left the machine.
+    """
+    c = Check("a band move never reaches the thread")
+
+    with Board() as b:
+        tid = b.card("PROD: Acme - 01Sep26 - a thing", "unassigned", 1000.0)
+        b.con.commit()
+        was, api.DB = api.DB, b.path
+        try:
+            # Every direction, critical included, and out of it again.
+            for target in ("critical", "high", "low", "critical", "unassigned"):
+                api.move_card(tid, api.MoveBody(actor="Bella Fiore",
+                                                priority=target))
+        finally:
+            api.DB = was
+
+        rows = b.con.execute(
+            """SELECT old_value, new_value, dispatch_after FROM events
+               WHERE verb='priority_changed' ORDER BY rowid""").fetchall()
+        c.equal(len(rows), 5, "every move is still recorded")
+        c.ok(all(r["dispatch_after"] is None for r in rows),
+             "and not one of them is queued to a thread")
+        touching_critical = [r for r in rows
+                             if "critical" in (r["old_value"], r["new_value"])]
+        c.equal(len(touching_critical), 4,
+                "including the four that touch critical, which used to post")
+        c.equal(b.con.execute("SELECT COUNT(*) FROM v_outbox_due").fetchone()[0],
+                0, "so the outbox has nothing owed to any thread")
+
+        # The half Julian asked to keep. Pushed past the undo window, because
+        # nothing is logged until it has settled.
+        b.con.execute("UPDATE events SET occurred_at=datetime('now','-120 seconds')")
+        b.con.commit()
+        e = b.con.execute(
+            "SELECT e.*, NULL AS thread_name FROM events e "
+            "WHERE verb='priority_changed' ORDER BY rowid LIMIT 1").fetchone()
+        c.ok(cl.settled(e), "a silent move still settles for the change log")
+        line = cl.describe(e)
+        # Not quoted into the label: the line carries an arrow, and a label
+        # that only prints on some consoles is a check that fails for the
+        # wrong reason.
+        c.ok("unassigned" in line and "critical" in line,
+             "and the line names both bands")
+        c.ok(line.startswith("moved "), "as a move rather than a bare verb")
+
+        # The shared board is not a thread, and still gets it.
+        card = S.load_board(b.path)[0]
+        c.equal(card.payload()["priority"], "unassigned",
+                "the state channel carries the band it ended on")
+
+        # And undo is still offered, now always free.
+        c.ok(e["verb"] in ("completed", "priority_changed", "edited",
+                          "work_done", "renamed"),
+             "it is still an undoable verb")
+        c.equal(e["posted_at"], None,
+                "with nothing posted, so undoing it is silent rather than a "
+                "correction")
+
+    return c.report()
+
+
 CHECKS = (check_a_clients_spellings_are_one_entry,
           check_every_band_is_drawn_however_narrow_the_board,
           check_a_build_ticket_links_to_jira,
@@ -776,4 +852,5 @@ check_predicate, check_new_cards_rank, check_one_order,
           check_the_rail_clips_to_its_width,
           check_a_collapsed_band_still_lands_a_drop,
           check_a_folded_band_opens_for_what_goes_into_it,
-          check_an_empty_band_is_still_named)
+          check_an_empty_band_is_still_named,
+          check_a_band_move_never_reaches_the_thread)

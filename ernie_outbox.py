@@ -80,6 +80,11 @@ def describe(e) -> str:
     if verb == "completed":
         return "closing this thread"
     if verb == "priority_changed":
+        # Unreachable for anything queued from 0.9.11 on: priority changes
+        # carry no dispatch_after at all now. Kept because a machine that has
+        # been switched off can come back holding a row queued before that,
+        # and a change already in a thread still needs its correction worded
+        # if somebody undoes it.
         if new == "critical":
             return "making this critical"
         if old == "critical":
