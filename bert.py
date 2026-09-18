@@ -601,6 +601,32 @@ def undo_offered(e: dict, now=None) -> bool:
         <= UNDO_OFFERED_S
 
 
+def still_arriving(health: dict | None) -> bool:
+    """Whether this board has never finished a sync, so it is still filling.
+
+    A fresh install starts with an empty database and copies the whole channel
+    into it, which is the one time the board is empty for a reason nobody can
+    see. It looked identical to a board with nothing on it, so somebody handed
+    a new laptop had no way to tell it was working and every reason to go and
+    do something else.
+
+    `synced_at` is the finish of the last run that **completed**, so it is
+    empty for exactly as long as no pass has ever got to the end -- which is
+    the window this is about. The first pass on a fresh database is the long
+    one, because every thread is new and its messages all have to be fetched;
+    afterwards the board is whole and the passes are quick.
+
+    Pure, like its neighbours here, and **fails closed**: no health at all
+    means Bert cannot reach Ernie, and that is a different sentence with its
+    own indicator. Claiming a download is in progress when we cannot even ask
+    would be the wrong thing to say.
+
+    An errored first pass still stamps `finished_at`, so this stops rather
+    than sitting over a failure telling somebody to keep waiting.
+    """
+    return bool(health) and not health.get("synced_at")
+
+
 def send_offered(e: dict) -> bool:
     """Whether this row is still waiting to be posted, so it can be hurried.
 
@@ -5357,6 +5383,41 @@ class Bert(QMainWindow):
         self.banner.hide()
         outer.addWidget(self.banner)
 
+        # First, above every other strip, because while it is true the board
+        # below it is empty and nothing else on screen means anything yet.
+        # It is the one panel here that carries the face: the others are
+        # single lines about something being wrong, and this one is Bert
+        # saying it is busy, which is a different kind of message and the
+        # only one somebody is going to sit and wait on.
+        self.setup = QFrame()
+        self.setup.hide()
+        setup_row = QHBoxLayout(self.setup)
+        setup_row.setContentsMargins(16, 12, 16, 12)
+        setup_row.setSpacing(14)
+        self.setup_face = QLabel()
+        if UPDATE_FACE.exists():
+            # Half height. The dialog shows it at 130x190 with room around it;
+            # a strip has to leave the board something.
+            self.setup_face.setPixmap(QPixmap(str(UPDATE_FACE)).scaledToHeight(
+                95, Qt.SmoothTransformation))
+        self.setup_face.setStyleSheet("background:transparent;")
+        setup_row.addWidget(self.setup_face, 0, Qt.AlignVCenter)
+        said = QVBoxLayout()
+        said.setSpacing(4)
+        self.setup_head = QLabel()
+        hf = QFont()
+        hf.setPointSize(12)
+        hf.setWeight(QFont.DemiBold)
+        self.setup_head.setFont(hf)
+        said.addWidget(self.setup_head)
+        self.setup_said = QLabel()
+        self.setup_said.setWordWrap(True)
+        said.addWidget(self.setup_said)
+        self.setup_count = QLabel()
+        said.addWidget(self.setup_count)
+        setup_row.addLayout(said, 1)
+        outer.addWidget(self.setup)
+
         # Its own strip, so it cannot be painted over by the update banner --
         # both can be true at once. Amber, not red: nothing is asking for a
         # person. Across the window rather than on the figures panel because a
@@ -6612,6 +6673,7 @@ class Bert(QMainWindow):
         # Before the editor and drag guards below, not after: those return
         # early, and a board holding a parked payload is still a board showing
         # invented figures.
+        self._tick_setup()
         self._tick_invented()
         self._tick_wal()
 
@@ -6647,6 +6709,38 @@ class Bert(QMainWindow):
         self._pending = None
         self.cards = incoming
         self.render()
+
+    def _tick_setup(self):
+        """While the first sync is still copying the channel, say so.
+
+        The count is the honest one available: `sync_runs` gets its totals only
+        when a pass ends, so there is no live message figure to show -- but the
+        cards are written as they arrive, so `board_size` rises the whole way
+        through and is the number somebody actually wants to watch.
+        """
+        if not still_arriving(self.health):
+            self.setup.hide()
+            return
+        self.setup_head.setText("Bert is still reading Discord")
+        self.setup_said.setText(
+            "The first sync copies every thread in the channel into this "
+            "board. It happens once, on a new install \u2014 leave this open "
+            "and the tickets will fill in on their own.")
+        got = (self.health or {}).get("board_size") or 0
+        # Nought is a real answer for the first few seconds and reads as
+        # broken if it is printed as one, so it says what is happening
+        # instead of a number that has not started moving.
+        self.setup_count.setText(
+            f"{got} tickets so far\u2026" if got else "Reading the channel\u2026")
+        for w, colour in ((self.setup_head, T.INK),
+                          (self.setup_said, T.INK),
+                          (self.setup_count, T.MUTED)):
+            w.setStyleSheet(f"color:{colour}; background:transparent;"
+                            f" font-size:12px;")
+        self.setup.setStyleSheet(
+            f"QFrame {{ background:{T.PANEL};"
+            f" border-bottom:1px solid {T.LINE}; }}")
+        self.setup.show()
 
     def _tick_invented(self):
         """Say so when the figures include a past nobody lived through."""

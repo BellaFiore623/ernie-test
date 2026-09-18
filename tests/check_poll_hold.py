@@ -57,6 +57,13 @@ class FakeBert:
     def _tick_wal(self):
         pass
 
+    def _tick_setup(self):
+        # Whether the first sync is still copying the channel is a different
+        # question from what on_loaded does with a payload. Stubbed for the
+        # reason _tick_invented is: on_loaded calls it before the editor and
+        # drag guards, so a parked payload still has to reach it.
+        pass
+
     def _tick_invented(self):
         # Whether the figures include an invented past is a different
         # question from what on_loaded does with a payload, and it is checked

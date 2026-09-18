@@ -21,6 +21,7 @@ import time
 
 from support import Board, Check, iso
 
+import pathlib
 import bert
 import ernie_api as api
 
@@ -257,6 +258,82 @@ def check_health_ignores_a_running_cycle() -> bool:
     return c.report()
 
 
+def check_a_filling_board_says_it_is_filling() -> bool:
+    """A new install is empty for a reason nobody can see.
+
+    A fresh database copies the whole channel into itself before the board
+    means anything, and while that is happening Bert looked exactly like a
+    board with no tickets on it. Somebody handed a new laptop had no way to
+    tell it was working, which is every reason to go and do something else and
+    come back to a board they then distrust.
+
+    `synced_at` is the finish of the last run that **completed**, so it is
+    empty for precisely as long as no pass has ever reached the end -- and on
+    a fresh database the first pass is the long one, because every thread is
+    new and all its messages have to be fetched.
+
+    Three things are held here, and the third is the one that matters most: it
+    has to stop. A panel that says "still downloading" over a finished board,
+    or over a failure, is worse than no panel.
+    """
+    c = Check("a filling board says it is filling")
+
+    with Board() as b:
+        was, api.DB = api.DB, b.path
+        try:
+            # 1. A database nothing has run against yet.
+            h = api.health()
+            c.equal(h["synced_at"], None, "a brand new board has finished no sync")
+            c.ok(bert.still_arriving(h), "so the panel shows")
+
+            # 2. A pass under way, cards arriving. The count is the honest one:
+            #    sync_runs gets its totals only at the end, but cards are
+            #    written as they come, so board_size is what rises.
+            b.con.execute("INSERT INTO sync_runs (started_at) VALUES (?)", (iso(),))
+            b.con.commit()
+            h = api.health()
+            c.ok(h["syncing"], "the run is reported as in flight")
+            c.ok(bert.still_arriving(h), "and the panel is still up")
+            c.ok("board_size" in h,
+                 "with a count that rises while it works, which is what it shows")
+
+            # 3. It stops the moment a pass completes.
+            b.con.execute("UPDATE sync_runs SET finished_at=?, threads_seen=34",
+                          (iso(),))
+            b.con.commit()
+            c.ok(not bert.still_arriving(api.health()),
+                 "and it is gone once a pass has finished")
+
+            # An errored pass stamps finished_at too, so the panel does not sit
+            # over a failure telling somebody to keep waiting -- the ordinary
+            # error path owns that.
+            b.con.execute("UPDATE sync_runs SET error='no'")
+            b.con.commit()
+            c.ok(not bert.still_arriving(api.health()),
+                 "nor does it outlive a first pass that failed")
+        finally:
+            api.DB = was
+
+    # Fails closed. No health at all is "cannot reach Ernie", which has its own
+    # indicator; claiming a download is running when we cannot ask would be
+    # saying the wrong thing confidently.
+    c.ok(not bert.still_arriving(None),
+         "and it says nothing when Bert cannot reach Ernie at all")
+    c.ok(not bert.still_arriving({}), "or when the answer carries nothing")
+
+    # It is drawn where the other strips are, and updated on the same beat --
+    # a panel built but never ticked is the shape that would pass everything
+    # above and show nothing.
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    c.ok("self._tick_setup()" in src, "the poll ticks it")
+    c.ok("still_arriving(self.health)" in src, "off the pure decision")
+    c.ok("UPDATE_FACE" in src.split("self.setup = QFrame()")[1][:800],
+         "and it carries the face, which is the point of it being a panel")
+
+    return c.report()
+
+
 CHECKS = (check_mirror_age, check_stale_mirror_is_visible,
           check_the_other_states, check_refresh_waits_for_a_read,
-          check_refresh_gives_up, check_health_ignores_a_running_cycle)
+          check_refresh_gives_up, check_health_ignores_a_running_cycle,
+          check_a_filling_board_says_it_is_filling)

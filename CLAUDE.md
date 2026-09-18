@@ -362,6 +362,28 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 `messages.type`, the closure machinery and the audit-log attribution are in
 `docs/discord.md`.
 
+**A board that has never finished a sync says so, with the face.** A fresh
+install copies the whole channel into an empty database before the board means
+anything, and while that happens Bert looked exactly like a board with no
+tickets on it -- so somebody handed a new laptop had no way to tell it was
+working, which is every reason to go and do something else and come back
+distrusting it. `still_arriving()` is the pure decision and `synced_at` is the
+whole of it: that is the finish of the last run that *completed*, so it is
+empty for precisely as long as no pass has ever reached the end, and on a fresh
+database the first pass is the long one because every thread is new and all its
+messages have to be fetched. It **fails closed** -- no health at all means
+Ernie is unreachable, which is a different sentence with its own indicator --
+and an errored first pass stamps `finished_at` too, so the panel never sits
+over a failure telling somebody to keep waiting.
+The count is `board_size`, because it is the only honest live one: `sync_runs`
+gets its totals when a pass ends, but cards are written as they arrive, so that
+number rises the whole way through. Nought reads as broken, so under one card
+it says what it is doing instead.
+It is the one strip that carries `bert_update.png`, and the reason is that the
+others are single lines about something being wrong while this is Bert saying
+it is busy -- the only one anybody is going to sit and wait on.
+`tests/check_freshness.py`.
+
 Two things wear the name "needs attention" and they are different sets: the
 `unassigned` band, which is every card nobody has triaged yet, and the red
 edge, which is `needs_triage()` and is about the title being unreadable. A
