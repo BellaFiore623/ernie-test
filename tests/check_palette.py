@@ -1910,6 +1910,71 @@ def check_a_theme_previews_as_it_is_picked() -> bool:
     return c.report()
 
 
+def check_a_disabled_button_stops_looking_like_one() -> bool:
+    """Greying has to be visible, and the fill is what carried it.
+
+    The Undo button's `:disabled` rule changed only the outline colour. The
+    **filled** background came from the enabled rule above it and was never
+    overridden, so a row past the undo cutoff still read as pressable -- and
+    the disabled ink was `T.MUTED`, which is exactly the ink `Send now` uses
+    while it is fully live. Reported as the greyed one still looking
+    clickable, which it did, because the only thing that had changed was a
+    border nobody reads.
+
+    `spent_button()` is the one rule both feed buttons use, so they cannot
+    drift apart again: no fill at all, and the ink and outline washed with
+    `rgba` rather than swapped for another solid token -- fading is the thing
+    being said, and a second solid colour says something else.
+
+    Measured rather than eyeballed, in every palette: the disabled ink has to
+    be a long way weaker than the ink it replaces, and still be there.
+    """
+    c = Check("a disabled button stops looking like one")
+
+    def under(name):
+        def body():
+            rule = bert.spent_button()
+            c.ok("background:transparent" in rule.replace(" ", ""),
+                 f"{name}: the fill is cleared, not just the outline")
+            c.ok("rgba(" in rule, f"{name}: and the ink is washed, not swapped")
+
+            # What the eye actually gets: the wash composited over the row.
+            def over(fg, alpha, bg):
+                f, b = rgb(fg), rgb(bg)
+                return "#%02x%02x%02x" % tuple(
+                    round(x * alpha + y * (1 - alpha)) for x, y in zip(f, b))
+
+            faded = over(bert.T.MUTED, 0.45, bert.T.FEED)
+            dim = contrast(faded, bert.T.FEED)
+            live = contrast(bert.T.ACCENT, bert.T.FEED)
+            c.ok(dim < live / 2,
+                 f"{name}: disabled is far weaker than live "
+                 f"({dim:.2f} against {live:.2f})")
+            c.ok(dim > 1.4,
+                 f"{name}: and is still legible enough to read ({dim:.2f})")
+        return body
+
+    for name in bert.PALETTES:
+        in_theme(name, under(name))
+
+    # One rule, used by both, rather than two that agree today. The feed is
+    # the only place either button is built.
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    feed = src[src.index("def _render_feed"):]
+    feed = feed[:feed.index(chr(10) + "    def ", 10)]
+    c.equal(feed.count("spent_button()"), 2,
+            "both feed buttons take the same disabled rule")
+    c.ok("QPushButton:disabled" not in feed,
+         "and neither writes one of its own")
+
+    # A disabled button must not keep offering the hand: the cursor is the
+    # half people believe when it disagrees with the colour.
+    c.ok("Qt.ArrowCursor" in feed,
+         "a disabled button drops the pointing hand")
+
+    return c.report()
+
+
 CHECKS = (check_nothing_freezes_a_colour,
           check_a_theme_previews_as_it_is_picked,
           check_lights_chrome_is_grey_and_nothing_hides_in_it,
@@ -1939,4 +2004,5 @@ CHECKS = (check_nothing_freezes_a_colour,
           check_the_board_is_centred_and_keeps_its_scrollbar,
           check_the_board_centres_on_the_window_not_its_pane,
           check_a_band_header_is_accented_not_filled,
-          check_the_ink_follows_the_ground)
+          check_the_ink_follows_the_ground,
+          check_a_disabled_button_stops_looking_like_one)

@@ -1227,6 +1227,21 @@ The palette itself -- both themes, the measurements that chose every value,
 and the three rounds light mode took to get right -- is in `docs/bert-ui.md`.
 These are the rules that outlive it:
 
+**A disabled control has to stop looking like one, and the fill is what
+carries that.** The Undo button's `:disabled` rule changed only the outline,
+so the filled background from the enabled rule above it was never overridden
+and a row past the undo cutoff still read as pressable -- and its disabled ink
+was `T.MUTED`, the same ink `Send now` uses while fully live, so the greyed
+button looked no less available than the one beside it. `spent_button()` is
+the one rule both feed buttons take: no fill, and the ink and outline washed
+with `rgba` rather than swapped for another solid token, because fading is
+what is being said and a second solid colour says something else. Measured
+across all five palettes, the disabled ink lands at 1.90-2.41 against the
+enabled 5.65-7.30 -- under half in every theme, and still legible. The cursor
+goes with it: a disabled button offering the pointing hand says pressable
+while the colour says otherwise, and the cursor is the half people believe.
+`tests/check_palette.py`.
+
 No colour literals in Bert. Every colour comes off `T`, the active
 palette -- `T.INK`, `T.BAND_CARD[band]` -- and a new one has to be added to
 every palette. A hex typed into a stylesheet works in one theme and is wrong

@@ -1178,6 +1178,30 @@ def rgba(hex_colour, alpha):
     return f"rgba({r},{g},{b},{alpha})"
 
 
+def spent_button() -> str:
+    """How a button looks when it is there to be read rather than pressed.
+
+    A disabled control still has to say what it would have done -- that is why
+    it is left on the row at all -- but it must not look like it will do it.
+
+    The Undo button got this wrong in both directions. Its `:disabled` rule
+    changed only the outline, so the **filled** background from the enabled
+    rule stayed put and a row past the undo cutoff still read as clickable;
+    and the text went to `T.MUTED`, which is the same ink `Send now` uses
+    while it is fully live, so the greyed one looked no less available than
+    the button beside it.
+
+    So: no fill at all, and both the ink and the outline washed out with
+    `rgba` rather than swapped for another solid token. Fading is the thing
+    being said, and a second solid colour says something else.
+
+    A function rather than a constant, for the reason `field()` is: a constant
+    is built once at import, in whichever palette happened to load first.
+    """
+    return (f"QPushButton:disabled {{ color:{rgba(T.MUTED, 0.45)};"
+            f" background:transparent; border-color:{rgba(T.LINE, 0.55)}; }}")
+
+
 def field(chrome=False) -> str:
     """Type into these. A function, not a constant: a constant would be built
     once at import, in whichever palette happened to be loaded first.
@@ -8023,15 +8047,19 @@ class Bert(QMainWindow):
                 else:
                     tip = "Already in the thread \u2014 undoing posts a correction."
                 b.setToolTip(tip)
-                b.setCursor(Qt.PointingHandCursor)
+                live = self.writable() and offered
+                # The hand is a promise. A disabled button that still offers
+                # it says the row is pressable when the greying says it is not,
+                # and the cursor is the half people believe.
+                b.setCursor(Qt.PointingHandCursor if live else Qt.ArrowCursor)
                 b.setStyleSheet(
                     f"QPushButton {{ {BTN_HIT}"
                     f" border:1px solid {T.ACCENT}; border-radius:5px;"
                     f" color:{T.ACCENT}; background:{T.CONTROL}; }}"
                     f"QPushButton:hover {{"
                     f" background:{rgba(T.ACCENT, 0.12)}; }}"
-                    f"QPushButton:disabled {{ color:{T.MUTED}; border-color:{T.LINE}; }}")
-                b.setEnabled(self.writable() and offered)
+                    + spent_button())
+                b.setEnabled(live)
                 b.clicked.connect(lambda _, i=e["event_id"]: self.undo(i))
                 uc.addWidget(b)
 
@@ -8048,16 +8076,17 @@ class Bert(QMainWindow):
                         "waiting out the minute.\n\n"
                         "After it has gone, undoing posts a correction into "
                         "the thread rather than being silent.")
-                    sn.setCursor(Qt.PointingHandCursor)
+                    sendable = self.writable()
+                    sn.setCursor(Qt.PointingHandCursor if sendable
+                                 else Qt.ArrowCursor)
                     sn.setStyleSheet(
                         f"QPushButton {{ {BTN_HIT}"
                         f" border:1px solid {T.LINE}; border-radius:5px;"
                         f" color:{T.MUTED}; background:transparent; }}"
                         f"QPushButton:hover {{ color:{T.INK};"
                         f" border-color:{T.MUTED}; }}"
-                        f"QPushButton:disabled {{ color:{T.LINE};"
-                        f" border-color:{T.LINE}; }}")
-                    sn.setEnabled(self.writable())
+                        + spent_button())
+                    sn.setEnabled(sendable)
                     sn.clicked.connect(
                         lambda _, i=e["event_id"]: self.send_now(i))
                     uc.addWidget(sn)
