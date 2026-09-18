@@ -52,13 +52,6 @@ SETTINGS = pathlib.Path.home() / ".bert.json"
 # code, and a checkout without it should still start.
 def _asset(name):
     """Where a bundled file is, frozen or not.
-
-    PyInstaller unpacks data to `sys._MEIPASS` and leaves `__file__` pointing
-    at the module inside it -- which usually resolves the same way, and
-    "usually" is the problem: it depends on where `--add-data` put things,
-    and a missing logo is a null QPixmap that draws nothing and says nothing.
-    Asking for `_MEIPASS` directly is the documented answer and does not
-    depend on the layout the spec file happens to choose.
     """
     root = pathlib.Path(getattr(sys, "_MEIPASS", "")
                         or pathlib.Path(__file__).resolve().parent)
@@ -69,58 +62,35 @@ LOGO = _asset("bert_logo.png")
 # The face Bert makes about a version mismatch.
 UPDATE_FACE = _asset("bert_update.png")
 # Set only by --pretend-version / --pretend-ernie, which exist so the update
-# dialog can be looked at. Both halves of a from-source stack read the same
-# ernie_version, so a real disagreement cannot be staged without them.
+# dialog can be looked at.
 PRETEND_MINE = ""
 PRETEND_ERNIE = ""
-# And the third, because the release note is now a second source of "there is
-# a newer build" with a sentence of its own -- and in the exe it is the *only*
-# one that can ever fire, so without this the wording nobody can reach is the
-# wording everybody will actually see.
 PRETEND_NEWEST = ""
-# And the floor that note can set. The blocked screen is the one nobody can
-# reach by accident and the one most worth looking at before it is real: it
-# is what takes somebody's board to read-only.
 PRETEND_REQUIRED = ""
 # **Whether this window is the whole application.** `ernie_app` sets it before
 # building the window; a Bert started by `run.sh` or `bert.cmd` leaves it
-# False. The one thing it changes is the close warning, and it inverts it:
-# from source, closing Bert loses nothing because the outbox is another
-# process that goes on posting -- and the mistake worth catching is stopping
-# the *rest* of the stack on top of something unsent. In one process there is
-# no rest, and `ernie_app.shut_down` spends the undo window rather than
-# waiting it out, so nothing is lost by closing at all. The old warning would
-# be telling somebody to leave running something that has already stopped,
-# while saying nothing about the thing that does happen.
+# False.
 SUPERVISED = False
 POLL_MS = 5_000       # a poll that changes nothing now costs <1ms to render
 DEGRADED_S, BLOCKED_S = 5, 15
 SHARED_STALE_S = 180   # three missed sync cycles: their changes aren't arriving
 # The customer list is pulled hourly, so a few hours late means nothing and
-# six means the pull has stopped -- a bad token, or Jira unreachable. Only
-# then is there anything to say: an indicator that is always on is furniture.
+# six means the pull has stopped -- a bad token, or Jira unreachable.
 ROSTER_STALE_S = 6 * 3600
-# What a ticket being started stands under until Ernie has made its thread.
-# It is not a thread id and never becomes one: the real card arrives from the
-# next poll with an id of its own.
+
 # What a `completed` event's new_value says when the closing happened in
-# Discord rather than here. Matched, not imported: Bert talks to Ernie over
-# HTTP and imports none of it. tests/check_closures.py holds the three copies
-# together.
+# Discord rather than here.
 CLOSED_IN_DISCORD = "discord"
 
 NEW_TICKET = "__new__"
-MIRROR_STALE_S = 180   # the same three cycles, asked of Ernie's own reading:
-                       # past this the sync loop has stopped and the board is
-                       # older than it looks
+MIRROR_STALE_S = 180   # three cycles, asked of Ernie's own reading: past
+                       # this the sync has stopped and the board is older
+                       # than it looks
 REFRESH_GLYPH = "\u21bb"
-SPIN_MS = 33           # the glyph turns while a manual refresh waits, so the
-SPIN_STEP = 11         # wait reads from across the room and not only in the
-                       # wording beside it. A full turn in about a second.
+SPIN_MS = 33           # the glyph turns while a manual refresh waits;
+SPIN_STEP = 11         # a full turn in about a second
 AWAIT_GIVEUP_S = 90    # a manual refresh waits for the next read of Discord,
-                       # which is the only thing that moves the number. Past a
-                       # cycle and a half the sync loop isn't running, and the
-                       # amber age says more than a spinner does.
+                       # which is the only thing that moves the number.
 TOAST_MS = 6_000      # a ceiling: the toast normally clears the
                       # moment the board comes back without the card
 
@@ -135,25 +105,21 @@ EDGE_SCROLL_ZONE = 64
 EDGE_SCROLL_MAX = 22
 EDGE_SCROLL_MS = 16
 RAIL_WIDTH = 208           # what it opens at, not what it stays
-RAIL_MIN_W = 120           # narrower than this and a client name is gone
-RAIL_MAX_W = 460           # wider is a second board, not a running order
-# Margins, border and the queue stripe, taken off before working out how
-# much of a line fits across the rest of a row.
+RAIL_MIN_W = 120
+RAIL_MAX_W = 460
 RAIL_ROW_CHROME = 26
 CARD_HEAD_SPACING = 8      # between the columns of a card's top row
 CARD_CLIENT_MIN_W = 44     # a client name never shrinks past this, it elides
 CARD_FOOT_SPACING = 16     # between the columns of a card's bottom row
 CLIENT_BOX_MIN_W = 190     # "Bravo Environmental (7)" without eliding it
-CARD_ISSUE_MIN_W = 124     # an issue chip that cannot show its first word
-                           # says nothing: measured, 'equipment' and
-                           # 'client cr' are each 124px, and those first
-                           # words are what tell the two issues apart
-CARD_MIN_W = 140           # below this a card is not a card, whatever the window
-RAIL_REDRAW_MS = 140       # after the handle settles, not during
-RAIL_BAR_H = 2             # the rule beside a band's name in the running order
+CARD_ISSUE_MIN_W = 124
+
+CARD_MIN_W = 140
+RAIL_REDRAW_MS = 140
+RAIL_BAR_H = 2
 BOARD_PAD = 16              
 BOARD_MAX = 800             
-                           
+
 #Recent Activity Feed                                           
 FEED_HEIGHT = 160         
 FEED_FOLDED = 30           # the floor for a folded feed; the real
@@ -168,23 +134,16 @@ STATS_MIN_W = 180          # narrower and the month bars stop comparing
 STATS_MAX_W = 380          # wider is a report, not a margin
 STATS_WIDTH = 244          # what it opens at, not what it stays
 STATS_ROW_CHROME = 64      # the age column and the padding beside it
-# The strip kept clear down the right of the figures, so a number does not
-# end where the scrollbar begins. The feed has had one of these since it
-# started scrolling; this panel scrolls now too and did not.
+
 STATS_GUTTER = 10
 STATS_OLD_D = 90           # a quarter open is a different kind of old
 STATS_MAX_AGE_S = 60       # these move when a ticket closes, not per poll
+
 # How many retag pairs are drawn before the rest are summed into one line.
-# Four tags make twelve possible pairs, and a block that can be twelve rows
-# of bars pushes everything under it off the panel; the tail is almost always
-# ones and twos, and the line that replaces it names them in its tooltip so
-# nothing is actually hidden.
 STATS_MOVES_SHOWN = 6
 GLYPH_MOVE = "\u2192"  # the arrow between two tags: PROD -> OPS
-# What the figures panel can be asked about, shortest first. Weeks up to a
-# month and then quarters, because that is how the work is actually talked
-# about -- "the last three weeks" is a sentence somebody says and "the last
-# 19 days" is not.
+
+# What the figures panel can be asked about, shortest first.
 STATS_WINDOWS = (("7 days", 7), ("2 weeks", 14), ("3 weeks", 21),
                  ("4 weeks", 28), ("3 months", 91), ("6 months", 182),
                  ("9 months", 273), ("1 year", 365))
@@ -192,25 +151,19 @@ STATS_WINDOW_DEFAULT = 28
 GLYPH_LEFT = "\u00ab"
 GLYPH_RIGHT = "\u00bb"
 # The feed folds downward rather than sideways, so its button says so.
-# "Just like the running order" is about the control, not the arrow: a
-# panel that drops to the bottom edge marked with a chevron pointing
-# left is a button describing somebody else's panel.
 GLYPH_DOWN = "\u25be"
 GLYPH_UP = "\u25b4"
+
 # Qt's QWIDGETSIZE_MAX, which PySide6 does not export. Undoes a
 # setFixedHeight, which sets minimum and maximum together.
 UNCAPPED = 16777215
 FEED_TIME_W = 60           # the timestamp column
 FEED_MORE_W = 14           # the chevron, in its own column so it survives
-# Between the last column and the scrollbar. The Undo button sat hard
-# against it, which reads as the row having been cut off rather than
-# ending.
+                           # Between the last column and the scrollbar.
+
 FEED_GUTTER = 10
-# How wide a row may get. The controls are right-aligned in fixed
-# columns, so on a full-screen board they drifted a thousand pixels
-# from the line they belong to and it stopped being obvious which
-# button went with which entry. Capped, the gap cannot grow past
-# what the eye can carry, and the columns stay a column.
+
+# How wide a row may get.
 FEED_ROW_MAX_W = 1300
 # What a closed row is clipped to at the narrowest. The widths at each
 # site (46 for the thread, 44 for the detail, 40 for a new name) are
@@ -234,14 +187,12 @@ ROSTER_MAX_AGE_S = 900
 BANDS = ["unassigned", "critical", "high", "medium", "low"]
 BAND_LABEL = {b: b.capitalize() for b in BANDS}
 # Not "Unassigned", which described the data rather than the ask. These
-# are the tickets nobody has picked up, and that is the one thing on the
-# board wanting a person rather than reporting a state.
+# are the tickets nobody has picked up.
 BAND_LABEL["unassigned"] = "Needs Attention"
 CAUTION = "⚠"          # the same sign warning_row() uses
 
 # Build state, return state and equipment direction were replaced by work
-# items; nothing edits them any more. These stay so the activity feed and the
-# conflict dialog can still put words to an old event that names one.
+# items; nothing edits them any more.
 STATES = [("needs_created", "Needs created"),
           ("created", "Created"),
           ("not_needed", "Not needed")]
@@ -249,15 +200,11 @@ DIRECTIONS = [("", "\u2014"), ("leaving", "Leaving"), ("coming_back", "Coming ba
 
 # A stylesheet padding rule replaces the native one outright rather than
 # adding to it, so every button that sets its own padding is a smaller target
-# than a default Qt one. These sit on cards that take a drag, and a press a
-# pixel outside the button grabs the card instead -- a silent miss. One
-# generous value, used everywhere something is pressable. No colour in it, so
-# it is the same in both themes.
+# than a default Qt one.
 BTN_HIT = "font-size:11px; padding:6px 14px; "
 
-# Softened corners, the one purely cosmetic number here. A card is the big
-# shape on the board and takes the larger radius; a rail row is 26px tall and
-# anything more than a hint of a curve on one eats its own corner.
+# A card is the big shape and takes the larger radius; a rail row is 26px
+# tall, so more than a hint of a curve on one eats its own corner.
 CARD_RADIUS = 5
 ROW_RADIUS = 4
 BTN_RADIUS = 5
@@ -269,28 +216,15 @@ SEARCH_HINT_PAD = 16
 
 
 # --------------------------------------------------------------------------
-# Colour
-#
-# Two palettes with the same keys, and nothing below reads a colour any other
-# way. Adding one means adding it to both, which is the point: a hex written
-# straight into a stylesheet is a value that only works in one theme, and
-# there were a hundred and seventy of them here.
+# Color
 # --------------------------------------------------------------------------
 
 LIGHT = {
-    # Pitched where real light modes are pitched: a near-white canvas,
-    # near-black text, colour on small things and structure from hairlines.
-    # Answering glare by dimming the field produces something too dark to
-    # read as crisp and too light to read as restful.
-    #
     # Every value is solved against the floors `check_palette.py` holds
     # rather than chosen by eye -- CARD_MIN, CONTROL_MIN, EDGE_MIN -- so a
     # change here is checked rather than judged. The tag stripe in particular
     # doubles as that tag's label in the figures panel, where it is text.
-    #
-    # Neutral rather than tinted: a ground with a hue of its own hides
-    # whichever tags share it. Grey treats all four alike.
-    # Reasoning and measurements: docs/bert-ui.md.
+
     "ink": "#262626", "muted": "#5F5F5F", "line": "#C6C6C6",
     "surface": "#FFFFFF", "canvas": "#EEEEEE", "panel": "#EBEBEB",
     # The activity bar, under the sections either side of the board.
@@ -300,13 +234,7 @@ LIGHT = {
     # What a button, a field or a work-item bubble is drawn on: a step under
     # the card, in both themes.
     "control": "#E2E2E2",
-    # The floor, and it used to be the heaviest thing in the window. Light
-    # spent 7.0 L* separating chrome from workspace and 4.5 lifting a card off
-    # it; dark spends 3.1 and 10.1, so the two were inverted and the bar read
-    # as a slab while the cards did not read as the work. It is 3.2 L* off the
-    # canvas now, which is dark's proportion. What pinned it was `control`:
-    # the toolbar's own boxes were filled with it, so the bar had to stay
-    # underneath -- see `field`.
+    # The floor
     "well": "#E5E5E5",
     # Badge fills, a step under the card rather than over it.
     "amber_bg": "#F9EEDA", "amber_fg": "#79510D",
@@ -353,32 +281,16 @@ LIGHT = {
 }
 
 # The neutral ramp is lifted from the PortalBear prototype, which had already
-# been tuned against a real screen. The hues stay Bert's own, lifted until
-# they read on a dark ground: a fill chosen to sit under black text is not a
-# fill any more once the text on it is pale, it is a smudge. So the fills go
-# deep and the inks come up, which is the opposite move to the light palette
-# and the reason this could never have been a filter over the other one.
+# been tuned against a real screen.
 DARK = {
     "ink": "#E6E9EC", "muted": "#98A2AD", "line": "#333B45",
     "surface": "#1B2027", "canvas": "#14181D",
     # The sections around the work sit at the canvas here, not a step under
-    # it. Dark's bottom end has no room for a fourth level: the whole of it
-    # from the floor to the workspace is a contrast ratio of 1.06, and a step
-    # inside that measures 1.04 against the canvas -- a difference nobody can
-    # see, spent on a distinction light needs and dark does not. Dark gets its
-    # depth from the border-to-fill relationship instead, which is 5-7x.
+    # it.
     "panel": "#14181D",
-    # The activity bar. Light drops it under the sections either side; dark's
-    # bottom end has nowhere left to go -- floor to workspace is a ratio of
-    # 1.06 in total -- so it sits where they do.
+    # The activity bar.
     "feed": "#14181D",
     "beside": "#222831",
-    # A step under every card here too, which is where dark already had it --
-    # this is the value its buttons, fields and bubbles were already using, so
-    # naming the role changes nothing on this side. `beside` could not do the
-    # job: measured against dark's seven card fills it is lighter than some
-    # and darker than others, 1.02-1.07, which is a control that appears and
-    # disappears depending on the ticket's tag.
     "control": "#1B2027",
     # Below the canvas here, as it is in light -- in dark that means darker
     # still, which is the one direction #222831 could not go.
@@ -414,33 +326,11 @@ DARK = {
     },
 }
 
-# What Settings offers. "system" is read from the desktop when it is applied
-# and again whenever the desktop says it has changed, so a machine that
-# darkens at sunset takes the board with it. An explicit light or dark is a
-# decision and the desktop does not overrule it.
-# A third theme, and the cheapest kind there is to be sure about: DARK with
-# its neutrals re-hued, spread over the same dict so a token added to DARK
-# arrives here too. `check_palette.py` holds all three to the same keys, and
-# a palette built by hand is the one that misses one.
-#
-# **Every L* is held to within 0.16**, which is what makes it safe rather than
-# brave: contrast is a function of luminance alone, so a hue that does not
-# move lightness cannot break a ratio the palette depends on. Measured across
-# every pairing that carries meaning, the worst drift from DARK is 0.103 --
-# ink over canvas 14.63 -> 14.53, and nothing else moves by more.
-#
-# **The hazard is the other axis, and this is better at it than DARK.** A
-# ground with a hue of its own hides whichever tags share it, which is why
-# light's chrome is grey. DARK's ground sits at hue 266 and ENG's fill at 268,
-# so the two are 5.6 apart in CIELAB a*b* -- the closest any tag comes to
-# vanishing in either theme today. Hue 280 is past both ENG and Medium and
-# short of CS at 307, so the worst tag here stands at **10.8**, and every
-# other one is further off than it is in DARK.
-#
-# `low` and the no-tag fill are deliberately the ground's own hue -- they
-# stand off by lightness, which is the whole of what `low` is -- so they are
-# not in that measurement. Measuring them chromatically would be testing for
-# the thing they were designed not to have.
+
+
+# --------------------------------------------------------------------------
+# Other Themes
+# --------------------------------------------------------------------------
 MIDNIGHT = {
     **DARK,
     "ink": "#E6E8F0", "muted": "#9CA1B1", "line": "#313A50",
@@ -449,11 +339,6 @@ MIDNIGHT = {
     "well": "#071023", "chip_bg": "#1B2C4A",
 }
 
-
-# The same derivation as MIDNIGHT at hue 345, which the sweep put highest of
-# any ground: it sits between CS at 307 and the red bands at 26-29, the other
-# wide gap on the wheel. Worst tag 13.4 against midnight's 10.8 and dark's
-# 5.6, and the worst ratio drift from DARK is 0.050.
 PLUM = {
     **DARK,
     "ink": "#EFE6EB", "muted": "#AF9CA5", "line": "#4D3240",
@@ -462,19 +347,6 @@ PLUM = {
     "well": "#200816", "chip_bg": "#442035",
 }
 
-# Hue 195, in the 133-degree gap between OPS at 133 and Medium at 266 -- the
-# widest empty stretch on the wheel, which is why the sweep liked it.
-#
-# **Teal is the one of these that sRGB cannot hold at full chroma**, and that
-# is worth knowing before the next one. Blue and wine take chroma 21 at L* 8
-# and round-trip with their lightness intact; teal at the same chroma clips,
-# and a clipped channel moves L* -- 1.55 of it, which took the worst ratio
-# drift from 0.05 to 0.433 and quietly broke the thing holding L* was there to
-# protect. So each token here carries the most chroma sRGB will hold at its
-# own lightness, found by walking chroma down until the value round-trips.
-# Down rather than by halving: 8-bit rounding makes the fit non-monotonic, and
-# a binary search over it returned chip_bg at chroma 1.9 between neighbours at
-# 9 and 15 -- a grey chip in a teal room.
 SLATE = {
     **DARK,
     "ink": "#E0EBEA", "muted": "#8DA6A5", "line": "#184040",
@@ -483,17 +355,10 @@ SLATE = {
     "well": "#001414", "chip_bg": "#033232",
 }
 
-# **Every palette, by the name a setting holds, and the one place that knows
-# they exist.** `check_palette.py` walks this rather than keeping a list of
-# its own: a palette added there and missed at one of the ten sites that
-# check a floor is a theme held in nine places and not the tenth, which is
-# exactly the shape of failure these checks exist to catch.
 PALETTES = {"light": LIGHT, "dark": DARK, "midnight": MIDNIGHT,
             "plum": PLUM, "slate": SLATE}
 
-# Which of them have pale ink. `T.dark` is asked by anything choosing a glyph
-# or a shade for the ground it is on, and the question is about the ground
-# rather than about which palette happens to be loaded.
+# Which of them have pale ink.
 DARK_GROUNDS = frozenset({"dark", "midnight", "plum", "slate"})
 
 # "system" is not a palette, it is a question -- so it is added here rather
@@ -503,18 +368,14 @@ THEME_LABEL = {"system": "Follow the desktop", "light": "Light",
                "dark": "Dark", "midnight": "Midnight \u2014 dark blue",
                "plum": "Plum \u2014 dark wine",
                "slate": "Slate \u2014 dark teal"}
-# What a board with no setting yet opens as: dark, not the desktop.
-# Following the desktop would hand a fresh install whichever the machine
-# happened to be set to, which is a coin toss on the question that has taken
-# the most work to answer. Only the fallback when the key is absent, so
-# anybody who has chosen keeps their choice. Measurements: docs/bert-ui.md.
+
+# What a board with no setting yet opens as
 THEME_DEFAULT = "dark"
 
 # How the editor asks for a title. `guided` shows the tag, client, date and
 # description and keeps the title as a preview; `typing` shows the title box
 # and nothing else, for the people who have been typing these into Discord
-# for years. Both write the same title and both get the same warnings, so
-# neither is the safe one and neither is the quick one -- it is a preference.
+# for years.
 ENTRY_MODES = ("guided", "typing")
 ENTRY_LABEL = {"guided": "Guided \u2014 pick the tag, client and date",
                "typing": "Typing \u2014 one box, as in Discord"}
@@ -523,11 +384,6 @@ ENTRY_DEFAULT = "guided"
 
 class Theme:
     """The active palette, reached by name.
-
-    Attribute access rather than a dict lookup, so the call sites read the way
-    the constants they replaced did -- T.INK, not COLOURS["ink"] -- and so a
-    colour a palette is missing is an AttributeError the first time the board
-    draws rather than a KeyError somewhere down a later repaint.
     """
 
     _p = LIGHT
@@ -565,14 +421,9 @@ _OPEN = []
 def dark_titlebar(win, on=None) -> bool:
     """Ask Windows to draw this window's title bar dark.
 
-    The strip with the minimise and close buttons is drawn by the desktop, not
-    by Qt, so no stylesheet and no QPalette reaches it -- a dark board under a
-    bright white frame. DWM will darken it on request, which is the same
-    switch every native app uses.
-
-    Windows only, and quietly nothing anywhere else. The attribute was 19
-    before Windows 10 build 18985 and 20 after, and asking with the wrong one
-    is a returned error rather than a raise, so both are offered.
+    The attribute is 19 before Windows 10 build 18985 and 20 after, and the
+    wrong one comes back as an error rather than raising -- which is why the
+    loop below tries both, and why it must go on trying both.
     """
     if sys.platform != "win32":
         return False
@@ -592,10 +443,6 @@ def dark_titlebar(win, on=None) -> bool:
 
 def desktop_is_dark() -> bool:
     """What the desktop is set to, when Qt is willing to say.
-
-    colorScheme() landed in Qt 6.5; on anything older there is no answer to
-    give and light is the safer guess, since that is what every stylesheet
-    here was written against.
     """
     hints = QApplication.styleHints() if QApplication.instance() else None
     scheme = getattr(hints, "colorScheme", None)
@@ -609,11 +456,6 @@ def desktop_is_dark() -> bool:
 
 def resolve_theme(choice: str) -> str:
     """A stored setting to the palette to actually load.
-
-    Anything the settings offer is taken as itself; only "system" is a
-    question, and it is answered with the two the desktop can actually tell us
-    about. A desktop has no way to say "dark, and blue" -- midnight is a
-    choice somebody makes, never one that is inferred.
     """
     if choice in PALETTES:
         return choice
@@ -622,22 +464,13 @@ def resolve_theme(choice: str) -> str:
 
 def apply_theme(choice: str) -> None:
     """Load a palette and hand Qt a matching one for what it draws itself.
-
-    The stylesheets below cover Bert's own widgets. Everything Qt renders on
-    its own -- menus, tooltips, scrollbars, the popup list on a combo box,
-    every QMessageBox -- reads QPalette instead, and would otherwise stay
-    bright white in the middle of a dark board.
     """
     T.use(resolve_theme(choice))
     app = QApplication.instance()
     if app is None:
         return
 
-    # From the style's own palette, not a blank one. A default-constructed
-    # QPalette leaves every role this does not name at Qt's fallback, which is
-    # largely black -- and setPalette() then installs that over the whole
-    # application. It is why the rail's tooltips came out black: nothing here
-    # names the role a tooltip actually paints its background from.
+    # From the style's own palette, not a blank one.
     pal = QPalette(app.style().standardPalette())
     ink, surface, canvas = QColor(T.INK), QColor(T.SURFACE), QColor(T.CANVAS)
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText,
@@ -655,17 +488,12 @@ def apply_theme(choice: str) -> None:
     pal.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(T.MUTED))
     app.setPalette(pal)
 
-    # Tooltips need saying twice. Qt draws them itself and, on Windows, ignores
-    # ToolTipBase/ToolTipText above -- they came out the system's pale yellow
-    # in the middle of a dark board. Stating it as a rule also settles it
-    # against any container stylesheet that would otherwise cascade into one,
-    # which is how the rail's rows came to have black-on-black tooltips.
+    # Tooltips need saying twice.
     app.setStyleSheet(
         f"QToolTip {{ color:{T.INK}; background-color:{T.SURFACE};"
         f" border:1px solid {T.LINE}; padding:4px 6px; }}")
 
-# Long enough to find the card the jump landed on, short enough that it is
-# not a selection state the board would then have to explain.
+# Long enough to find the card the jump landed on
 FLASH_MS = 600
 
 # Issues that mean the thread itself couldn't be read properly.
@@ -726,23 +554,12 @@ def wal_standing(wal: dict | None) -> str:
 def build_standing(mine, theirs, floor, newest="", required=""):
     """Whether this Bert is behind, and how far. Answers (state, sentence).
 
-    Pure, and separate from the dialog that shows it: this is what disables
-    writing, so the decision is the part worth being sure about.
+    blocked is older than the floor Ernie publishes and goes read-only;
+    behind is merely not newest; ok is the rest. Fails open at every step it
+    cannot answer.
 
-    **blocked** is older than the floor its Ernie publishes -- read-only.
-    **behind** is merely not the newest, which is most of them and no reason
-    to stop anybody working. **ok** is the rest.
-
-    **`theirs` cannot answer this in the exe, which is what `newest` is for.**
-    In one process Bert and Ernie are the same module imported once, so the
-    numbers are always equal and the check quietly stopped existing the day we
-    shipped the supervisor. `newest` comes from the pinned note in the state
-    channel -- a fact from outside this process, and so the only kind that can
-    be news to it. Whichever of the two is further ahead wins: from source
-    there is often no note, and `theirs` is still a real signal.
-
-    It fails *open* at every step it cannot answer. A build check has no
-    business taking a working board away over a missing field.
+    In the exe `theirs` is always equal -- one process, one module -- so
+    `newest`, off the pinned note, is the only thing that can be news.
     """
     if not theirs and not newest:
         return "ok", ""
@@ -821,17 +638,10 @@ class UpdateDialog(QDialog):
         head.setStyleSheet(f"color:{T.INK}; background:transparent;")
         said.addWidget(head)
 
-        # Where it goes belongs in the sentence rather than the layout: as a
-        # line under the buttons it has to pick a side, and the two states
-        # order those buttons oppositely, so it sat under whichever one it
-        # was not describing. As a parenthesis it is the last thing the
-        # paragraph says, which is what it is.
-        #
-        # The host comes off the address rather than being written down.
-        # `BERT_UPDATE_URL` is published by Ernie precisely so the download
-        # can move without anybody rebuilding Bert, so "Google Drive" typed
-        # here becomes a lie the day it moves -- and the kind nobody notices,
-        # because the button still works.
+        # The host is read off the address, never written here: the download
+        # can move without a rebuild, so a name typed in becomes a lie the day
+        # it does -- and the kind nobody notices, because the button still
+        # works.
         if url:
             # Named, because a bare "Opens ..." leaves the reader to work
             # out which of the two buttons it is about -- and the other one
@@ -1126,21 +936,9 @@ def unsent_mark(c):
 
     Returns (glyph, colour, why), or None when the card owes nothing.
 
-    Two debts, the same two `Bert._owed()` counts: events queued behind their
-    undo window, and cards moved since the shared board was last published. A
-    reorder is silent by design -- no dispatch_after -- so it appears only in
-    the second, and reading the first alone would leave a card somebody just
-    dragged looking as though it had gone out. The mark and the close warning
-    have to agree or one of them is lying.
-
-    A row the outbox has given up on says something else: it will not be tried
-    again, so a mark reading "in a moment" tells the reader to wait for
-    something that is not coming. Hence `stuck` apart from `queued`.
-
-    **Words, not a glyph.** `*` in the corner of a card is a footnote mark
-    with nothing to point at, and the tooltip explaining it is not read on a
-    card nobody is already asking about. A chip is the shape the eye is
-    reading there anyway.
+    Both debts `Bert._owed()` counts, and they must agree with it: queued
+    events, and cards moved since the board was last published. A given-up row
+    is a third state and must never read as waiting.
     """
     if c.get("stuck"):
         # Amber stays: this one is a caution, and amber is what a caution
@@ -1804,14 +1602,6 @@ def elided_chip(text, bg, fg, room):
 
 def ticket_url(base, key):
     """Where a PIP key lives, or "" if it cannot be said.
-
-    Pure, and separate from the chip, for the reason `build_standing` is: a
-    check can exercise it without a QApplication, which these checks never
-    make -- a widget built without one aborts the process rather than raising.
-
-    **No Jira call anywhere.** String arithmetic; the desktop opens the result
-    against the reader's own session. Empty for a missing half, so the chip
-    cannot exist pointing nowhere.
     """
     if not base or not key:
         return ""
@@ -1820,16 +1610,6 @@ def ticket_url(base, key):
 
 class LinkChip(QLabel):
     """A chip that opens something in the browser.
-
-    **Nothing here talks to Jira.** The chip builds
-    `{base}/browse/PIP-8448` and hands it to the desktop, so it resolves
-    against the reader's own Jira session -- no token, no permission, no
-    request from Ernie. Confirmed against the real confirmation messages,
-    which carry that exact URL beside the key they announce.
-
-    It has to *look* like a link before it is clicked, which a plain chip
-    does not: the accent, a pointing hand, and an underline on hover. A chip
-    that silently happens to be clickable is one nobody clicks.
     """
 
     def __init__(self, text, url, tip=""):
@@ -1885,17 +1665,6 @@ class ClickLabel(QLabel):
 
 class FeedRow(ClickableWidget):
     """One line of the activity feed, with a hairline under it.
-
-    The status chip and Undo are right-aligned in fixed columns, which is what
-    makes them a column you can run down and click -- but the line they belong
-    to ends a long way to the left of them, and it was not clear which button
-    went with which entry. FEED_ROW_MAX_W caps how far apart they can get; the
-    rule closes the rest of the distance by making the pair read as one row.
-
-    Drawn, not added to the layout. A separator widget would be another item
-    for _fit_feed to walk, measure, and hold to a row height, and it would
-    have to be kept out of every count the panel height is worked out from.
-    A line costs nothing in that accounting.
     """
 
     def paintEvent(self, e):
@@ -1909,19 +1678,10 @@ class FeedRow(ClickableWidget):
 class ClickableLabel(QLabel):
     """Double-click jumps straight into edit mode on that field.
 
-    Reports no minimum width, for the reason FeedLine does: an ordinary
-    QLabel cannot be made narrower than its text, so it claims the whole
-    client name as a floor and shoves everything after it off the end. The
-    card's corner is fixed columns -- the build-ticket link, the PIP count,
-    the mark saying a change has not gone out -- and they were the ones that
-    disappeared. Measured with a real customer: 'Municipal Authority of
-    Westmoreland County' wants 408px inside a 300px card, and the age (which
-    sat here then) and the mark both landed past the edge, cut away in
-    silence.
-
-    The text is what gives way. That is the same call the feed rows make,
-    and for the same reason -- a clipped name is still a name, while a
-    control you cannot see is gone.
+    Reports no minimum width: a plain QLabel claims its whole text as a
+    floor and shoves the card's fixed corner off the end. Measured with a
+    real customer -- 'Municipal Authority of Westmoreland County' wants
+    408px inside a 300px card.
     """
     doubleClicked = Signal()
 
@@ -1995,19 +1755,6 @@ def client_words(text: str) -> list:
 
 def client_fuzzy(q: str, typed: str, keys: list, raws: list) -> float:
     """How much what was typed resembles one client, at its best.
-
-    Whole against whole **and word against word**, because comparing only the
-    whole strings punishes a name for the half that has not been typed yet:
-    `trafforf` against `traffordborough` is 0.61 and thrown away, while
-    against the word `trafford` it is 0.93. The letters were never the
-    problem. The same miss hides a name typed *past* -- somebody who gets
-    `Trafford` right and then keeps going scores 0.48 on the whole string and
-    1.0 on the first word.
-
-    Only ever puts a candidate in front of a person. `reconcile_aliases`
-    still refuses to merge on resemblance with nobody watching, and that rule
-    is untouched: `falmouth ma` and `falmouth me` are different places, and
-    this happily offers both.
     """
     best = max((difflib.SequenceMatcher(None, q, k).ratio()
                 for k in keys if k), default=0.0)
@@ -2026,12 +1773,6 @@ def client_matches(typed, roster, limit=CLIENT_HITS):
     board has ever used for them -- the alias table already knows the
     misspellings, so a name that was typed wrong last year finds the right
     customer today.
-
-    Nothing here decides anything. reconcile_aliases refuses to merge on
-    resemblance because 'falmouth ma' and 'falmouth me' are 0.91 similar and
-    are different places; that rule is about a matcher writing an alias with
-    nobody watching. This one only puts candidates in front of a person, who
-    picks -- which is the safe half of the same idea.
     """
     q = client_squash(typed)
     if not q:
@@ -2087,19 +1828,6 @@ def client_known(typed, roster) -> bool:
 
 def client_stands_for(typed, short) -> bool:
     """Whether what was typed is this customer's name rather than a slip at it.
-
-    The name itself, punctuation aside -- `Dukes Root Control` is
-    `Duke's Root Control` with the apostrophe left out, not a different
-    answer. And a **deliberate shortening**, which this board is full of:
-    measured against production, 24 of the 65 offered clients are typed
-    shorter in titles than their Jira name, `Trekk` for *Trekk Design Group*
-    on 18 threads and `SCI` for *SCI Infrastructure LLC.* on 15. Expanding
-    those would make every new title disagree with the ones already there,
-    which is the reasoning that chose the short names in the first place.
-
-    So a prefix counts, and so does a run of whole words in order. `Bravo`
-    stands for *Bravo Environmental*; `bravon` does not stand for anything,
-    which is what makes it a typo rather than a shortening.
     """
     a, b = client_squash(typed), client_squash(short)
     if not a or not b:
@@ -2118,32 +1846,13 @@ def client_stands_for(typed, short) -> bool:
 
 def client_resolve(typed, roster, opened_with="") -> str:
     """The name to save instead of what was typed, or "" to keep it as typed.
-
-    For the ordinary way a typo survives: `bravon` saved as `bravon` while the
-    box had been offering *Bravo Environments* the whole time.
-
-    **Exactly one candidate, or nothing happens.** `dukes` returns Duke's
-    Omaha and Duke's Root Control, and choosing between two customers is the
-    wrong-customer failure this exists to prevent. Two is a question for a
-    person, not a near miss to resolve.
-
-    **And only for a name somebody has just typed.** A card that arrived
-    carrying an unknown client is not a mistake anybody is making now, and
-    rewriting it because an editor was opened would change tickets nobody
-    edited -- which is also what keeps `is_dirty` honest.
-
-    A name the roster knows is left alone, aliases included. Pure, so the
-    decision can be exercised without a QApplication.
     """
     typed = (typed or "").strip()
     if not typed:
         return ""
     if client_squash(typed) == client_squash(opened_with):
         return ""
-    # The customer's own name stands; an alias does not. `client_known`
-    # counts aliases, which is right for the caution and wrong here: an alias
-    # is a wrong spelling that happens to resolve, which is what this exists
-    # to correct.
+    # The customer's own name stands; an alias does not.
     #
     # Correcting through an alias is the safest case there is: an alias names
     # one client outright, so there is nothing to guess.
@@ -2178,10 +1887,7 @@ def client_note(typed, roster, opened_with="") -> str:
     if client_squash(typed) == client_squash(opened_with):
         return ""
     # One candidate and the save will take it, so the box says so *before*
-    # the save rather than after. A correction somebody can see coming is a
-    # help; the same correction found afterwards is the software having
-    # changed what they wrote. Asked before `client_known`, because an alias
-    # is known *and* correctable -- it is a wrong spelling that resolves.
+    # the save rather than after.
     fixed = client_resolve(typed, roster, opened_with)
     if fixed:
         return f"will be saved as {fixed}"
@@ -2658,15 +2364,6 @@ def status_forms(text):
 
 def attention_text(n, total=None) -> str:
     """`1 needs attention`, `2 need attention`, and nothing at nought.
-
-    The verb agrees with the count: it read "1 need attention" for as long as
-    there had been a count there, and it sits beside the logo on every board
-    in the company.
-
-    `total` shows the narrowing when a filter is hiding some of them -- `2 of
-    3 need attention`. The control cycles what is on screen, so the number
-    has to say when that is not all of it; cycling silently past a card a
-    chip has hidden is the disappearing-band problem by another route.
     """
     if not n:
         return ""
@@ -2676,10 +2373,6 @@ def attention_text(n, total=None) -> str:
 
 def a_few(n, one: str, many: str) -> str:
     """`1 change`, `3 changes` -- the noun and its verb, agreeing.
-
-    `card(s)` is fine in a log, where the reader is looking for a number.
-    In a sentence somebody reads it is a small piece of grit, and these are
-    tooltips written to be read.
     """
     return f"{n} {one if n == 1 else many}"
 
@@ -2708,18 +2401,6 @@ def equipment_types(chosen) -> set:
 
 def equipment_counts(cards) -> dict:
     """How many open tickets carry each kind, across the whole board.
-
-    The whole board, always -- the same rule `queue_counts` follows and for
-    the same two reasons. Counted after filtering, turning one chip on would
-    change the number on another; counted against the search it would answer
-    "how many did you find", which is what the board itself already shows.
-
-    A card with several pieces counts once under each kind it carries, so
-    these deliberately do not sum to the board. **Most cards are under none
-    of them**: 31 of production's 50 open cards have no equipment parsed at
-    all, so the chips add to well under the board's size and a reader has to
-    be able to see that rather than wonder where the rest went. That is what
-    the counts are for.
     """
     out = {name: 0 for name, _ in EQUIPMENT_FILTERS}
     for c in cards:
@@ -2738,18 +2419,6 @@ CLIENT_NONE = "__no_client__"    # cards whose title names nobody
 
 def client_key(name, roster) -> str:
     """The one label a client's many spellings should be counted under.
-
-    The board's open cards carry 35 distinct client names across 53 tickets,
-    four of them one customer: `bravon`, `bravo`, `Bravo`, `Bravo
-    Environmental`. Keyed on the string as typed, a filter would offer four
-    Bravos and never show their seven tickets together.
-
-    An alias is an exact answer, not a resemblance: `reconcile_aliases`
-    resolves through the Client CR key and refuses to merge on similarity.
-    Nothing here compares strings loosely.
-
-    A name resolving to nobody is its own key -- a customer exists before Jira
-    hears about them, and their tickets still have to be findable.
     """
     name = (name or "").strip()
     if not name:
@@ -2765,16 +2434,6 @@ def client_key(name, roster) -> str:
 
 def client_counts(cards, roster):
     """Every client on the board and how many open tickets they have.
-
-    The whole board, always -- never the filtered view. `queue_counts` gives
-    the two reasons and they hold here: counted after the filtering, picking
-    one client changes the number beside every other; counted against the
-    search, it answers "how many did you find", which is what the board on
-    screen is already showing.
-
-    Alphabetical rather than by count. Thirty-five entries is a list somebody
-    scans for a name they already have in mind, and a list that reorders
-    itself as the board moves is one you cannot learn the shape of.
     """
     counts = {}
     for c in cards or []:
@@ -2794,18 +2453,10 @@ def client_counts(cards, roster):
 def client_typos(cards, roster):
     """The spellings on the board that are provably wrong, and how many.
 
-    Grouping by resolved customer makes `bravon` and `Bravo Environmental`
-    one answer -- and makes the mistake disappear, which is the half worth
-    keeping visible. A filter list that hides what you would want to repair
-    quietly protects it.
-
-    **Provably wrong, not merely unfamiliar.** A spelling counts only if the
-    roster knows who it means *and* it is not a deliberate shortening --
-    `client_stands_for` draws the same line `client_resolve` does, so `Bravo`
-    never goes red and `bravon` does.
-
-    A name Jira has never heard of is left alone: a customer can exist before
-    Jira hears about them.
+    Provably wrong, not merely unfamiliar: a spelling counts only if the
+    roster knows who it means and it is not a deliberate shortening, so
+    `Bravo` never goes red and `bravon` does. A name Jira has never heard of
+    is left alone -- a customer can exist before Jira hears about them.
     """
     out = {}
     for c in cards or []:
@@ -3101,14 +2752,8 @@ class Card(QFrame):
 
         # PIP tickets raised in the thread -- the build and return requests the
         # interface bot posts -- not Bert's own tickets, which is what a card
-        # already is. "1 tickets" on a ticket read as nonsense twice over: the
-        # count was always plural, and the noun collided with the card itself.
-        #
-        # Shown only past one. A thread usually exists because somebody raised
-        # a PIP, so one is the case you would assume; two or more is the thing
-        # worth a glance. Production runs 83 threads on one and 111 on two, so
-        # this is a real distinction there -- and in the sandbox, where every
-        # thread has exactly one, it correctly says nothing at all.
+        # already is. Shown only past one: production runs 83 threads on one
+        # PIP and 111 on two, so the distinction is real there.
         pips = d.get("ticket_count") or 0
 
         # Built before they are placed, so the client can be told what is
@@ -3116,13 +2761,7 @@ class Card(QFrame):
         edited = chip("edited", T.CHIP_BG, T.MUTED) if d.get("client_override") else None
         after = []
         # The build ticket, as a link to it. Only when there is one *and*
-        # somewhere for it to go: with no JIRA_BASE_URL configured there is no
-        # address, so there is no chip -- the same rule "Get the new build"
-        # follows, and for the same reason. A control cannot exist without
-        # somewhere to lead.
-        #
-        # One chip, never a list: measured against production, every thread
-        # that has a build ticket has exactly one -- 193 threads, 193 tickets.
+        # somewhere for it to go.
         key = d.get("build_ticket")
         url = ticket_url((self.board.health or {}).get("jira_url"), key)
         if url:
@@ -3139,17 +2778,13 @@ class Card(QFrame):
         mark = unsent_mark(d)
         if mark:
             text, colour, why = mark
-            # A chip, like the ones beside it. Drawn in its own ink over the
-            # plain chip ground rather than a fill of its own: it is a state,
-            # not a warning, and the amber one carries the only colour here.
+            # A chip, like the ones beside it.
             said = chip(text, T.CHIP_BG, colour)
             said.setToolTip(why)
             after.append(said)
 
         # Cut to the room it actually has, measured against the font it draws
-        # in, the way a rail row cuts both of its lines. A count of characters
-        # would be a guess about a proportional font, and the head's chrome
-        # is not even a fixed set of columns. The whole name is one hover away.
+        # in, the way a rail row cuts both of its lines.
         room = self._client_room([tag] + ([edited] if edited else []) + after)
         cut = QFontMetrics(f).elidedText(who, Qt.ElideRight, room)
         client.setText(cut)
@@ -3210,19 +2845,12 @@ class Card(QFrame):
 
         # The buttons are built before they are placed, so the chips can be
         # told what is actually left instead of claiming the row and pushing
-        # them off it. Measured before this: one issue chip on a card in a
-        # 463px column laid Complete out at x=470 -- the primary action, off
-        # the edge of its own card, on 13 of production's 50 open tickets.
+        # them off it.
         self.edit_btn = QPushButton("Edit")
         self.edit_btn.setStyleSheet(btn_css())
         self.edit_btn.clicked.connect(self.enter_edit)
 
-        # Close thread, not Complete. Two things were wrong with the old
-        # word. Completing is what happens to a work item -- one bubble, one
-        # tick -- so the ticket and the bubble shared a verb and read as the
-        # same act. And the button does not only take the card off the board:
-        # it archives the Discord thread, which is the part somebody should
-        # be able to see before pressing it rather than afterwards.
+        # Close thread, not Complete.
         #
         # Qt puts a button's icon on the left, always.
         self.done_btn = QPushButton("Close thread ")
@@ -3233,10 +2861,7 @@ class Card(QFrame):
         self.done_btn.clicked.connect(lambda: self.board.complete(self.thread_id))
 
         # Not while there is work left on it: a card is a list of what is
-        # still to do. The bubbles are drawn directly above this button, so
-        # the disabled control sits beside its reason, and the tooltip says
-        # what to do. The server refuses it too, since this half goes stale --
-        # the other machine can add an item inside the 5s poll.
+        # still to do.
         #
         # **Only the count is set here; `set_writable` disables the button.**
         # setEnabled(False) at this point does nothing: `set_writable` runs at
@@ -3265,11 +2890,6 @@ class Card(QFrame):
 
     def _fit_foot(self, d):
         """The footer's columns, fitted to the card before any of them is placed.
-
-        A QLabel reports its whole text as a minimum width, so laying the row
-        out chips-first pushed the buttons past the card's edge -- Complete at
-        x=470 on a 463px card. 13 of production's 50 open cards carry an issue
-        chip and 4 carry two.
 
         **The controls never give way.** What does, in order:
 
@@ -3318,9 +2938,6 @@ class Card(QFrame):
                 break
         else:
             # Nothing fits whole, so the age is already down to its number.
-            # Two chips are worth keeping only if both can still be read:
-            # `eq...` beside `cl...` says less between them than one chip
-            # somebody can finish reading.
             if (len(texts) == 2
                     and room_for(self._age_width(chosen), 2) < CARD_ISSUE_MIN_W * 2):
                 keep = texts[:1]
@@ -3328,10 +2945,7 @@ class Card(QFrame):
                                  len(keep)) < CARD_ISSUE_MIN_W:
                 # The age goes last but it goes before the chip does. It is
                 # context -- how long this has been quiet -- and an amber chip
-                # is the card asking for somebody. Measured at the column's
-                # 463px minimum, keeping `12d` left the chip one pixel under
-                # its floor, so the issue and its tooltip vanished off a card
-                # to make room for a number.
+                # is the card asking for somebody.
                 chosen = None
                 if room_for(0, len(keep)) < CARD_ISSUE_MIN_W:
                     keep = []
@@ -3351,11 +2965,6 @@ class Card(QFrame):
     @staticmethod
     def _shares(texts, room):
         """How much of `room` each chip gets.
-
-        Not an even split: a chip that already fits keeps its own width and
-        hands the difference on, so `client cr not found` is not shortened to
-        pay for a neighbour that had room to spare. Settled by going round
-        until nothing more fits, which for two chips is at most twice.
         """
         made = [chip(t, T.AMBER_BG, T.AMBER_FG) for t in texts]
         for w in made:
@@ -4184,18 +3793,13 @@ class Card(QFrame):
     def _age_label(cls, text, ts):
         """The age as it sits on the card, or None when there is nothing to say.
 
-        Built only when it has a number: an empty label still takes a column
-        and its spacing.
+        Built only when it has a number: an empty label still takes a column.
+        It sits in the footer, whose left end is empty, rather than the head,
+        where every column is paid for by the client name -- which is what
+        makes the words affordable.
 
-        **It sits in the footer, not the card's corner**, which is what makes
-        the words affordable. Every column in the head is paid for by the
-        client name (`_client_room` subtracts each one), and the corner runs
-        207px on average inside a 463px minimum -- 56px of it this. The
-        footer's left end is empty, everything there being pushed right by a
-        stretch, so the age costs the name nothing.
-
-        The tooltip says what the number counts, because neither form does:
-        `3d` reads as the *ticket's* age, which is not what this is.
+        The tooltip says what the number counts: `3d` reads as the ticket's
+        age, which is not what this is.
         """
         if not text:
             return None
@@ -4381,17 +3985,10 @@ class Band(QWidget):
             it = self.lay.takeAt(0)
             w = it.widget()
             if w is not None and w not in (self.marker, self.empty_hint):
-                # Hide, then unparent. deleteLater() only queues the deletion,
-                # and a card still parented to the panel keeps painting at the
-                # geometry it had -- so a rebuild mid-drag left the old rows on
-                # screen underneath the new ones.
-                #
-                # But setParent(None) on a *visible* widget makes it a visible
-                # top-level window, and it stays one until the event loop gets
-                # round to deleting it. Rebuilding the feed threw away 151 rows
-                # and put 151 blank windows on the desktop for 1.2s each,
-                # titled "python3" because that is what Qt calls the
-                # application. Hiding first costs nothing and is the whole fix.
+                # Hide before unparent, and keep it that way. setParent(None)
+                # on a visible widget makes it a visible top-level window
+                # until the event loop deletes it -- rebuilding the feed once
+                # put 151 blank windows on the desktop for 1.2s each.
                 w.hide()
                 w.setParent(None)
                 w.deleteLater()
@@ -5097,18 +4694,12 @@ class Rail(QWidget):
 class Stats(QWidget):
     """The board over time, in the space to the right of it.
 
-    The board says what is on the plate now, not whether that is getting
-    better or worse, how long a ticket takes, or what has been open since
-    April. Each figure earns its place by answering something the board
-    cannot: the first one that turns out to be wrong takes the credibility of
-    the others with it. There were four -- "no ticket raised" was dropped
-    after Julian read it.
+    Each figure earns its place by answering something the board cannot, and
+    the first one that turns out to be wrong takes the others' credibility
+    with it. There were four; "no ticket raised" was dropped after Julian
+    read it.
 
-    Sized like the running order and for the same reasons -- a range rather
-    than a fixed width, so the splitter handle has something to move; folded
-    by its own button rather than by the handle; and the width remembered.
-    The rail plus a full-width board is 1040px, so on anything wider this
-    grows into empty space rather than out of the board.
+    Sized like the running order, for the same reasons.
     """
 
     def __init__(self, board):
@@ -5334,18 +4925,10 @@ class Stats(QWidget):
     def _moves(self, data):
         """Where tickets went when somebody retagged them.
 
-        `PROD -> OPS  21`. The pair is the fact, so both ends are named on
-        every row -- grouping by the origin would put PROD in six rows for six
-        reasons.
-
-        **Which pairs count is Ernie's decision, not this one.** The query
-        applies `TAG_MOVES_COUNTED`, so these rows are the whole of what was
-        counted and cannot fail to make their own total; filtering at this end
-        would show a fraction of its own figure.
-
-        The bar is the destination's colour -- the arrow already says which
-        way -- and is measured against the biggest pair, like the completed
-        bars: which move is common, not what share of all moves it is.
+        `PROD -> OPS  21`. The pair is the fact, so both ends are named.
+        Which pairs count is Ernie's decision, so these rows are the whole of
+        what was counted and cannot fail to make their own total. The bar is
+        the destination's colour, against the biggest pair.
         """
         moves = (data or {}).get("moves") or []
         box = QVBoxLayout()
@@ -5650,16 +5233,9 @@ class Bert(QMainWindow):
         self.banner.hide()
         outer.addWidget(self.banner)
 
-        # **Invented history says so, across the whole window.** Its own strip
-        # for the reason the toast has one: the update banner must not be
-        # painted over and then hidden on the way out, and both can be true at
-        # once -- a board on an old build can also be showing a demo.
-        #
-        # Amber rather than red. Red here means something is asking for a
-        # person, and nothing is: the data is exactly what somebody asked for
-        # when they ran the tool. What it must not do is go unnoticed, which
-        # is why it is a strip across the window rather than a mark on the
-        # figures panel -- a full-window screenshot carries it, and a
+        # Its own strip, so it cannot be painted over by the update banner --
+        # both can be true at once. Amber, not red: nothing is asking for a
+        # person. Across the window rather than on the figures panel because a
         # screenshot is how an invented figure would escape into a meeting.
         self.demo = QLabel()
         self.demo.setAlignment(Qt.AlignCenter)
@@ -6180,16 +5756,9 @@ class Bert(QMainWindow):
         hh = QHBoxLayout(head)
         hh.setContentsMargins(0, 0, 0, 0)
         hh.setSpacing(6)
-        # The same button the other two sections carry, rather than the bare
-        # caret that was here. The feed is the third foldable section and was
-        # the only one whose control was a glyph with no edges: a reader who
-        # had found the other two had no reason to think this was one, and it
-        # was asked for on exactly those grounds.
-        #
-        # The header stays clickable underneath it, because it always was and
-        # a wider target costs nothing -- but the button is what says the
-        # section folds, and a label that merely happens to be clickable does
-        # not say that to anybody who has not already tried.
+        # The same button the other two foldable sections carry. The header
+        # stays clickable underneath, but a label that merely happens to be
+        # clickable does not tell anybody the section folds.
         self.feed_fold_btn = fold_button(GLYPH_DOWN, "Hide the activity feed")
         self.feed_fold_btn.clicked.connect(self.toggle_feed)
         lab = QLabel("Recent activity")
@@ -6232,17 +5801,9 @@ class Bert(QMainWindow):
         # the text 14px below the one above and 10px above its own.
         self.feed_lay.setSpacing(0)
         self.feed_scroll.setWidget(inner)
-        # The cap lives on the scroll area, not on the rows and not on the
-        # widget inside it. Two things follow, and both are the point:
-        #
-        # Every row fills one viewport, so they are all a single width and the
-        # Undo buttons stay in a column. A row capped on its own takes the
-        # width of its own text instead, and they landed at 761 and 845 for
-        # two rows of the same feed.
-        #
-        # And the scrollbar belongs to the scroll area, so it comes to the cap
-        # with it and closes the feed off, rather than sitting out at the
-        # window edge with a field of nothing between it and the last button.
+        # On the scroll area, not the rows: every row then fills one viewport
+        # so the Undo buttons stay in a column, and the scrollbar comes to the
+        # cap with it instead of sitting out at the window edge.
         self.feed_scroll.setMaximumWidth(FEED_ROW_MAX_W)
         # No alignment flag: aligning it makes it take its own sizeHint, which
         # for a scroll area is small -- measured at 432px, cap or no cap. Left
@@ -6357,21 +5918,10 @@ class Bert(QMainWindow):
     def _centre_board(self):
         """Keep the column in the middle of the **window**, not of its pane.
 
-        The pane is only centred while the two side panels match. Fold the
-        figures down and the board's pane starts 400px from the left, so
-        splitting it evenly puts the tickets well right of centre.
-
-        Measured against the splitter, which spans the whole row: the column
-        should start at `(width - column) / 2`, and the left spacer is however
-        far that is from where the pane begins.
-
-        **Staying centred costs width.** A column filling a pane that is not
-        centred cannot be, so it comes in to whichever edge runs out first --
-        568 against 846 at 1500px with the panels lopsided, nothing at 1920.
-
-        The floor is the column's own minimum. Below that it gives up no more
-        room and sits as near the middle as the pane allows: better a board
-        off centre than one too narrow to read.
+        The pane is only centred while the side panels match -- fold the
+        figures and it starts 400px in. Measured against the splitter, which
+        spans the whole row. Staying centred costs width, and the floor is the
+        column's own minimum: better off centre than too narrow to read.
         """
         hold = getattr(self, "board_holder", None)
         if hold is None or not hold.width():
@@ -6670,19 +6220,13 @@ class Bert(QMainWindow):
     def open_settings(self, pending=None):
         """Settings, with the theme previewing as it is picked.
 
-        A theme is the one setting nobody can judge from its name, so picking
-        one restyles the board underneath and puts the dialog straight back.
+        A theme is the one setting nobody can judge from its name. Previewing
+        rebuilds the whole window, because that is the only restyle there is
+        -- there is no single sheet to swap, and no way to be sure a live one
+        missed none of the seventy-six.
 
-        It goes through the whole window rebuild because that is the only
-        restyle there is: every stylesheet is written where its widget is
-        made, so there is no sheet to swap and no way to be sure a live
-        restyle missed none of the seventy-six. The dialog is closed and
-        reopened because the window it was parented to is being replaced.
-
-        **Nothing is stored until OK.** A preview only calls `apply_theme`
-        and the fresh window loads what is on disk, so Cancel has something
-        true to go back to. `pending` carries what had been typed across the
-        rebuild, so a half-entered name is not lost to looking at a colour.
+        Nothing is stored until OK, so Cancel has something true to go back
+        to; `pending` carries what was typed across the rebuild.
         """
         seed = {**self.settings, **(pending or {})}
         dlg = SettingsDialog(self, seed, self.health)
@@ -8011,19 +7555,9 @@ class Bert(QMainWindow):
     def _hold_scroll(self):
         """Put both lists back where they were looking after a rebuild.
 
-        render() tears every card down and rebuilds it, so the scrollbar loses
-        its place -- ticking one bubble off a card halfway down a fifty-ticket
-        board threw the view somewhere else entirely.
-
-        **The pixel alone is not enough.** All the height above the view
-        belongs to other cards and any of it can change between rebuilds:
-        sixteen cards above gaining a line each moved the view a card and a
-        half while the scrollbar read the same number. So the card at the top
-        of the view is noted and put back at the same height, and the pixel is
-        the fallback for when that card has gone.
-
-        Bands have no scroll area of their own; the two that scroll are the
-        board column and the rail, the pair `_edge_scroll` walks.
+        The place is a card, not a scrollbar number: everything above the view
+        can change height between rebuilds. The pixel is the fallback for when
+        that card has gone.
         """
         if self.dragging:
             # _edge_scroll owns the scrollbars while a card is in the air, and
@@ -8160,16 +7694,10 @@ class Bert(QMainWindow):
         def keep(c):
             if not self.filters.get(c.get("queue") or "", True):
                 return False
-            # **Any of the chosen kinds, not all of them.** 65 of production's
-            # threads carry two or more pieces and one carries six, so a
-            # ticket about a bot *and* a reel belongs under both chips.
-            #
-            # A ticket with no equipment at all matches nothing and is hidden
-            # while any chip is on -- which is what a filter is, and is worth
-            # knowing about rather than discovering: **31 of production's 50
-            # open cards have none**, so one chip can empty most of the board
-            # legitimately. That is what the counts on the chips are for, and
-            # why `Show all` appears the moment one is on.
+            # Any of the chosen kinds, not all: a ticket about a bot and a
+            # reel belongs under both chips. One with no equipment matches
+            # nothing and is hidden -- most of the board, legitimately, which
+            # is what the counts on the chips are for.
             if wanted_types:
                 mine = {e.get("eq_type") for e in (c.get("equipment") or [])}
                 if not (mine & wanted_types):
@@ -8217,16 +7745,10 @@ class Bert(QMainWindow):
             else "")
         self._fit_toolbar()
 
-        # Straight down the order the server sent: rank is the only order,
-        # and an unreadable thread is ranked to the top in `ensure_card`
-        # rather than floated here.
-        #
-        # An open editor is never rebuilt under somebody. render() is reached
-        # from places the poll does not go -- a resize, the end of a drag --
-        # and rebuilding a band destroys the widget being typed into. Only
-        # the bands are spared, since that is where an editor lives; the band
-        # signatures are left alone too, so `_bands_stale` redraws whatever
-        # changed once the editor closes.
+        # Straight down the order the server sent: rank is the only order.
+        # An open editor is never rebuilt under somebody, and only the bands
+        # are spared, since that is where an editor lives -- the signatures
+        # are left stale too, so `_bands_stale` redraws once it closes.
         self._bands_stale = bool(self.editing_card)
         ordered = []
         for band, w in self.bands.items():
@@ -8284,17 +7806,11 @@ class Bert(QMainWindow):
             # affordance teaches people to click rows that never change.
             more = short != whole
 
-            # Every row, whether or not there is more of it to read: the rule
-            # is what groups a line with its buttons, and a feed where only
-            # some entries had one would group them wrongly. Only a row with
-            # something behind it gets the cursor and the click, below.
+            # Every row, whether or not there is more of it to read.
             row = FeedRow()
             h = QHBoxLayout(row)
             # Room above and below, so the Undo button is not sitting on the
-            # hairline under the row. One more at the bottom than the top,
-            # because the hairline is drawn in the row's own last pixel: pad
-            # both sides equally and the contents centre against a box that
-            # is really a pixel shorter, which reads as sitting low.
+            # hairline under the row.
             h.setContentsMargins(0, FEED_ROW_PAD, 0, FEED_ROW_PAD + 1)
             h.setSpacing(8)
 
@@ -8304,18 +7820,9 @@ class Bert(QMainWindow):
             h.addWidget(when, 0, Qt.AlignVCenter)
 
             txt = FeedLine(whole if opened else short)
-            # Wrapping only when open. A closed row is a one-line summary and
-            # has to stay exactly one line tall, because _fit_feed takes the
-            # height every row is held to from these -- and a wrapped QLabel
-            # reports its sizeHint at a heuristic width of its own, not the
-            # width the layout will give it. Measured: 112px against 14 for
-            # the same line. That became the row height for the whole feed,
-            # the panel grew to fit it, and _feed_row_h only ever grows, so
-            # every redraw ratcheted it further.
+            # Wrapping only when open.
             txt.setWordWrap(opened)
-            # Given the spare width rather than a stretch beside it: the label
-            # used to take its one-line size hint and get cut off by whatever
-            # was left over.
+            # Given the spare width rather than a stretch beside it
             txt.setStyleSheet(
                 f"color:{T.INK}; font-size:{FEED_FONT_PX}px;")
             if opened:
@@ -8330,10 +7837,6 @@ class Bert(QMainWindow):
 
             # Its own column, so a narrow window clipping the text cannot also
             # take away the only sign that there is more of it to read.
-            # The characters themselves, not HTML entities: a QLabel only
-            # reads rich text when it can see a tag, so "&#9656;" with
-            # nothing around it was drawn literally -- and then clipped
-            # to "&#" by the width of its column.
             chevron = QLabel("\u25be" if opened else "\u25b8" if more else "")
             chevron.setFixedWidth(FEED_MORE_W)
             chevron.setStyleSheet(f"color:{T.MUTED}; font-size:{FEED_FONT_PX}px;")
@@ -8379,11 +7882,6 @@ class Bert(QMainWindow):
                 b = QPushButton("\u21b6  Undo")
                 # The same button does two different things either side of the
                 # undo window, and looked identical doing them.
-                # The same button does two different things either side of
-                # the undo window, and a rename costs more than the rest on
-                # the far side of it: putting a title back is another real
-                # rename, at two per ten minutes on a budget shared between
-                # both machines.
                 if not e.get("posted_at"):
                     tip = "Nothing has been posted yet \u2014 undoing is silent."
                 elif e["verb"] == "renamed":
@@ -8441,11 +7939,6 @@ class Bert(QMainWindow):
     @staticmethod
     def _feed_text(e, full=False, scale=1.0):
         """One line of the activity feed.
-
-        `full` returns it with nothing cut out, which is what an opened row
-        shows. Comparing the two is also how a row knows whether it has
-        anything worth opening for -- clipping is exactly what hides content,
-        so if the two are equal there is nothing behind the row.
         """
         who = e.get("actor_name") or "Ernie"
         # scale > 1 on a wide window: the same line, allowed more of itself
@@ -8459,17 +7952,9 @@ class Bert(QMainWindow):
         old, new = e.get("old_value"), e.get("new_value")
 
         # Closed by somebody archiving the thread rather than by anyone here.
-        # It names no one on purpose: the thread object does not say who
-        # archived it, and the audit log that would needs a permission the
-        # bot has not got. "Ernie closed it" -- which is what the fallback
-        # below would have said -- is the one reading that is definitely
-        # wrong, because Ernie is the only party that certainly did not.
         if e["verb"] == "completed" and new == CLOSED_IN_DISCORD:
             # The name when the audit log gave one, and no name rather than a
-            # wrong one when it did not. This branch used to drop the actor on
-            # the floor -- written when a Discord closure could never carry a
-            # name, and not revisited when View Audit Log made it possible. The
-            # row had the name the whole time and the line threw it away.
+            # wrong one when it did not.
             named = (e.get("actor_name") or "").strip()
             dot = f"<span style='color:{T.LINE}'> &middot; </span>"
             if named:
