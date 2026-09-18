@@ -986,6 +986,54 @@ def title_takes_client(title: str) -> bool:
     return ex.parse_title(title or "").confidence in ("strict", "loose")
 
 
+# What an issue code means, in words somebody would say.
+#
+# The chips read `i.replace("_", " ")` before this, which put the code's own
+# name on the card: `equipment master not found`, `client cr not found`. That is
+# machine vocabulary in front of a person, and there was no label table
+# anywhere -- that one expression was it.
+#
+# **Titles are not in here, and that is deliberate.** `title_problems()` already
+# says what is wrong with a title, and it does it better than a table can: it
+# reads the parsed fields rather than the code, so it names *which* part is
+# missing instead of saying the shape was wrong. Those codes are in `BLOCKING`
+# and are filtered off the chip row for that reason.
+#
+# Counted on production the day this was written: 88 cards carry
+# `equipment_master_not_found` and 17 `client_cr_not_found`, so these two are
+# most of what anybody actually reads. The rest are here because the tree can
+# emit them, and `tests/check_feed.py` walks it to make sure none is missed.
+ISSUE_LABEL = {
+    "equipment_master_not_found": "equipment not in the master list",
+    "equipment_master_missing": "no equipment on the ticket",
+    "equipment_number_pending": "equipment number not issued yet",
+    "client_cr_not_found": "client CR not found",
+    "client_cr_missing": "no client CR on the ticket",
+    "proposal_never_confirmed": "build request never confirmed",
+}
+
+
+def issue_label(code: str) -> str:
+    """One issue, as a phrase for the card. Falls back rather than hides.
+
+    An unknown code reads as its own name with the underscores out, which is
+    what every chip did before this table existed -- ugly, and better than a
+    card that says nothing about a problem it is carrying. A code added to
+    `ernie_extract` and not to the table therefore still shows, and the check
+    still fails, so it is noticed without anybody losing the information.
+    """
+    if code in ISSUE_LABEL:
+        return ISSUE_LABEL[code]
+    # The one parameterised code: `unknown_equipment_type:REEL`. The part after
+    # the colon is the thing nobody recognised, so it has to survive into the
+    # words -- a bare "unrecognised equipment type" sends somebody looking
+    # without saying what for.
+    head, _, tail = code.partition(":")
+    if head == "unknown_equipment_type" and tail:
+        return f"unrecognised equipment type {tail}"
+    return code.replace("_", " ")
+
+
 def title_problems(c) -> list:
     """What is wrong with this card's title, in words a person can act on.
 
@@ -3072,7 +3120,7 @@ class Card(QFrame):
         Nothing is dropped in silence -- whatever is not on the row is in the
         tooltip of what is.
         """
-        texts = [i.replace("_", " ") for i in (d.get("issues") or [])[:2]
+        texts = [issue_label(i) for i in (d.get("issues") or [])[:2]
                  if i not in BLOCKING]
 
         room0 = self.room or self.width()

@@ -1465,6 +1465,75 @@ def check_the_feed_buttons_have_the_room_they_need() -> bool:
     return c.report()
 
 
+def check_every_issue_has_words() -> bool:
+    """A card says what is wrong in words, not in the code's own name.
+
+    The chips were `i.replace("_", " ")`, which put machine vocabulary in front
+    of a person: `equipment master not found`, `client cr not found`. There was
+    no label table anywhere -- that one expression was it.
+
+    **Walked, not listed.** The codes are read out of `ernie_extract` and
+    `ernie_api` rather than restated here, because a list kept in a check is
+    the same list kept twice: a code added over there and missed here is
+    exactly the failure this exists to catch, and it cannot catch it if it is
+    reading its own copy.
+
+    Titles are deliberately absent from the table. `title_problems()` already
+    says what is wrong with a title and does it better than a table can -- it
+    reads the parsed fields, so it names which part is missing rather than
+    saying the shape was wrong -- and those codes are in `BLOCKING`, which the
+    chip row filters off.
+    """
+    c = Check("every issue has words")
+
+    codes = set()
+    for name in ("ernie_extract.py", "ernie_api.py"):
+        src = (ROOT / name).read_text(encoding="utf-8")
+        # `issues.append("x")` and the f-string form for the parameterised one.
+        for m in re.finditer(r'issues"?\]?\.append\(\s*f?"([a-z_]+)', src):
+            codes.add(m.group(1))
+        # The API's own `title_{confidence}`, which is three codes in one line.
+        if 'f"title_{' in src:
+            codes.update({"title_loose", "title_prefix_only", "title_none"})
+    c.ok(len(codes) >= 8, f"the walk found the codes ({len(codes)})")
+
+    # Everything the chip row can show has to have words. A title code is
+    # BLOCKING and never reaches a chip, so it is not the table's job.
+    for code in sorted(codes):
+        if code in bert.BLOCKING:
+            continue
+        if code == "unknown_equipment_type":
+            # Only ever emitted with the type attached -- one site, one
+            # f-string, checked below with its parameter. The walk sees the
+            # prefix because that is all a regex over an f-string can see.
+            continue
+        said = bert.issue_label(code)
+        c.ok(said != code.replace("_", " "),
+             f"{code} reads as {said!r} rather than its own name")
+
+    # The parameterised one has to keep the part that says what was not
+    # recognised -- a bare "unrecognised equipment type" sends somebody looking
+    # without saying what for.
+    c.equal(bert.issue_label("unknown_equipment_type:REEL"),
+            "unrecognised equipment type REEL",
+            "and the unknown type carries the type")
+
+    # It falls back rather than hiding: a code nobody has labelled still shows,
+    # ugly, which is better than a card silent about a problem it carries.
+    c.equal(bert.issue_label("brand_new_code"), "brand new code",
+            "an unlabelled code still says something")
+
+    # The chips take the label, not the raw code.
+    src = (ROOT / "bert.py").read_text(encoding="utf-8")
+    fit = src[src.index("def _fit_foot"):]
+    fit = fit[:fit.index(chr(10) + "    def ", 10)]
+    c.ok("issue_label(i)" in fit, "the chip row spends the table")
+    c.ok('i.replace("_", " ")' not in fit,
+         "and no longer prints the code with its underscores out")
+
+    return c.report()
+
+
 CHECKS = (check_a_rename_can_be_taken_back,
           check_a_timestamp_with_no_timezone_does_not_kill_the_card,
           check_a_cards_buttons_never_leave_the_card,
@@ -1496,4 +1565,5 @@ CHECKS = (check_a_rename_can_be_taken_back,
           check_a_feed_row_sits_on_one_line,
           check_an_old_row_stops_offering_undo,
           check_send_now_brings_one_change_forward,
-          check_the_feed_buttons_have_the_room_they_need)
+          check_the_feed_buttons_have_the_room_they_need,
+          check_every_issue_has_words)

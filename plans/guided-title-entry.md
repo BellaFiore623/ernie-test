@@ -2,6 +2,14 @@
 
 Status: planned, not started. Decided 2026-09-16.
 
+**Decision 3 below is already implemented** -- found 2026-09-18 while picking
+this up. `_queue_picked` no longer lays a fresh title over the top of one it
+cannot parse; it keeps what was typed and puts the tag on the front, which is
+what this page recommended. The comment there says so. Decisions 1 and 2 are
+still open, and 1 is worth re-reading against what the code does now:
+`_check_title` runs on **every keystroke**, which is the thing that page
+suggested avoiding.
+
 ## What is wanted
 
 The title has to stay typeable, because people have been typing it into

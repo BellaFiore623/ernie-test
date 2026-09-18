@@ -1,7 +1,27 @@
 # Say what is wrong with a card, in words, and say all of it
 
-Status: planned, not started. Asked for 2026-09-16 after Julian looked at the
-board.
+Status: **the label table is built, 2026-09-18.** The fork below is still
+open, and so is item 1. Asked for 2026-09-16 after Julian looked at the board.
+
+What went in: `ISSUE_LABEL` and `issue_label()` in `bert.py`, spent by the chip
+row, with `tests/check_feed.py` walking `ernie_extract` and `ernie_api` for
+every code they can emit rather than keeping a list of its own. It falls back to
+the code with its underscores out rather than hiding an unlabelled one, so a
+code added over there still shows and the check still fails.
+
+Two things the walk settled that this page had as open:
+
+**Titles are not in the table, and should not be.** `title_problems()` already
+existed and does the job better than a table can -- it reads the parsed fields,
+so it names *which* part is missing instead of saying the shape was wrong. The
+title codes stay in `BLOCKING` and stay filtered off the chip row.
+
+**`BLOCKING`'s two extra codes are confirmed dead for cards.** `title_unparseable`
+and `title_nonstandard` are what `extract_thread` uses at the thread level; the
+API only ever appends `title_loose`, `title_prefix_only` or `title_none`, and
+`ticket_proposals` carries neither. Left in place: the set is only ever tested
+against card issues, so they cost nothing, and this page already called them
+harmless belt and braces.
 
 ## What is wanted
 
