@@ -48,6 +48,7 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
 | `migrations/` | One-off scripts already applied everywhere. Kept as a record; a fresh database never runs them. |
 | `plans/` | Work decided on but not started, with the reasoning and the open questions. A plan here is a thing to pick up, not a thing that is done. |
 | `docs/` | Why things are the way they are: `bert-ui.md`, `discord.md`, `clients.md`, `releases.md`. Not needed to make a change safely -- needed to understand one. |
+| `tests/check_two_boards.py` | Phase 5 without two laptops: two databases and a dict standing in for `#ernie-state`, with the real API, publish and reconcile between them. **Stub both `fetch_state` and `fetch_channel`** -- publish reads the channel before deciding anything, so stubbing one leaves it reasoning against an empty one. |
 | `tests/` | `python tests/run.py`. Standard library, no network, no database of yours -- the fixture builds one from `schema.sql` in a temp directory. |
 | `README.md` | For somebody arriving at the repository. What it is, how to run it, why it is shaped this way. |
 | `TESTING.md` | Hand this to the tester. Both setups, start to finish. |
