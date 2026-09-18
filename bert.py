@@ -175,6 +175,25 @@ FEED_FONT_PX = 12          # the feed line, set in the row's stylesheet
 FEED_SAMPLE = ("Bella Fiore edited PROD: Steel City Water - 30Aug26 - "
                "SSD0311 firmware rollback")
 FEED_STATUS_W = 118        
+# Room for the Send now button, added to the undo column only while some row
+# in the feed is offering one -- so a feed with nothing queued is exactly as
+# wide as it always was, and the minute a change spends waiting is the only
+# time the furniture grows.
+#
+# **Uniform across the render, not per row.** It shares the undo column for
+# that reason: the buttons line up down the feed because that column is one
+# fixed width, and a column that sized itself per row would stagger them. It
+# first went in as a second button inside the 88px and came out squished and
+# clipped, which is what a fixed width does when you put two things in it.
+# Measured, not guessed: "Send now" at BTN_HIT's 11px is 88px of text plus
+# 30px of padding and border, so 118 -- and 6 more for the gap beside Undo.
+#
+# Worth knowing while changing either: FEED_UNDO_W is 88 and its own button
+# needs 107, so that column has always run 19px short and Qt takes it out of
+# the padding. That is survivable for one button and is why nobody noticed; it
+# is also why putting a second one in there came out clipped rather than
+# merely tight.
+FEED_SEND_W = 124
 FEED_UNDO_W = 88           
 FEED_ROW_PAD = 4           # above and below a row's contents, so the Undo
                            # button clears the hairline under it
@@ -6227,9 +6246,19 @@ class Bert(QMainWindow):
         # room the row is never given.
         across = min(self.feed_scroll.viewport().width(), FEED_ROW_MAX_W)
         room = (across - FEED_TIME_W - FEED_MORE_W - FEED_STATUS_W
-                - FEED_UNDO_W - FEED_GUTTER - gaps)
+                - FEED_UNDO_W - self._send_room() - FEED_GUTTER - gaps)
         room = min(room, self.width() // 2)
         return max(1.0, room / per / FEED_BASE_CHARS)
+
+    def _send_room(self) -> int:
+        """Extra width the undo column needs this render, or 0.
+
+        Read by `_feed_scale`, which sizes the text against what the columns
+        leave, and by `_render_feed`, which sets the column. One method rather
+        than the same `any(...)` twice: they disagreeing is a line clipped by
+        exactly the width of a button.
+        """
+        return FEED_SEND_W if any(send_offered(e) for e in self.feed) else 0
 
     def _toggle_feed_row(self, eid):
         """Open or close one row. Kept by event_id, not on the widget, because
@@ -8088,6 +8117,9 @@ class Bert(QMainWindow):
 
         # Once for the whole feed, not per row: it is a property of the window.
         scale = self._feed_scale()
+        # Same, and for a stronger reason: a per-row width would stagger the
+        # buttons down the column.
+        send_room = self._send_room()
 
         for e in self.feed:
             eid = e["event_id"]
@@ -8162,7 +8194,7 @@ class Bert(QMainWindow):
             uc = QHBoxLayout(undo_col)
             uc.setContentsMargins(0, 0, 0, 0)
             uc.addStretch()
-            undo_col.setFixedWidth(FEED_UNDO_W)
+            undo_col.setFixedWidth(FEED_UNDO_W + send_room)
             h.addWidget(undo_col, 0, Qt.AlignVCenter)
 
             # `renamed` belongs here: the API has always undone one, and
@@ -8224,6 +8256,10 @@ class Bert(QMainWindow):
                         "After it has gone, undoing posts a correction into "
                         "the thread rather than being silent.")
                     sendable = self.writable()
+                    # Its measured width, so a longer label or a larger font
+                    # cannot push Undo off the end again -- which is what the
+                    # first attempt at this did.
+                    sn.setFixedWidth(FEED_SEND_W - 6)
                     sn.setCursor(Qt.PointingHandCursor if sendable
                                  else Qt.ArrowCursor)
                     sn.setStyleSheet(

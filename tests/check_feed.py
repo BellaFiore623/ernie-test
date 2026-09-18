@@ -1388,6 +1388,83 @@ def check_send_now_brings_one_change_forward() -> bool:
     return c.report()
 
 
+def check_the_feed_buttons_have_the_room_they_need() -> bool:
+    """Two buttons do not fit in one button's column.
+
+    Send now went in as a second widget inside the undo column, which is a
+    fixed `FEED_UNDO_W` of 88px. Reported as the button being cut off and
+    squished together with Undo, which is what a fixed width does when you put
+    two things in it.
+
+    Measured at `BTN_HIT`'s 11px, which is the size it actually draws at rather
+    than the size `sizeHint` reports: "Send now" is 88px of text plus 30px of
+    padding and border. So the column is widened by `FEED_SEND_W` while any row
+    in the feed is offering one, and by nothing when none is -- a feed with
+    nothing queued is exactly as wide as it always was.
+
+    **Uniform across the render, not per row**, which is why `_send_room()` is
+    one method read from two places. The buttons line up down the feed because
+    that column is one fixed width; sizing it per row would stagger them. And
+    `_feed_scale` has to subtract the same number, or the line is sized for
+    room the row does not have and clips by exactly the width of a button.
+
+    Worth knowing if either is ever relabelled: `FEED_UNDO_W` is 88 and Undo
+    itself needs 107, so that column has always run 19px short and Qt takes it
+    out of the padding. Survivable for one button, and the reason a second one
+    in there was clipped rather than merely tight.
+    """
+    c = Check("the feed buttons have the room they need")
+
+    # The width the label actually draws at. No QApplication is built here --
+    # a widget without one aborts the process -- so this is the arithmetic the
+    # stylesheet describes: BTN_HIT is "font-size:11px; padding:6px 14px" over
+    # a 1px border.
+    PAD = 14 * 2 + 2
+    # 11px is small enough that a per-character estimate is not good enough to
+    # assert on, so the numbers come from the measurement recorded above.
+    SEND_TEXT, UNDO_TEXT = 88, 77
+
+    c.ok(bert.FEED_SEND_W - 6 >= SEND_TEXT + PAD,
+         f"Send now fits the room it is given "
+         f"({bert.FEED_SEND_W - 6}px for {SEND_TEXT + PAD}px of button)")
+    c.ok(bert.FEED_SEND_W >= SEND_TEXT + PAD,
+         "and the column is widened by at least that much")
+
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+
+    # One decision, two readers. Them disagreeing is a clipped line.
+    c.equal(src.count("def _send_room"), 1, "the extra width is decided once")
+    scale = src[src.index("def _feed_scale"):]
+    # To the next method, rather than a character count -- a fixed slice is how
+    # this check first reported a call that was plainly there.
+    scale = scale[:scale.index(chr(10) + "    def ", 10)]
+    c.ok("self._send_room()" in scale, "the text room subtracts it")
+    feed = src[src.index("def _render_feed"):]
+    feed = feed[:feed.index(chr(10) + "    def ", 10)]
+    c.ok("send_room = self._send_room()" in feed,
+         "and the column adds it, from the same method")
+    c.ok("FEED_UNDO_W + send_room" in feed,
+         "as a widening of the undo column rather than a column of its own")
+    c.ok("setFixedWidth(FEED_SEND_W" in feed,
+         "and the button is pinned, so a longer label cannot push Undo off")
+
+    # Nothing queued, nothing added.
+    class Feedless:
+        feed = []
+        _send_room = bert.Bert._send_room
+    c.equal(Feedless()._send_room(), 0,
+            "a feed with nothing queued is as wide as it always was")
+
+    class Queued:
+        feed = [{"dispatch_after": "2026-09-18T15:00:00+00:00", "posted_at": None,
+                 "undone_at": None, "claimed_at": None}]
+        _send_room = bert.Bert._send_room
+    c.equal(Queued()._send_room(), bert.FEED_SEND_W,
+            "and one with a change waiting makes room for the button")
+
+    return c.report()
+
+
 CHECKS = (check_a_rename_can_be_taken_back,
           check_a_timestamp_with_no_timezone_does_not_kill_the_card,
           check_a_cards_buttons_never_leave_the_card,
@@ -1418,4 +1495,5 @@ CHECKS = (check_a_rename_can_be_taken_back,
           check_a_feed_row_reads_as_a_row,
           check_a_feed_row_sits_on_one_line,
           check_an_old_row_stops_offering_undo,
-          check_send_now_brings_one_change_forward)
+          check_send_now_brings_one_change_forward,
+          check_the_feed_buttons_have_the_room_they_need)
