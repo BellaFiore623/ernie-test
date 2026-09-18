@@ -426,14 +426,39 @@ def ensure_channel(d: Discord, guild: str, want: str) -> str:
                  f"  --channel <name>   text channels here: {have}")
 
 
-def clear(d: Discord, cid: str) -> int:
-    """Delete the state messages in a channel, leaving anything else alone."""
-    gone = 0
-    for m in d.get(f"/channels/{cid}/messages", limit=100) or []:
-        content = m.get("content", "")
-        if parse(content) or content.startswith(SUMMARY_MARK):
-            d.write("DELETE", f"/channels/{cid}/messages/{m['id']}")
-            gone += 1
+def clear(d: Discord, cid: str, say=None) -> int:
+    """Delete the state messages in a channel, leaving anything else alone.
+
+    **Paced, and it pages.** Both were missing and both bit on the first real
+    use: 55 messages went out at `PACING` and Discord refused the 34th, which
+    left the channel half cleared and the command dead. A delete is a message
+    write in one channel like any other, so it spends `WRITE_PACE` -- which
+    makes clearing a full board a couple of minutes, and the progress line is
+    there because of that rather than for decoration.
+
+    One page was the other half. `limit=100` with no `before` could never clear
+    a channel that had accumulated more than a hundred, which is exactly the
+    state that makes somebody want to clear it.
+    """
+    gone, before = 0, None
+    while True:
+        params = {"limit": 100}
+        if before:
+            params["before"] = before
+        page = d.get(f"/channels/{cid}/messages", **params)
+        if not page:
+            break
+        for m in page:
+            content = m.get("content", "")
+            if parse(content) or content.startswith(SUMMARY_MARK):
+                d.write("DELETE", f"/channels/{cid}/messages/{m['id']}")
+                gone += 1
+                if say and gone % 10 == 0:
+                    say(gone)
+                time.sleep(WRITE_PACE)
+        if len(page) < 100:
+            break
+        before = page[-1]["id"]
     return gone
 
 
@@ -1442,7 +1467,8 @@ def main() -> None:
         demo(d, guild, a.db, channel)
     elif a.clear:
         cid = ensure_channel(d, guild, channel)
-        print(f"deleted {clear(d, cid)} state messages from {channel}")
+        n = clear(d, cid, say=lambda g: print(f"  {g} deleted...", flush=True))
+        print(f"deleted {n} state messages from {channel}")
     elif a.pull:
         cid = ensure_channel(d, guild, channel)
         r = reconcile(d, cid, a.db, dry_run=a.dry_run)
