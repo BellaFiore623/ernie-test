@@ -859,14 +859,32 @@ def note_discarded(con, tid: str, by: str | None, discarded: list) -> None:
               old=mine, new=fields)
 
 
-def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
+def apply_card(con: sqlite3.Connection, p: dict,
+               base: dict | None = None) -> list[str]:
     """
     Write one remote payload into the local mirror, and say what moved.
 
     updated_at is set to the payload's own timestamp rather than now, so the
     next cycle doesn't read this machine's write as a change of its own and
     push it straight back up.
+
+    **`base` is what the event is described from, not the local row.** The row
+    may be carrying a change of ours that is about to be discarded, and then
+    the row's own before-and-after is a transition nobody made.
+
+    Seen on production 2026-09-18. Chris moved Apex medium -> high on his
+    laptop while Bella moved it medium -> low on hers; hers reached the channel
+    first, so his lost. His feed then read **"Bella Fiore moved Apex, high ->
+    low"** -- wrong twice over, because Bella moved it from *medium* and the
+    `high` was Chris's own discarded value. Reported as "where did high -> low
+    come from", which is the right question: nobody did that.
+
+    The base is the last state this machine agreed the channel held, so for a
+    card the other board moved it is exactly the value their move started from.
+    With no conflict it equals the row and nothing reads differently; the two
+    only diverge in the case that was wrong.
     """
+    was = base or {}
     # Clamped, so a laptop running fast can't file its changes in the future
     # and sit at the top of the feed above things that happened since.
     tid, at, by = p["thread"], sane_time(p.get("at")), p.get("by")
@@ -878,9 +896,12 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
         (tid,)).fetchone()
 
     if row["priority"] != p["priority"]:
-        changed.append(f"{row['priority']} -> {p['priority']}")
+        # From the base where there is one: their move started from the value
+        # we last agreed on, not from whatever ours says now.
+        from_band = was.get("priority", row["priority"])
+        changed.append(f"{from_band} -> {p['priority']}")
         log_event(con, thread_id=tid, verb="priority_changed", actor=actor,
-                  old=row["priority"], new=p["priority"], at=at)
+                  old=from_band, new=p["priority"], at=at)
     elif row["rank"] != p["rank"]:
         changed.append(f"reordered in {p['priority']}")
         # The same two positions the board that made the move recorded, worked
@@ -890,11 +911,14 @@ def apply_card(con: sqlite3.Connection, p: dict) -> list[str]:
             """SELECT rank FROM cards
                WHERE priority=? AND thread_id<>? AND completed_at IS NULL""",
             (p["priority"], tid))]
-        was = sum(1 for r in others if r < row["rank"]) + 1
+        # Same rule as the band above: the place their move started from is
+        # the one the base names, or ours when there is no base yet.
+        from_rank = was.get("rank", row["rank"])
+        before = sum(1 for r in others if r < from_rank) + 1
         now = sum(1 for r in others if r < p["rank"]) + 1
-        if was != now:
+        if before != now:
             log_event(con, thread_id=tid, verb="reordered", actor=actor,
-                      old=f"{p['priority']}:{was}",
+                      old=f"{p['priority']}:{before}",
                       new=f"{p['priority']}:{now}", at=at)
     if row["priority"] != p["priority"] or row["rank"] != p["rank"]:
         con.execute("UPDATE cards SET priority=?, rank=?, updated_at=? "
@@ -1173,7 +1197,7 @@ def reconcile(d: Discord, cid: str, db: str, dry_run: bool = False) -> dict:
             # Their values only where they won. Where we won, the payload
             # carries our own value, so apply_card leaves that field alone --
             # it compares every field against the row before writing it.
-            changed = apply_card(con, {**p, **winning})
+            changed = apply_card(con, {**p, **winning}, base)
             if discarded:
                 # The promise this machinery has always made in its docstring
                 # and never kept: the losing change is named rather than

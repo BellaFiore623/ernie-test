@@ -948,6 +948,18 @@ other's API. Priority, rank, work items and completion live in
   **The base stays what the channel holds**, not what was resolved to: a field
   we won is not up there yet, and recording the resolved value would make our
   own change look settled and it would never publish.
+- **An applied change is described from the base, never from our own row.**
+  In a conflict the row is still holding the change about to be thrown away, so
+  its own before-and-after is a transition nobody made. Chris moved Apex
+  medium -> high while Bella moved it medium -> low; hers reached the channel
+  first, and his feed read **"Bella Fiore moved Apex, high -> low"** -- wrong
+  twice, because she moved it from *medium* and the `high` was his own
+  discarded value. Reported as "where did high -> low come from", which is the
+  right question: nobody did that. `apply_card` takes the base and reads the
+  `old` end of both the band and the reorder position off it; with no conflict
+  the base equals the row and nothing reads differently, so the two only
+  diverge in the case that was wrong. The discarded value is not lost, it is
+  the `overruled` row's job.
 - **A discarded change is said out loud, in both places.** The docstring
   promised the feed would name it and nothing did -- not the feed, not the log.
   `note_discarded()` writes an `overruled` event carrying what was lost, with

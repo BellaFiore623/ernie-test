@@ -1282,7 +1282,87 @@ def check_a_conflict_is_not_silent() -> bool:
     return c.report()
 
 
-CHECKS = (check_an_undo_does_not_lose_to_a_respace,
+def check_an_applied_move_reads_as_the_move_that_happened() -> bool:
+    """A remote change is described from the base, never from our own row.
+
+    Production, 2026-09-18. Chris moved Apex medium -> high on his laptop while
+    Bella moved it medium -> low on hers. Hers reached the channel first, so his
+    lost -- and his feed then read **"Bella Fiore moved Apex, high -> low"**.
+
+    Wrong twice over: Bella moved it from *medium*, and the `high` was Chris's
+    own value, the one being discarded. Reported as "where did high -> low come
+    from", which is exactly the right question, because nobody did that. The
+    line was describing the local row's transition rather than anybody's action.
+
+    `apply_card` logged `old=row["priority"]`, and in a conflict the row is
+    still holding the change that is about to be thrown away. The base is the
+    last state this machine agreed the channel held, so for a card the other
+    board moved it is precisely the value their move started from. With no
+    conflict the two are equal and nothing reads differently.
+    """
+    c = Check("an applied move reads as the move that happened")
+    saved = S.fetch_state
+    try:
+        with Board() as b:
+            tid = b.card("PROD: Apex - 12Sep26 - something", "medium", 1000.0)
+            b.con.commit()
+
+            def payload(priority, rank=1000.0):
+                return {"v": S.FORMAT_VERSION, "thread": tid,
+                        "priority": priority, "rank": rank, "completed": False,
+                        "work": [], "by": "Bella Fiore",
+                        "at": "2026-09-18T14:00:00+00:00"}
+
+            channel = {tid: {"message_id": "m1", "payload": payload("medium")}}
+            S.fetch_state = lambda d, cid: channel
+            S.reconcile(None, "chan", b.path)     # settle, and record the base
+            b.con.execute("DELETE FROM events")
+            b.con.commit()
+
+            # Chris's own move, then hers arriving over the top of it.
+            b.con.execute("UPDATE cards SET priority='high', updated_at=? "
+                          "WHERE thread_id=?", (S.now_iso(), tid))
+            b.con.commit()
+            channel[tid] = {"message_id": "m1", "payload": payload("low")}
+            r = S.reconcile(None, "chan", b.path)
+
+            c.equal(len(r["conflicts"]), 1, "both moved the band, so it is a conflict")
+            moved = b.con.execute(
+                "SELECT old_value, new_value FROM events WHERE thread_id=? "
+                "AND verb='priority_changed'", (tid,)).fetchone()
+            c.ok(moved, "the applied move is recorded")
+            if moved:
+                c.equal(moved["old_value"], "medium",
+                        "described from the base, which is where her move "
+                        "started -- it used to say 'high', which was his")
+                c.equal(moved["new_value"], "low", "and lands where she put it")
+
+            # The discarded value is not lost, it is just the other row's job.
+            lost = b.con.execute(
+                "SELECT old_value FROM events WHERE thread_id=? AND "
+                "verb='overruled'", (tid,)).fetchone()
+            c.ok(lost and "high" in lost["old_value"],
+                 "and his 'high' is recorded as the change that was dropped")
+
+            # The ordinary case must read exactly as it did before: with
+            # nothing of ours in the way, base and row are the same value.
+            b.con.execute("DELETE FROM events")
+            b.con.commit()
+            channel[tid] = {"message_id": "m1", "payload": payload("critical")}
+            S.reconcile(None, "chan", b.path)
+            plain = b.con.execute(
+                "SELECT old_value, new_value FROM events WHERE thread_id=? "
+                "AND verb='priority_changed'", (tid,)).fetchone()
+            c.equal(plain["old_value"], "low",
+                    "an uncontested move still reads from where it actually was")
+            c.equal(plain["new_value"], "critical", "to where it went")
+    finally:
+        S.fetch_state = saved
+    return c.report()
+
+
+CHECKS = (check_an_applied_move_reads_as_the_move_that_happened,
+          check_an_undo_does_not_lose_to_a_respace,
           check_a_real_conflict_still_says_so,
           check_a_conflict_is_not_silent,
           check_agreed_at, check_health_guard, check_summary_stamp,
