@@ -380,8 +380,15 @@ def reconcile_aliases(con, actor: str = "auto") -> dict:
                 lookup.setdefault(cand, r["client_id"])
 
     unresolved = []
+    # .fetchall(), because `_alias` writes inside this loop. Iterating
+    # `con.execute(...)` directly holds a read transaction open for the whole
+    # loop, and a write attempted under it is `pin_pending`'s shape -- the one
+    # that pinned the WAL and stalled the outbox for ten minutes. It is not
+    # that bug today: nothing in here is slow and the module is inert until
+    # Jira is configured. It is the same mistake, so it gets the same fix.
     for r in con.execute("SELECT DISTINCT client_key AS k FROM v_thread_current "
-                         "WHERE client_key IS NOT NULL AND client_key <> ''"):
+                         "WHERE client_key IS NOT NULL AND client_key <> ''"
+                         ).fetchall():
         key = r["k"]
         if key in have or key in by_spelling:
             continue

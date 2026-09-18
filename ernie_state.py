@@ -789,7 +789,12 @@ def rw(db: str) -> sqlite3.Connection:
 def read_bases(con) -> dict[str, dict]:
     """What this machine last agreed with the channel about, per card."""
     out = {}
-    for r in con.execute("SELECT thread_id, base_json FROM state_sync"):
+    # .fetchall() for the reason pin_pending needed it: a cursor iterated
+    # directly holds a read transaction open for the length of the loop. This
+    # body only parses JSON, so it is not the hazard -- but it runs on the
+    # state beat now rather than once a minute, and the rule is cheaper to keep
+    # than to judge each time.
+    for r in con.execute("SELECT thread_id, base_json FROM state_sync").fetchall():
         try:
             out[r["thread_id"]] = json.loads(r["base_json"])
         except json.JSONDecodeError:
