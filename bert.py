@@ -620,30 +620,36 @@ def undo_offered(e: dict, now=None) -> bool:
         <= UNDO_OFFERED_S
 
 
-def still_arriving(health: dict | None) -> bool:
-    """Whether this board has never finished a sync, so it is still filling.
+def still_arriving(health: dict | None) -> str:
+    """Why this board is empty: "", "reading" or "waiting".
 
-    A fresh install starts with an empty database and copies the whole channel
-    into it, which is the one time the board is empty for a reason nobody can
-    see. It looked identical to a board with nothing on it, so somebody handed
-    a new laptop had no way to tell it was working and every reason to go and
-    do something else.
+    A fresh install copies the whole channel into an empty database, which is
+    the one time the board is empty for a reason nobody can see. It looked
+    identical to a board with nothing on it, so somebody handed a new laptop
+    had no way to tell it was working.
 
     `synced_at` is the finish of the last run that **completed**, so it is
     empty for exactly as long as no pass has ever got to the end -- which is
-    the window this is about. The first pass on a fresh database is the long
-    one, because every thread is new and its messages all have to be fetched;
-    afterwards the board is whole and the passes are quick.
+    the window this is about. An errored pass still stamps `finished_at`, so
+    this stops rather than sitting over a failure telling somebody to wait.
 
-    Pure, like its neighbours here, and **fails closed**: no health at all
-    means Bert cannot reach Ernie, and that is a different sentence with its
-    own indicator. Claiming a download is in progress when we cannot even ask
-    would be the wrong thing to say.
+    **"waiting" is the state this got wrong first time.** It returned "it is
+    reading" whenever no pass had finished -- including when no pass had ever
+    *started*, which is what a board whose sync thread never came up looks
+    like. Reported from the second laptop: an empty board saying *Bert is
+    still reading Discord*, for ever, with nothing running behind it. Saying
+    the comforting thing in both cases is worse than saying nothing, because
+    the honest state is the one that sends somebody to the log.
 
-    An errored first pass still stamps `finished_at`, so this stops rather
-    than sitting over a failure telling somebody to keep waiting.
+    `last_sync` is the newest run row whether or not it finished, so no row at
+    all means the loop has not got as far as one pass.
+
+    Pure, like its neighbours, and **fails closed**: no health means Bert
+    cannot reach Ernie, which is a different sentence with its own indicator.
     """
-    return bool(health) and not health.get("synced_at")
+    if not health or health.get("synced_at"):
+        return ""
+    return "reading" if health.get("last_sync") else "waiting"
 
 
 def send_offered(e: dict) -> bool:
@@ -6796,20 +6802,35 @@ class Bert(QMainWindow):
         cards are written as they arrive, so `board_size` rises the whole way
         through and is the number somebody actually wants to watch.
         """
-        if not still_arriving(self.health):
+        standing = still_arriving(self.health)
+        if not standing:
             self.setup.hide()
             return
-        self.setup_head.setText("Bert is still reading Discord")
-        self.setup_said.setText(
-            "The first sync copies every thread in the channel into this "
-            "board. It happens once, on a new install \u2014 leave this open "
-            "and the tickets will fill in on their own.")
-        got = (self.health or {}).get("board_size") or 0
-        # Nought is a real answer for the first few seconds and reads as
-        # broken if it is printed as one, so it says what is happening
-        # instead of a number that has not started moving.
-        self.setup_count.setText(
-            f"{got} tickets so far\u2026" if got else "Reading the channel\u2026")
+        if standing == "waiting":
+            # Not the comforting sentence. Nothing has started, so telling
+            # somebody to leave it open is telling them to wait for something
+            # that is not coming -- the same reason the unsent mark must never
+            # say *pushing* about a change that has been given up on.
+            self.setup_head.setText("Bert has not started reading yet")
+            self.setup_said.setText(
+                "Ernie has not made a single pass at Discord, so this is not "
+                "a long first sync \u2014 something stopped before it began. "
+                "The log says what: %LOCALAPPDATA%\\Ernie\\logs\\ernie.log, "
+                "at the bottom of the newest === block.")
+            self.setup_count.setText("Nothing read yet")
+        else:
+            self.setup_head.setText("Bert is still reading Discord")
+            self.setup_said.setText(
+                "The first sync copies every thread in the channel into this "
+                "board. It happens once, on a new install \u2014 leave this "
+                "open and the tickets will fill in on their own.")
+            got = (self.health or {}).get("board_size") or 0
+            # Nought is a real answer for the first few seconds and reads as
+            # broken if it is printed as one, so it says what is happening
+            # instead of a number that has not started moving.
+            self.setup_count.setText(
+                f"{got} tickets so far\u2026" if got
+                else "Reading the channel\u2026")
         for w, colour in ((self.setup_head, T.INK),
                           (self.setup_said, T.INK),
                           (self.setup_count, T.MUTED)):

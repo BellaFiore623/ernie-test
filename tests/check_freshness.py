@@ -284,7 +284,15 @@ def check_a_filling_board_says_it_is_filling() -> bool:
             # 1. A database nothing has run against yet.
             h = api.health()
             c.equal(h["synced_at"], None, "a brand new board has finished no sync")
-            c.ok(bert.still_arriving(h), "so the panel shows")
+            # **"waiting", not "reading".** Nothing has started, and this is
+            # what a board whose sync thread never came up looks like: the
+            # panel said "still reading Discord" for ever, over an empty board
+            # with nothing running behind it. Saying the comforting thing in
+            # both cases is worse than saying nothing, because the honest one
+            # is what sends somebody to the log.
+            c.equal(bert.still_arriving(h), "waiting",
+                    "with no pass even started, it says so rather than "
+                    "claiming to be reading")
 
             # 2. A pass under way, cards arriving. The count is the honest one:
             #    sync_runs gets its totals only at the end, but cards are
@@ -293,7 +301,8 @@ def check_a_filling_board_says_it_is_filling() -> bool:
             b.con.commit()
             h = api.health()
             c.ok(h["syncing"], "the run is reported as in flight")
-            c.ok(bert.still_arriving(h), "and the panel is still up")
+            c.equal(bert.still_arriving(h), "reading",
+                    "and only now does it say it is reading")
             c.ok("board_size" in h,
                  "with a count that rises while it works, which is what it shows")
 
@@ -317,9 +326,21 @@ def check_a_filling_board_says_it_is_filling() -> bool:
     # Fails closed. No health at all is "cannot reach Ernie", which has its own
     # indicator; claiming a download is running when we cannot ask would be
     # saying the wrong thing confidently.
-    c.ok(not bert.still_arriving(None),
-         "and it says nothing when Bert cannot reach Ernie at all")
-    c.ok(not bert.still_arriving({}), "or when the answer carries nothing")
+    c.equal(bert.still_arriving(None), "",
+            "and it says nothing when Bert cannot reach Ernie at all")
+    c.equal(bert.still_arriving({}), "", "or when the answer carries nothing")
+
+    # Both wordings have to exist, and only one of them may promise anything.
+    src = pathlib.Path(bert.__file__).read_text(encoding="utf-8")
+    tick = src[src.index("def _tick_setup"):]
+    tick = tick[:tick.index(chr(10) + "    def ", 10)]
+    c.ok('standing == "waiting"' in tick, "the panel branches on which it is")
+    c.ok("has not started reading yet" in tick,
+         "and the waiting one does not say it is reading")
+    c.ok("ernie.log" in tick,
+         "it names the log, because that is the only place the reason is")
+    c.ok("leave this" in tick.split('standing == "waiting"')[1].split("else:")[1],
+         "and only the reading one says to leave it open")
 
     # It is drawn where the other strips are, and updated on the same beat --
     # a panel built but never ticked is the shape that would pass everything

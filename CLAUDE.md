@@ -387,8 +387,19 @@ install copies the whole channel into an empty database before the board means
 anything, and while that happens Bert looked exactly like a board with no
 tickets on it -- so somebody handed a new laptop had no way to tell it was
 working, which is every reason to go and do something else and come back
-distrusting it. `still_arriving()` is the pure decision and `synced_at` is the
-whole of it: that is the finish of the last run that *completed*, so it is
+distrusting it. `still_arriving()` is the pure decision and answers **three** states, not two:
+`""` when a pass has finished, `"reading"` while one is in flight, and
+`"waiting"` when none has ever started. That last one is the state it got wrong
+first time -- it said *reading* whenever nothing had finished, which includes a
+board whose sync thread never came up, and that is what the second laptop sat
+looking at: an empty board promising it was still reading, for ever, with
+nothing running behind it. `last_sync` is the newest run row whether or not it
+finished, so no row at all is the signal. The waiting wording names the log
+rather than telling anybody to leave it open, because saying the comforting
+thing in both cases is worse than saying nothing -- the honest state is the one
+that sends somebody to the reason. Same rule as the unsent mark never saying
+*pushing* about a change that has been given up on.
+`synced_at` is the rest of it: that is the finish of the last run that *completed*, so it is
 empty for precisely as long as no pass has ever reached the end, and on a fresh
 database the first pass is the long one because every thread is new and all its
 messages have to be fetched. It **fails closed** -- no health at all means
