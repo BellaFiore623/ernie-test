@@ -155,6 +155,27 @@ def render(e) -> str:
     return f"{discord_time(e['occurred_at'], 'f')}  {line}"
 
 
+def own_only() -> bool:
+    """Whether this machine logs only the changes it made itself.
+
+    **Off by default, and the default is the one that loses nothing.** With it
+    off a machine logs everything it holds, replays included, which is exactly
+    what the single nominated logger did before per-machine logging existed --
+    so an upgrade records no less than it did, and a board whose second machine
+    is not set up keeps a complete history.
+
+    Switched on, a machine logs only its own changes and leaves the other
+    board's to the other board. That is the two-logger arrangement, and it has
+    to be set on **every** machine that logs or the change is a loss: set on
+    one and off on the other, the one that is on drops the other's changes and
+    the one that is off posts them a second time.
+
+    So it is off unless somebody has decided, and deciding means both machines.
+    """
+    return (os.environ.get("CHANGELOG_OWN_ONLY", "").strip().lower()
+            in ("1", "true", "yes", "on"))
+
+
 def pending(con, limit: int = BATCH) -> list:
     """Settled events this machine owns and this channel hasn't been told about.
 
@@ -178,9 +199,9 @@ def pending(con, limit: int = BATCH) -> list:
            FROM events e
            LEFT JOIN v_thread_current v ON v.thread_id = e.thread_id
            WHERE e.event_id NOT IN (SELECT event_id FROM changelog_sent)
-             AND (e.replayed = 0 OR e.undone_at IS NOT NULL)
+             AND (? = 0 OR e.replayed = 0 OR e.undone_at IS NOT NULL)
            ORDER BY e.occurred_at
-           LIMIT ?""", (limit * 4,)).fetchall()
+           LIMIT ?""", (1 if own_only() else 0, limit * 4)).fetchall()
     return [r for r in rows if settled(r)][:limit]
 
 

@@ -1029,6 +1029,19 @@ A durable record of every change, in its own channel, for looking back at
 rather than reading as it goes. Customer threads only hear the handful of
 changes worth interrupting somebody for; this gets all of them.
 
+- **`CHANGELOG_OWN_ONLY` is off unless set, and off is the arrangement that
+  loses nothing.** Off, a machine logs everything it holds, replays included --
+  which is what the one nominated logger did before per-machine logging existed,
+  so an upgrade that changes no config records no less than it did. On, it logs
+  only its own and leaves the rest to the board that made them.
+  **It has to be on everywhere or nowhere.** On one machine and off on the
+  other, the one that is on drops the other board's changes and the one that is
+  off posts them twice. And per-machine logging needs every machine set up,
+  which is not always arrangeable: the second laptop belongs to somebody else
+  and is not always to hand. That is why the default is the single-logger one
+  rather than the newer one. Measured before the default was fixed: with one
+  logger and own-only behaviour, a move made on the other board was missing from
+  the record entirely, showing up only as the `from` value of the next line.
 - Inert unless `CHANGELOG_CHANNEL_ID` is set, and **every machine may set it.**
   A change is made on exactly one board, so that board owns the line: nobody's
   uptime decides whether the record exists, and there is no machine to nominate.

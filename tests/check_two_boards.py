@@ -382,6 +382,11 @@ def check_every_machine_logs_its_own() -> bool:
     c = Check("every machine logs its own")
     CHANNEL.clear()
     a, b = Laptop("Bella Fiore"), Laptop("Chris")
+    # The two-logger arrangement is opt-in, and has to be set on every machine
+    # that logs. Restored afterwards, or it decides the answer for every check
+    # after this one.
+    before = os.environ.get("CHANGELOG_OWN_ONLY")
+    os.environ["CHANGELOG_OWN_ONLY"] = "1"
     try:
         tid = same_thread(a, b, "PROD: Ledger - 18Sep26 - a thing", "medium")
         a.publish(); b.pull()
@@ -435,10 +440,63 @@ def check_every_machine_logs_its_own() -> bool:
         eq(c, "and the board that won says nothing about it, having no such row",
            len(won), 0)
     finally:
+        if before is None:
+            os.environ.pop("CHANGELOG_OWN_ONLY", None)
+        else:
+            os.environ["CHANGELOG_OWN_ONLY"] = before
+        a.close(); b.close()
+    return c.report()
+
+
+def check_one_logger_still_records_everything() -> bool:
+    """The default has to be the arrangement that loses nothing.
+
+    Per-machine logging needs **every** machine to set it, and that is not
+    always something somebody can arrange -- the second laptop belongs to
+    somebody else and is not always to hand. With only one machine logging and
+    per-machine behaviour on, the other board's changes are replays and go
+    unrecorded: measured, a move made on the second board was missing from the
+    record entirely, showing up only as the `from` value of the next line.
+
+    That is worse than what the single nominated logger did before any of this,
+    so it cannot be what happens to somebody who upgrades and changes nothing.
+    `CHANGELOG_OWN_ONLY` is off unless set, and off means log everything held,
+    replays included -- exactly the old behaviour.
+    """
+    c = Check("one logger still records everything")
+    CHANNEL.clear()
+    a, b = Laptop("Bella Fiore"), Laptop("Chris")
+    before = os.environ.get("CHANGELOG_OWN_ONLY")
+    os.environ.pop("CHANGELOG_OWN_ONLY", None)     # the default
+    try:
+        tid = same_thread(a, b, "PROD: Ledger - 18Sep26 - a thing", "medium")
+        a.publish(); b.pull()
+        cl.mark_initialised(a.con)                 # only hers logs
+        a.con.commit()
+
+        b.api(api.move_card, tid, api.MoveBody(actor="Chris", priority="high"))
+        b.publish(); a.pull()
+        a.api(api.move_card, tid,
+              api.MoveBody(actor="Bella Fiore", priority="low"))
+        a.con.execute(
+            "UPDATE events SET occurred_at=datetime('now','-600 seconds')")
+        a.con.commit()
+
+        said = [cl.describe(e) for e in cl.pending(a.con)]
+        eq(c, "the one logger has both changes", len(said), 2)
+        c.ok(any("high" in l for l in said),
+             "including the one made on the other board, which is a replay here")
+        c.ok(not cl.own_only(), "because own-only is off unless somebody sets it")
+    finally:
+        if before is None:
+            os.environ.pop("CHANGELOG_OWN_ONLY", None)
+        else:
+            os.environ["CHANGELOG_OWN_ONLY"] = before
         a.close(); b.close()
     return c.report()
 
 CHECKS = (check_every_machine_logs_its_own,
+          check_one_logger_still_records_everything,
           check_both_move_the_same_card,
           check_both_edit_the_same_ticket,
           check_close_while_the_other_edits,
