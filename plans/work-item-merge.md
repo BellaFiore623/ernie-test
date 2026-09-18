@@ -1,8 +1,14 @@
 # Work items merge per item, not per card
 
-**Status: found 2026-09-18, not started.** Found by running phase 5's third
-case across two boards rather than by hand -- `tests/check_two_boards.py` has
-the harness, and this is the one case of the four that does not pass.
+**Status: done 2026-09-18.** Found by running phase 5's third case across two
+boards rather than by hand, and fixed the same day. Kept as the record of what
+was wrong and of the four directions the fix had to not break --
+`tests/check_two_boards.py` holds all of them now.
+
+The table below is what was implemented. `work` came out of the conflict
+comparison entirely: a card whose only difference is a bubble is no longer a
+conflict, so `note_discarded` never fires for one, and `resolve()` hands the
+remote list to `apply_card` to merge rather than picking a winner.
 
 ## The problem, in one sentence
 

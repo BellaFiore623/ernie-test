@@ -283,6 +283,15 @@ def resolve(base: dict | None, ours: dict, theirs: dict):
         out[f] = yours
         if mine == yours:
             continue
+        if f == "work":
+            # **Never a conflict, and never discarded.** A work list is a set of
+            # rows with stable ids, not one value, so `apply_card` merges it per
+            # item against the base -- two people adding different bubbles both
+            # keep theirs. It still has to be handed over when it differs, or a
+            # card whose only change is a bubble would be reported as `ahead`
+            # and their bubble would never arrive.
+            taken.append(f)
+            continue
         was = base.get(f) if base else None
         if base is None or mine == was:
             taken.append(f)              # only the channel moved
@@ -938,11 +947,30 @@ def apply_card(con: sqlite3.Connection, p: dict,
                     "WHERE thread_id=?", (tid,))
         changed.append("reopened")
 
+    # **Per item, three ways, against the base.** A whole-list comparison kept
+    # whichever list arrived and tombstoned the rest, so two people adding a
+    # different bubble to one ticket lost one of them -- found by running phase
+    # 5 across two boards, and the item was gone from both boards and the
+    # channel with only an `overruled` row on the loser's machine to show it.
+    #
+    # The ids are stable and the rows are never hard-deleted, so the base's own
+    # list is enough to tell an add from a removal:
+    #
+    #     in base   in theirs   in ours     what happened     what to do
+    #     no        yes         no          they added it     take it
+    #     no        no          yes         we added it       keep it
+    #     yes       no          yes         they removed it   remove it
+    #     yes       yes         removed     we removed it     leave it removed
+    #
+    # That last row is the one that used to go wrong in the other direction:
+    # the old code cleared our tombstone because their copy still showed the
+    # bubble, which undid a removal every time until they happened to publish.
     added, dropped = [], []
     remote = {i["id"]: i for i in p.get("work") or []}
+    based = {i["id"]: i for i in (was.get("work") or [])}
     local = {r["item_id"]: r for r in con.execute(
         """SELECT item_id, body, position, done_at, removed_at FROM work_items
-           WHERE thread_id=?""", (tid,))}
+           WHERE thread_id=?""", (tid,)).fetchall()}
 
     for pos, (iid, ri) in enumerate(remote.items()):
         li = local.get(iid)
@@ -960,29 +988,45 @@ def apply_card(con: sqlite3.Connection, p: dict,
         if li["position"] != float(pos):
             con.execute("UPDATE work_items SET position=? WHERE item_id=?",
                         (float(pos), iid))
-        if li["removed_at"]:
-            # Never hard-deleted, so a bubble the other board still shows is
-            # put back by clearing the tombstone rather than inserting again.
+        if li["removed_at"] and iid not in based:
+            # Never hard-deleted, so a bubble put back is a cleared tombstone
+            # rather than a new row. Only when it is not in the base: an item
+            # we removed *since* the base is our change, and theirs is the
+            # stale copy -- clearing it there undid the removal on every pull
+            # until the other board happened to publish.
             con.execute("UPDATE work_items SET removed_at=NULL, removed_by=NULL "
                         "WHERE item_id=?", (iid,))
             changed.append(f"restored {ri['body']!r}")
-        if ri["done"] and not li["done_at"]:
-            con.execute("UPDATE work_items SET done_at=?, done_by=? WHERE item_id=?",
-                        (at, ri.get("by") or by, iid))
-            changed.append(f"ticked {ri['body']!r}")
-            log_event(con, thread_id=tid, verb="work_done", actor=actor,
-                      old=iid, new=ri["body"], at=at)
-        elif not ri["done"] and li["done_at"]:
-            con.execute("UPDATE work_items SET done_at=NULL, done_by=NULL "
-                        "WHERE item_id=?", (iid,))
-            changed.append(f"unticked {ri['body']!r}")
+        # Ticked or not, three ways as well -- and a boolean cannot truly
+        # collide: if both sides moved it they moved it to the same value, and
+        # that is the `==` above. So "ours differs from the base" is enough to
+        # keep ours, and their tick only lands when we have not touched it.
+        theirs_done, ours_done = bool(ri["done"]), bool(li["done_at"])
+        base_done = bool(based[iid]["done"]) if iid in based else None
+        we_ticked = base_done is not None and ours_done != base_done
+        if theirs_done != ours_done and not we_ticked:
+            if theirs_done:
+                con.execute("UPDATE work_items SET done_at=?, done_by=? "
+                            "WHERE item_id=?", (at, ri.get("by") or by, iid))
+                changed.append(f"ticked {ri['body']!r}")
+                log_event(con, thread_id=tid, verb="work_done", actor=actor,
+                          old=iid, new=ri["body"], at=at)
+            else:
+                con.execute("UPDATE work_items SET done_at=NULL, done_by=NULL "
+                            "WHERE item_id=?", (iid,))
+                changed.append(f"unticked {ri['body']!r}")
 
     for iid, li in local.items():
-        if iid not in remote and not li["removed_at"]:
+        if iid in remote or li["removed_at"]:
+            continue
+        if iid in based:
+            # It was in the base and they no longer have it, so they removed it.
             con.execute("UPDATE work_items SET removed_at=?, removed_by=? "
                         "WHERE item_id=?", (at, by, iid))
             changed.append(f"-{li['body']!r}")
             dropped.append(iid)
+        # Otherwise we added it since the base and they simply have not seen it
+        # yet. Keeping it is the whole point: publish sends it to them.
 
     if added or dropped:
         log_event(con, thread_id=tid, verb="edited", actor=actor, at=at,

@@ -279,6 +279,75 @@ def check_count_the_announcements() -> bool:
     return c.report()
 
 
+def check_both_edit_the_same_ticket() -> bool:
+    CHANNEL.clear()
+    a, b = Laptop("Bella"), Laptop("Chris")
+    c = Check("both add a different work item")
+    try:
+        tid = same_thread(a, b, "PROD: Vega - 11Sep26 - a thing", "medium")
+        a.publish(); b.pull()
+
+        # Work items are the part of an edit that crosses the channel.
+        a.api(api.edit_card, tid, api.EditBody(
+            actor="Bella Fiore", work_add=["order the cable"]))
+        b.api(api.edit_card, tid, api.EditBody(
+            actor="Chris", work_add=["chase the RMA"]))
+
+        a.publish(); b.pull()
+        b.publish(); a.pull()
+        a.publish(); b.pull()          # one more, so both have settled
+
+        def bubbles(m):
+            return sorted(r["body"] for r in m.con.execute(
+                "SELECT body FROM work_items WHERE thread_id=? "
+                "AND removed_at IS NULL", (tid,)))
+
+        want = ["chase the RMA", "order the cable"]
+        eq(c, "her board carries both bubbles", bubbles(a), want)
+        eq(c, "his board carries both bubbles", bubbles(b), want)
+        eq(c, "neither edit was overruled",
+              len(a.events(tid, "overruled")) + len(b.events(tid, "overruled")), 0)
+
+
+        # The directions this rewrite could have broken instead, each checked
+        # against a board that has actually agreed on the item first.
+        #
+        # A removal still has to travel. The old code removed anything absent
+        # from the payload, which is right here and wrong above; the new rule is
+        # "absent from theirs *and present in the base*", so this must still go.
+        iid = b.con.execute(
+            "SELECT item_id FROM work_items WHERE thread_id=? AND body=?",
+            (tid, "order the cable")).fetchone()[0]
+        a.api(api.edit_card, tid,
+              api.EditBody(actor="Bella Fiore", work_remove=[iid]))
+        a.publish(); b.pull()
+        eq(c, "a removal still reaches the other board",
+           "order the cable" in bubbles(b), False)
+
+        # And a removal of ours is not undone by their stale copy, which is what
+        # the old "restored" branch did on every pull until they published.
+        mine = b.con.execute(
+            "SELECT item_id FROM work_items WHERE thread_id=? AND body=?",
+            (tid, "chase the RMA")).fetchone()[0]
+        b.api(api.edit_card, tid, api.EditBody(actor="Chris", work_remove=[mine]))
+        b.pull()
+        eq(c, "and ours is not put back by their stale copy",
+           "chase the RMA" in bubbles(b), False)
+        b.publish(); a.pull()
+        eq(c, "it reaches her board once he publishes",
+           "chase the RMA" in bubbles(a), False)
+
+        # The part that does NOT cross, which is worth knowing.
+        a.api(api.edit_card, tid, api.EditBody(
+            actor="Bella Fiore", client_override="Apex Ltd"))
+        a.publish(); b.pull()
+        eq(c, "a client_override does not cross the channel at all",
+              b.card(tid)["client_override"], None)
+    finally:
+        a.close(); b.close()
+    return c.report()
+
 CHECKS = (check_both_move_the_same_card,
+          check_both_edit_the_same_ticket,
           check_close_while_the_other_edits,
           check_count_the_announcements)

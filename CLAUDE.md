@@ -255,6 +255,23 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   editor sets `removed_at`, and undo needs both rows still there. The editor
   sends `work_add` / `work_remove`, not the whole list, so two people adding
   different items merge instead of colliding.
+  **Across the state channel that has to be done again, per item**, because the
+  payload carries `work` as a whole list and the API's delta is long gone by
+  then. It was judged as one field, so two people adding a different bubble to
+  one ticket kept whichever list published first and tombstoned the other —
+  gone from both boards and the channel, with only an `overruled` row on the
+  loser's machine to show it. Found by running phase 5 across two boards rather
+  than by hand.
+  The ids are stable and nothing is hard-deleted, so the base's own list tells
+  an add from a removal: in theirs and not in the base is their add, take it;
+  in ours and not in the base is our add, keep it; in the base and not in theirs
+  is their removal, remove it; in the base, in theirs, and tombstoned here is
+  **our** removal, so leave it removed — that last one is what the old code got
+  backwards, clearing our tombstone on every pull because their stale copy
+  still showed the bubble. `done` resolves the same way and cannot truly
+  collide: a boolean both sides moved, they moved to the same value.
+  So `work` is not in the conflict comparison at all — a card whose only
+  difference is a bubble is not a conflict. `tests/check_two_boards.py`.
 - **Complete is the word for a work item; close is the word for a ticket.**
   One bubble and one tick against the whole ticket leaving the board: two
   acts on two different things, and they shared a word. The card's button
