@@ -114,7 +114,22 @@ back; Bert is a desktop board on top of Ernie's HTTP API.
   `ernie_api.wal_state()` puts it in `/health` on every poll and
   `bert.wal_standing()` is the pure decision -- silent while the WAL is
   smaller than its database, amber past that, red past twice it, and silent
-  again for an Ernie too old to send the field. Restarting the stack clears
+  again for an Ernie too old to send the field.
+  **It also needs an absolute floor, and the ratio alone gave a false red.**
+  SQLite checkpoints itself at `wal_autocheckpoint` pages -- 1000 of 4096, so
+  **3.9 MB of WAL is the ordinary working set on a database of any size**. The
+  premise behind a pure ratio, that a healthy WAL never approaches its
+  database, is true of a 16 MB mirror and false of a small one: production's
+  second laptop holds only what it needs, 1.1 MB, so its normal 4.0 MB WAL was
+  four times the file and the strip said *changes may stop reaching Discord* on
+  a stack with no lock errors, nothing queued and nothing stuck. `WAL_FLOOR_BYTES`
+  is 4 MB and both tests must pass. Every real sighting still warns -- 6.59 on
+  4.58, 33 on 4.68, 48 on 16 -- which is what `check_wal.py` pins, along with
+  the floor being at or above what the pragmas actually say, read off a fresh
+  database rather than restated.
+  It surfaced the day the strip could first be drawn at all: `/health` never
+  delivered the `wal` key until 0.9.9 gave the route back to `health()`, so
+  "the strip has never been drawn" was never the alarm staying quiet. Restarting the stack clears
   it; a checkpoint with nothing running took 33 MB to nothing instantly.
   **What holds it is `ernie_status.pin_pending`, found 2026-09-17.** The
   earlier probes -- the API, the sync, the outbox and Bert-shaped polling,

@@ -64,6 +64,10 @@ def check_what_bert_says_about_it() -> bool:
     `build_standing` is the precedent: a widget built with no QApplication
     aborts the process rather than raising, so the judgement lives in a
     function and the widget only draws it.
+
+    Two thresholds, and the verdicts are pinned to real numbers: every WAL
+    this project has actually seen go wrong still warns, and the ordinary
+    4 MB one on a small database does not.
     """
     c = Check("what Bert says about the WAL")
 
@@ -77,6 +81,47 @@ def check_what_bert_says_about_it() -> bool:
             "watch", "larger than the database is worth saying")
     c.equal(bert.wal_standing({"db_bytes": 5 * mb, "wal_bytes": 33 * mb}),
             "act", "and the size this actually reached asks for a person")
+
+    # -- and an absolute floor, because the ratio alone was not enough ------
+    #
+    # SQLite checkpoints itself at `wal_autocheckpoint` pages, so about 3.9 MB
+    # of WAL is the ordinary working set on a database of ANY size. The test
+    # was purely relative, and its premise -- a healthy WAL never approaches
+    # the database -- is true of a 16 MB mirror and false of a small one.
+    #
+    # Production's second laptop holds only what it needs, 1.1 MB, so its
+    # normal 4.0 MB WAL was four times the file and the strip called it red on
+    # a stack with no lock errors, nothing queued and nothing stuck. It had
+    # never fired before at all, because `/health` did not deliver the `wal`
+    # key until 0.9.9 gave the route back to `health()` -- so the first firing
+    # in the project's life was that false one.
+    c.equal(bert.wal_standing({"db_bytes": int(1.1 * mb),
+                               "wal_bytes": int(4.0 * mb)}), "",
+            "4.0 MB on a 1.1 MB database is SQLite's own working set, "
+            "not a fault -- the report that found this")
+    c.equal(bert.wal_standing({"db_bytes": int(16.31 * mb),
+                               "wal_bytes": int(4.46 * mb)}), "",
+            "and neither is 4.46 on 16.31, the other machine at the same time")
+
+    # Every sighting that was real, because a floor that silenced one of these
+    # would be the wrong floor. These three are the whole case for the strip.
+    for wal_mb, db_mb, want, note in (
+            (6.59, 4.58, "watch", "the first sighting"),
+            (33.0, 4.68, "act", "the second, which cost a Complete 4m30s"),
+            (48.0, 16.0, "act", "the third, which stalled the outbox ten minutes")):
+        c.equal(bert.wal_standing({"db_bytes": int(db_mb * mb),
+                                   "wal_bytes": int(wal_mb * mb)}), want,
+                f"{wal_mb} MB on {db_mb} still says {want} -- {note}")
+
+    # The floor is SQLite's own threshold, not a number somebody liked. Read
+    # off a fresh database rather than restated, so a page size that changes
+    # fails here instead of quietly moving what the strip means.
+    with Board() as b:
+        page = b.con.execute("PRAGMA page_size").fetchone()[0]
+        every = b.con.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+    c.ok(bert.WAL_FLOOR_BYTES >= page * every,
+         f"the floor is at or above where SQLite checkpoints "
+         f"({bert.WAL_FLOOR_BYTES} vs {page} x {every} = {page * every})")
 
     # Fails quiet, the rule every field off /health follows.
     for absent in (None, {}, {"db_bytes": 0, "wal_bytes": 99 * mb}):

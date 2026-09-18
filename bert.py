@@ -526,18 +526,42 @@ def card_skin(data, editing=False):
     return tint, edge, 1
 
 
+# Below this a WAL means nothing, whatever the database's size.
+#
+# SQLite checkpoints itself at `wal_autocheckpoint` pages, and this schema runs
+# 1000 pages of 4096 -- so **3.9 MB of WAL is the normal working set**, and both
+# production machines sit at about 4.0 MB of it regardless of how much history
+# their mirror holds. `tests/check_wal.py` reads the two pragmas off a fresh
+# database and fails if that arithmetic ever stops being true.
+#
+# Without this the test was purely relative, and the premise behind it -- that
+# a healthy WAL never approaches the size of the database -- is true of a 16 MB
+# mirror and false of a small one. A checkpoint's worth of writes is a fixed
+# amount; it is the database that varies. The second production laptop holds
+# only what it needs, 1.1 MB, so its ordinary 4.0 MB WAL was four times the
+# file and the strip called it **red** on a stack with nothing wrong: no lock
+# errors, nothing queued, nothing stuck.
+#
+# It went unnoticed for the life of the feature because `/health` never
+# delivered the `wal` key until 0.9.9 fixed the route it had lost -- so the
+# strip's first firing ever was this false one, on the machine with the
+# smallest database.
+WAL_FLOOR_BYTES = 4 * 1048576
+
+
 def wal_standing(wal: dict | None) -> str:
     """What to say about the write-ahead log: "", "watch" or "act".
 
-    A healthy WAL fills and empties every few seconds, so it never gets near
-    the size of the database. One that keeps growing means a reader is
-    holding a snapshot and it cannot be checkpointed -- and the part nobody
-    sees is that writers then start timing out, so a ticket can look closed
-    on the board and never reach its thread.
+    A WAL that cannot be checkpointed grows without bound, and the part
+    nobody sees is that writers then start timing out -- so a ticket can look
+    closed on the board and never reach its thread.
 
-    Larger than its own database is the line. Past twice the size is the
-    difference between something to keep an eye on and something to do
-    something about, and the something is restarting the stack.
+    Two things have to be true, and the second is why: bigger than its own
+    database, **and** past the size SQLite would have checkpointed at anyway.
+    Measured against every real sighting -- 6.59 MB on 4.58, 33 on 4.68,
+    48 on 16 -- all three still warn, and the 4.0-on-1.1 that started this
+    does not. Past twice the database is the difference between watching it
+    and restarting the stack.
 
     Pure, and fails quiet: an Ernie too old to report `wal` says nothing,
     which must never become a warning about a field that is simply absent.
@@ -546,7 +570,7 @@ def wal_standing(wal: dict | None) -> str:
         return ""
     size = wal.get("db_bytes") or 0
     bytes_ = wal.get("wal_bytes") or 0
-    if not size or bytes_ <= size:
+    if not size or bytes_ <= size or bytes_ <= WAL_FLOOR_BYTES:
         return ""
     return "act" if bytes_ > size * 2 else "watch"
 
