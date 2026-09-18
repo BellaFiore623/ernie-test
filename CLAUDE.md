@@ -880,8 +880,9 @@ has been done, when it last moved and who moved it.
   would be filled every pass by work already done and never reach the rest --
   and the counts carry `left` so three of thirty-seven does not read as a pass
   that finished.
-  Unlike `CHANGELOG_CHANNEL_ID` and `ANNOUNCE_THREAD_CHANGES` it is safe on more
-  than one machine, because `adopt()` looks in the thread before posting.
+  Unlike `ANNOUNCE_THREAD_CHANGES` it is safe on more than one machine,
+  because `adopt()` looks in the thread before posting. `CHANGELOG_CHANNEL_ID`
+  was in that list until 2026-09-18 and is not any more.
   Nothing filters by title prefix, `ENG:` included: titles change, and nothing
   may be keyed on parsed title fields.
 - An archived thread is skipped. Discord refuses a post to one, and
