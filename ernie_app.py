@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import pathlib
+import sqlite3
 import sys
 import threading
 import time
@@ -341,6 +343,72 @@ def shut_down(db: str, outbox_client, stop: threading.Event, say=print):
         con.close()
 
 
+def wrong_board_dialog(why: str) -> None:
+    """Say it on screen. A windowed build has nobody watching a console, which
+    is the whole reason `already_running_dialog` exists one function along."""
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        app = QApplication.instance() or QApplication([])
+        QMessageBox.critical(None, "Wrong board",
+                             "Bert did not start.\n\n" + why)
+        del app
+    except Exception:
+        # Never the reason nothing is said: the log line above has already
+        # gone down, and stderr is still there from source.
+        print("refusing to start: " + why, file=sys.stderr)
+
+
+def wrong_board(db: str, guild: str) -> str | None:
+    r"""Why this env must not open this database, or None if it may.
+
+    **`run.sh` has had this check since a sandbox sync nearly wrote its 34
+    threads into a mirror holding production's 889, and the exe never had it.**
+    That matters more here than there, because of one line in `main()`:
+
+        db = a.db or str(CONFIG_DIR / "ernie.db")
+
+    `--db` defaults to `ernie.db` whatever `--env` says, so
+    `Bert.exe --env ernie-sandbox.env` -- the obvious thing to type, and half of
+    the pair somebody is told to use -- points the sandbox guild at
+    production's database. Nothing anywhere said so.
+
+    It asks the database whose board it is rather than what it is called, which
+    is `tools/fake_stats_data.py`'s rule and for its reason: an installed copy
+    keeps its mirror at `%LOCALAPPDATA%\Ernie\ernie.db` whatever server it
+    points at, so the filename answers nothing.
+
+    A database with no threads yet cannot answer and is allowed: that is a
+    first run, which is the one case this must not block. The guild is written
+    with the first thread, so a second start is guarded.
+    """
+    if not pathlib.Path(db).exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{pathlib.Path(db).as_posix()}?mode=ro",
+                              uri=True)
+    except sqlite3.Error:
+        return None            # unreadable is the normal path's problem
+    try:
+        row = con.execute(
+            "SELECT guild_id, COUNT(*) AS n FROM threads "
+            "WHERE guild_id IS NOT NULL "
+            "GROUP BY guild_id ORDER BY n DESC LIMIT 1").fetchone()
+    except sqlite3.Error:
+        return None            # no schema yet; it is about to be created
+    finally:
+        con.close()
+    theirs = row[0] if row else None
+    if not theirs or not guild or theirs == guild:
+        return None
+    mine = "production" if guild == ernie_sync.PRODUCTION_GUILD else guild
+    other = ("production" if theirs == ernie_sync.PRODUCTION_GUILD
+             else f"guild {theirs}")
+    return (f"{pathlib.Path(db).name} is {other}'s board, and this env is "
+            f"{mine}.\n\n"
+            f"Pass --db as well as --env. --db on its own defaults to "
+            f"ernie.db, which is why these two came to be paired.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Ernie and Bert, one process.")
     ap.add_argument("--version", action="version",
@@ -379,6 +447,16 @@ def main() -> None:
     db = a.db or str(CONFIG_DIR / "ernie.db")
     if a.db is None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Before anything opens it. Mixing two guilds in one mirror is not
+    # recoverable by restarting with the right arguments -- the rows are in
+    # there together and nothing afterwards says which came from where.
+    why = wrong_board(db, os.environ.get("DISCORD_GUILD_ID", ""))
+    if why:
+        if log is not None:
+            say("refusing to start: " + why.replace("\n\n", " "))
+        wrong_board_dialog(why)
+        raise SystemExit(1)
 
     # A separator, because the log is appended to across runs and the
     # question asked of it is always "what did *this* start do".

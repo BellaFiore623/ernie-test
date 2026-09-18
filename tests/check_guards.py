@@ -31,6 +31,7 @@ import pathlib
 
 from support import Board, Check
 
+import ernie_app
 import ernie_sync
 
 
@@ -254,8 +255,80 @@ def check_run_sh_checks_the_env_against_the_mode() -> bool:
     return c.report()
 
 
+def check_the_exe_refuses_a_mixed_board() -> bool:
+    r"""One guild's env must not open another guild's database.
+
+    `run.sh` has refused this since a sandbox sync nearly wrote its 34 threads
+    into a mirror holding production's 889. The exe never had the check, and it
+    needs it more, because of one line in `ernie_app.main()`:
+
+        db = a.db or str(CONFIG_DIR / "ernie.db")
+
+    `--db` defaults to `ernie.db` whatever `--env` says. So
+    `Bert.exe --env ernie-sandbox.env` -- the obvious half of a pair somebody
+    is told to type -- points the sandbox guild at production's database, and
+    nothing said so. Found while writing the instructions for pointing a second
+    laptop at the sandbox, which is exactly when somebody would have typed it.
+
+    It asks the database whose board it is rather than what it is called, which
+    is `tools/fake_stats_data.py`'s rule and for its reason: an installed copy
+    keeps its mirror at `%LOCALAPPDATA%\Ernie\ernie.db` whatever server it
+    points at, so the name answers nothing.
+
+    A database with no threads is allowed. That is a first run, which is the
+    one case this must not block, and the guild lands with the first thread.
+    """
+    c = Check("the exe refuses a mixed board")
+
+    PROD = ernie_sync.PRODUCTION_GUILD
+
+    # A first run: nothing to read the answer off, and nothing to protect.
+    c.equal(ernie_app.wrong_board("no-such-file.db", PROD), None,
+            "a database that does not exist yet is a first run, not a mix")
+
+    with Board() as b:
+        b.card("PROD: Acme - 01Sep26 - a thing")
+        b.con.commit()
+        theirs = b.con.execute(
+            "SELECT guild_id FROM threads LIMIT 1").fetchone()[0]
+
+        c.equal(ernie_app.wrong_board(b.path, theirs), None,
+                "its own guild opens it")
+
+        why = ernie_app.wrong_board(b.path, PROD)
+        c.ok(why, "another guild's env does not")
+        if why:
+            c.ok("--db" in why,
+                 "and the message names the argument that was missing, which "
+                 "is the whole cause")
+
+        # The direction that matters most: a production env must not be the
+        # thing that opens a sandbox mirror either. Both ways, for the reason
+        # run.sh refuses both ways.
+        c.ok(ernie_app.wrong_board(b.path, "9999999999") is not None,
+             "and neither does any other")
+
+    # An empty database with the schema but no threads: still a first run.
+    with Board() as b:
+        c.equal(ernie_app.wrong_board(b.path, PROD), None,
+                "a synced-nothing database is still allowed to start")
+
+    # It runs before anything opens the file, or the mixing has happened by
+    # the time it complains.
+    src = (ROOT / "ernie_app.py").read_text(encoding="utf-8")
+    body = src[src.index("def main()"):]
+    guard = body.index("wrong_board(db,")
+    for after in ("serve_api", "load.connect", "ernie_sync.run"):
+        if after in body:
+            c.ok(guard < body.index(after),
+                 f"the check runs before {after}")
+
+    return c.report()
+
+
 CHECKS = (check_every_copy_of_the_guild_agrees,
           check_every_guard_still_asks,
           check_the_tool_guards_on_the_guild_not_the_filename,
           check_the_fake_data_tool_undoes_everything_it_did,
-          check_run_sh_checks_the_env_against_the_mode)
+          check_run_sh_checks_the_env_against_the_mode,
+          check_the_exe_refuses_a_mixed_board)
