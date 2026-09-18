@@ -549,6 +549,58 @@ def card_skin(data, editing=False):
 WAL_FLOOR_BYTES = 4 * 1048576
 
 
+# How long the feed goes on offering an Undo button.
+#
+# **Not a limit on undo.** The API takes one at any age and `force` is how
+# somebody says they mean it; this is the button, the same division the
+# close-with-work-items rule makes -- "Bert will not let you" rather than "it
+# cannot happen".
+#
+# What it is protecting against is one row: a `completed` that Bert made.
+# Undoing that past the window unarchives the thread, posts a correction into
+# the customer thread and re-archives it, so undoing a three-week-old closure
+# pings everybody on a job that finished. It is the most common row in the
+# feed and Undo sits beside it.
+#
+# 24 hours because every undo anybody has actually made was inside a minute --
+# production's only one ever at 30.9s, and the sandbox's six between 2s and 66
+# minutes, all of those while testing. A day is already far past any observed
+# use; two would mostly widen the blast radius over a weekend without covering
+# a case anyone has had.
+#
+# Measured on production the day this was written: 48 events over 21 days, of
+# which undo already refused 43 -- every closure came from Discord, and
+# `started` is refused outright. What was left was 4 rows, none older than 20
+# hours. So this forbids nothing that exists today; it is for the board that
+# closes its own tickets.
+UNDO_OFFERED_S = 24 * 3600
+
+
+def undo_offered(e: dict, now=None) -> bool:
+    """Whether the feed still offers a button for this row.
+
+    Pure, and separate from the row that draws it, for the reason
+    `wal_standing` and `build_standing` are: a widget with no QApplication
+    aborts the process rather than raising, so the judgement is testable only
+    if it lives out here.
+
+    Fails **open**: a row whose timestamp will not parse keeps its button.
+    Undo is how somebody fixes a mistake, and taking that away over a field
+    this could not read would be the wrong way round.
+    """
+    ts = e.get("occurred_at")
+    if not ts:
+        return True
+    try:
+        then = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    return ((now or datetime.now(timezone.utc)) - then).total_seconds() \
+        <= UNDO_OFFERED_S
+
+
 def wal_standing(wal: dict | None) -> str:
     """What to say about the write-ahead log: "", "watch" or "act".
 
@@ -7904,9 +7956,19 @@ class Bert(QMainWindow):
                                      "work_done", "renamed")
             if undoable and not e["undone_at"]:
                 b = QPushButton("\u21b6  Undo")
+                # Kept and greyed rather than dropped, the same way the close
+                # button is: a row that simply loses its button answers no
+                # question, and "why can I not undo this one" is exactly the
+                # question somebody has while looking at it.
+                offered = undo_offered(e)
                 # The same button does two different things either side of the
                 # undo window, and looked identical doing them.
-                if not e.get("posted_at"):
+                if not offered:
+                    tip = ("Too old to undo from here \u2014 this is over a day "
+                           "back, and undoing it now would post into the "
+                           "thread about work that finished. Make the change "
+                           "again instead.")
+                elif not e.get("posted_at"):
                     tip = "Nothing has been posted yet \u2014 undoing is silent."
                 elif e["verb"] == "renamed":
                     tip = ("Already renamed in Discord \u2014 undoing renames it "
@@ -7923,7 +7985,7 @@ class Bert(QMainWindow):
                     f"QPushButton:hover {{"
                     f" background:{rgba(T.ACCENT, 0.12)}; }}"
                     f"QPushButton:disabled {{ color:{T.MUTED}; border-color:{T.LINE}; }}")
-                b.setEnabled(self.writable())
+                b.setEnabled(self.writable() and offered)
                 b.clicked.connect(lambda _, i=e["event_id"]: self.undo(i))
                 uc.addWidget(b)
             self.feed_lay.addWidget(row)

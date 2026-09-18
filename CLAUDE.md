@@ -502,6 +502,26 @@ in `docs/bert-ui.md` now.
   `tests/check_outbox_retry.py` holds the rule by walking every `write()`
   call in the tree: a POST carrying `retry_5xx` fails the check, and so does
   a rename.
+- **Undo is offered for a day, and that is Bert's rule alone.** The API takes
+  one at any age and `force` is how somebody says they mean it, the same
+  division the close-with-work-items rule makes. What it protects is one row:
+  a `completed` Bert made. Undoing that past the window unarchives the thread,
+  posts a correction into the customer thread and re-archives it -- so undoing
+  a three-week-old closure pings everybody on a job that finished weeks ago,
+  and it is the most common row in the feed with Undo beside it.
+  `UNDO_OFFERED_S` is 24h and `undo_offered()` is the pure decision, which
+  **fails open**: a timestamp that will not parse keeps its button, because
+  undo is how a mistake gets repaired and withholding it over an unreadable
+  field is the wrong way round. The button is greyed with the reason in its
+  tooltip rather than removed -- a row that simply loses it answers nothing,
+  and "why can I not undo this one" is the question being asked.
+  Measured before choosing the number: production held 48 events over 21 days
+  and undo already refused 43 of them -- every closure there came from
+  Discord, `started` is refused outright -- leaving 4 rows, none older than 20
+  hours. Every undo anybody has actually made was inside a minute: production's
+  only one ever at 30.9s, the sandbox's six between 2s and 66 minutes and all
+  of those while testing. So a day forbids nothing that exists today; it is for
+  the board that closes its own tickets. `tests/check_feed.py`.
 - One editor at a time, and the second click offers to finish the first.
 
 **Slate is hue 195, and it is the one that found the gamut limit.** It sits in

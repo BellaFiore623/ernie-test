@@ -19,6 +19,7 @@ import pathlib
 import json
 import pathlib
 import re
+from datetime import datetime, timedelta, timezone
 
 from support import Check, iso
 
@@ -1233,6 +1234,70 @@ def check_a_rename_can_be_taken_back() -> bool:
     return c.report()
 
 
+def check_an_old_row_stops_offering_undo() -> bool:
+    """Bert stops offering it; the API still takes one.
+
+    The row this protects is a `completed` that Bert made. Undoing that past
+    the undo window unarchives the thread, posts a correction into the
+    customer thread and re-archives it -- so undoing a three-week-old closure
+    pings everybody on a job that finished weeks ago. It is the most common
+    row in the feed and Undo sits beside it.
+
+    Measured on production the day this was written: 48 events over 21 days,
+    of which undo already refused 43 -- every closure there came from Discord,
+    and `started` is refused outright -- leaving 4 rows, none older than 20
+    hours. And every undo anybody has actually made was inside a minute.
+
+    So the division is deliberate and is the same one the close-with-work
+    rule makes: **Bert will not offer it, rather than it cannot happen.** The
+    API takes an old undo at any age, and `force` is how somebody says they
+    mean it. A check that made the server refuse would be a different feature
+    and a worse one -- there is no way back from a closure made in error on a
+    Friday if Monday is too late.
+    """
+    c = Check("an old row stops offering undo")
+
+    now = datetime.now(timezone.utc)
+
+    def row(hours):
+        return {"occurred_at": (now - timedelta(hours=hours)).isoformat()}
+
+    c.ok(bert.undo_offered(row(0)), "a change just made is offered")
+    c.ok(bert.undo_offered(row(23.5)), "and one from yesterday evening still is")
+    c.ok(not bert.undo_offered(row(24.5)), "past a day it is not")
+    c.ok(not bert.undo_offered(row(24 * 21)),
+         "nor is a three-week-old closure, which is the row this is for")
+    c.equal(bert.UNDO_OFFERED_S, 24 * 3600, "the cutoff is a day")
+
+    # Fails open. Undo is how somebody repairs a mistake, and withholding it
+    # over a field that would not parse is the wrong way round.
+    c.ok(bert.undo_offered({}), "a row with no timestamp keeps its button")
+    c.ok(bert.undo_offered({"occurred_at": "the other day"}),
+         "and so does one whose timestamp will not parse")
+
+    # The button is greyed, not removed: a row that simply loses it answers
+    # nothing, and "why can I not undo this one" is the question being asked.
+    body = (ROOT / "bert.py").read_text(encoding="utf-8")
+    start = body.index("def _render_feed")
+    # To the next method, whatever it is -- naming one is how the last slice
+    # here silently measured an empty string.
+    nxt = body.index(chr(10) + "    def ", start + 10)
+    feed = body[start:nxt]
+    c.ok("undo_offered(e)" in feed, "the feed asks the pure decision")
+    c.ok("and offered" in feed,
+         "and spends it on setEnabled, so the button is greyed rather than gone")
+
+    # And the server has no such rule, on purpose.
+    api = (ROOT / "ernie_api.py").read_text(encoding="utf-8")
+    undo_src = api[api.index("def undo("):]
+    undo_src = undo_src[:undo_src.index("\n@app.") if "\n@app." in undo_src
+                        else len(undo_src)]
+    c.ok("UNDO_OFFERED" not in undo_src and "too old" not in undo_src.lower(),
+         "the API refuses nothing for age -- the cutoff is Bert's alone")
+
+    return c.report()
+
+
 CHECKS = (check_a_rename_can_be_taken_back,
           check_a_timestamp_with_no_timezone_does_not_kill_the_card,
           check_a_cards_buttons_never_leave_the_card,
@@ -1261,4 +1326,5 @@ CHECKS = (check_a_rename_can_be_taken_back,
           check_a_card_cuts_its_client_to_the_room_it_has,
           check_an_open_row_keeps_the_spacing,
           check_a_feed_row_reads_as_a_row,
-          check_a_feed_row_sits_on_one_line)
+          check_a_feed_row_sits_on_one_line,
+          check_an_old_row_stops_offering_undo)
