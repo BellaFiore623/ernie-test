@@ -1,5 +1,5 @@
 """
-Two beats, because the halves of a cycle cost wildly different things.
+Three beats, because the parts of a cycle cost wildly different things.
 
 Measured against the sandbox: a whole cycle is 13 GETs and ~4s, and 11 of
 those GETs and 3.5s of that time are the **edit rescan** -- which found
@@ -13,6 +13,10 @@ rescan and the state pull use, `/channels/{id}/messages`, is 5 per 5s and
 
 The rule these hold: a fast pass does the listing, whatever is new in the
 threads it named, and the local recompute -- and nothing else.
+
+The third beat is the state-channel pull, which was on the slow one until the
+quantity was measured rather than the route. It is one request, and it is the
+half of a shared board that somebody is waiting on.
 """
 
 import ast
@@ -167,6 +171,63 @@ def check_the_beats_cannot_be_swapped() -> bool:
     c.ok("a.fast < 1" in body, "and a zero beat is a loop with no sleep in it")
     c.ok(S.FAST_SECONDS <= S.CYCLE_SECONDS,
          f"the defaults agree ({S.FAST_SECONDS}s inside {S.CYCLE_SECONDS}s)")
+
+    return c.report()
+
+
+def check_the_state_pull_is_on_its_own_beat() -> bool:
+    """
+    The shared board is read faster than the full pass, and that is structural.
+
+    It rode `interval` with the rescan and the roster, on the argument that
+    all three use `/channels/{id}/messages`. True of the route and wrong about
+    the quantity: the rescan is `RESCAN_PER_CYCLE` requests a pass, the roster
+    is a Jira search, and this is **one GET** -- every card in the channel
+    fits in one page of 100, and production holds 59 for 42 open cards.
+
+    It mattered because this is the *receiving* half of a shared board. At 60s
+    it was the largest single term in the ~50s a card took to reach the other
+    laptop, bigger than the publish beat that sent it and the poll that draws
+    it put together.
+
+    What this check actually holds is the **position of the call**, because
+    that is the whole of the change. `pull_state` below the `if not full`
+    return is a pull back on the slow beat, and it looks exactly like one on
+    the fast beat from anywhere else -- same function, same argument, same
+    output, silently three times slower. There is no assertion about latency
+    that would catch it.
+    """
+    c = Check("the state pull has its own beat")
+
+    body = source_of("run")
+    c.ok("pull_state(" in body, "the loop pulls the state channel")
+    c.ok("next_state" in body, "on a clock of its own, not the full pass's")
+
+    # The position, which is the change. Everything after `if not full:`
+    # runs once an `interval`; everything before it runs every `fast`.
+    before, sep, after = body.partition("if not full:")
+    c.ok(sep, "the fast pass still returns early")
+    c.ok("pull_state(" in before,
+         "and the pull is above that return, so a fast pass reaches it")
+    c.ok("pull_state(" not in after,
+         "and is not also run on the full pass, which would double the request")
+
+    # The release note is a second request and deliberately stayed behind.
+    c.ok("read_release" in after,
+         "the release note stays on the slow beat -- it changes about never")
+
+    # The three beats, in order, with the defaults agreeing.
+    c.ok(S.FAST_SECONDS <= S.STATE_SECONDS <= S.CYCLE_SECONDS,
+         f"the three defaults nest ({S.FAST_SECONDS}s <= {S.STATE_SECONDS}s "
+         f"<= {S.CYCLE_SECONDS}s)")
+
+    # Both ends refused, because either side of the middle is a mistake worth
+    # naming rather than finding in a rate limit or a latency nobody explains.
+    main = source_of("main")
+    c.ok("a.state_every < a.fast" in main,
+         "a pull shorter than the loop's own turn is refused")
+    c.ok("a.state_every > a.interval" in main,
+         "and one longer than the full pass is the change undone, so also refused")
 
     return c.report()
 
@@ -399,4 +460,5 @@ CHECKS = (check_a_restart_drains_before_it_publishes,
           check_the_loop_holds_its_beat,
           check_a_quiet_fast_pass_says_nothing,
           check_the_audit_table_is_bounded,
-          check_the_beats_cannot_be_swapped)
+          check_the_beats_cannot_be_swapped,
+          check_the_state_pull_is_on_its_own_beat)

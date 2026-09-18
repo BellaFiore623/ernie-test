@@ -597,10 +597,27 @@ new ticket is on the board in **0.3-10s, about 5 on average**.
   and 429s on the sixth -- which is exactly why those stay on the slow beat.
   Measured over a real minute of the loop: **37 GETs, 0.60/s**, against a
   global ceiling of 50/s.
-- **`--fast` is the listing beat (5s); `--interval` is everything else (60s).**
-  The full pass does what a fast one does *plus* the rescan, the state channel
-  pull and the Jira roster, so nothing that was on a minute has moved. A fast
-  pass is `cycle(..., full=False)`.
+- **`--fast` is the listing beat (5s); `--interval` is the rescan and the
+  roster (60s); `--state-every` is the state-channel pull (20s).** A fast pass
+  is `cycle(..., full=False)`.
+  The pull began on `--interval`, with the rescan, because they share the
+  route. That grouped them by the wrong property: the budget is spent in
+  requests, and **the rescan is a dozen a pass while the pull is one** -- the
+  channel's 59 messages fit in a single page of 100. Two machines at 20s spend
+  6 pulls a minute on that route against the two rescans' ~24, so it sits
+  about where it already sat.
+  What bought the move is that this is the **receiving** half of a shared
+  board. Measured from the constants, a card moved on one laptop reached the
+  other in ~50s average and 105s worst: 15s average waiting for the publish
+  beat, a second or two writing, **30s average waiting for this pull**, and
+  2.5s for Bert's poll. It was the biggest single term and the cheapest one to
+  shorten.
+  The send side is deliberately untouched. A publish pass is already
+  `PUBLISH_MAX` 10 x `WRITE_PACE` 1.1 = 11s of writing; at a 15s beat two
+  machines would be writing into one channel more than half the time, which is
+  exactly the collapse `WRITE_PACE` was added to fix.
+  The release note stayed on the slow beat: it is a second request, and a
+  pinned note naming the current build changes about never.
 - **The local recompute is not the constraint.** `rebuild_derived` re-reads
   every message of every active thread and re-extracts on *every* pass, which
   sounds like the thing that would break -- measured at production's size, 50

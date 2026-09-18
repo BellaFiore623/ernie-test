@@ -1016,9 +1016,28 @@ Two hops: `ernie_sync` pulls Discord into SQLite, and Bert polls the API every
 up to 65 seconds old before it appeared. It is two beats now, and a
 new ticket is on the board in 0.3-10s, about 5 on average.
 
-- `--fast` is the listing beat (5s); `--interval` is everything else (60s).
-  The full pass does what a fast one does plus the rescan, the state channel
-  pull and the Jira roster.
+- **Three beats.** `--fast` is the listing (5s), `--state-every` is the
+  state-channel pull (20s), `--interval` is the rescan and the Jira roster
+  (60s). The pull used to ride `--interval` on the argument that it and the
+  rescan both use `/channels/{id}/messages` -- true of the route and wrong
+  about the quantity, which is what a budget is spent in: the rescan is
+  `RESCAN_PER_CYCLE` requests a pass and the pull is **one**, because every
+  card in the channel fits in one page of 100 and production holds 59 for 42
+  open cards.
+  It matters because the pull is the *receiving* half of a shared board. A
+  card moved on one laptop crossed to the other in about 50s average and 105s
+  worst, and this was the largest single term in it -- bigger than the 30s
+  publish beat that sent it and Bert's 5s poll that draws it put together. At
+  20s the average is about 30s.
+  **The send side was left alone on purpose.** `PUBLISH_MAX` 10 at
+  `WRITE_PACE` 1.1 is already 11 seconds of writing per publish pass, so
+  halving the 30s beat would have both machines writing into one channel more
+  than half the time -- which is the rate-limit collapse of 2026-09-17 rebuilt
+  deliberately. Latency on the receive side is one cheap GET; on the send side
+  it is the thing that broke.
+  `tests/check_sync_beats.py` holds the *position of the call*, which is the
+  whole of the change: `pull_state` below the `if not full` return is a pull
+  back on the 60s beat and looks identical from everywhere else.
 - The split is by cost. A whole cycle is 13 GETs and about 4s, and 11 of
   those GETs are `rescan_edits`; a new ticket arrives through the thread
   listing, which is 1 GET and 0.30s and is effectively unmetered.

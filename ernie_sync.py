@@ -72,7 +72,24 @@ RETRY_MAX_S = 30      # ride out a short 429 in write(); park anything longer
 # `/channels/{id}/messages` -- the rescan and the state pull -- is 5 per 5s
 # and 429s on the sixth. The cheap route is the one being asked more often.
 FAST_SECONDS = 5      # list threads, fetch what is new, recompute. 1 GET.
-CYCLE_SECONDS = 60    # and everything else, on the beat it already had
+CYCLE_SECONDS = 60    # the rescan and the roster, on the beat they already had
+# The state-channel pull, between the two. It is the receiving half of the
+# shared board, so this interval is most of what somebody waiting on the other
+# laptop's change is actually waiting for -- on the 60s pass it was the largest
+# single term in the ~50s a card took to cross, bigger than the publish beat
+# that sent it and the poll that draws it put together.
+#
+# Affordable because it is **one GET**: every card in the channel fits in one
+# page of 100, and production holds 59 messages for 42 open cards. The budget
+# is the part to watch. `/channels/{id}/messages` is 5 per ~5s and 429s on the
+# sixth, and **two boards share it**, because they share the bot -- two
+# machines here spend 6 pulls a minute on that route against the two rescans'
+# ~24, which leaves it about where it already sat.
+#
+# Do not take it below the rescan's own burst without measuring: that fires
+# RESCAN_PER_CYCLE requests back to back on the same route and already rides
+# out a 429 doing it.
+STATE_SECONDS = 20
 
 
 # The one guild nothing here may touch. Every destructive or fabricating
@@ -740,23 +757,72 @@ def _pause(stop, seconds) -> bool:
     return stop.wait(seconds)
 
 
+def pull_state(con, d: Discord, db: str) -> None:
+    """The state channel, Discord -> SQLite. One GET, on `STATE_SECONDS`.
+
+    Discord -> SQLite like everything else in this module, which is why it
+    lives here at all; pushing the other way is the outbox's job, because the
+    outbox is the only thing that writes to Discord.
+
+    Lifted out of `run` when it earned a beat of its own. It rode the slow
+    pass with the rescan and the roster on the argument that all three are
+    `/channels/{id}/messages`-shaped -- true of the route and wrong about the
+    quantity, and the quantity is what a budget is spent in.
+
+    The release note is deliberately left behind on the slow beat. It is a
+    second request, and a pinned note naming the current build changes about
+    never, so asking three times as often buys nothing.
+    """
+    state_channel = os.environ.get("STATE_CHANNEL_ID")
+    if not state_channel:
+        return
+    try:
+        # Imported here because ernie_state imports this module, and a
+        # top-level import either way round would be circular.
+        import ernie_state
+        r = ernie_state.reconcile(d, state_channel, db)
+        if r["format_skew"]:
+            # Loud, every pass it is true, and not folded in with the cards
+            # merely waiting on a thread: this one means the two boards have
+            # stopped agreeing and no amount of waiting will settle it.
+            them = r["format_skew"][-1]["v"]
+            print(f"[{now()[:19]}] state: !! {len(r['format_skew'])} "
+                  f"card(s) in the channel are format v{them} and this "
+                  f"machine speaks v{ernie_state.FORMAT_VERSION} -- one "
+                  f"of the two boards needs updating", file=sys.stderr)
+        if r["applied"] or r["unknown"]:
+            print(f"[{now()[:19]}] state: applied {len(r['applied'])}, "
+                  f"{len(r['unknown'])} waiting on a thread")
+            for hit in r["applied"]:
+                print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
+                      + "; ".join(hit["changed"]))
+    except Exception as e:
+        print(f"[{now()[:19]}] state pull failed: {e}", file=sys.stderr)
+
+
 def run(con, d: Discord, guild: str, db: str, *, fast: int = FAST_SECONDS,
-        interval: int = CYCLE_SECONDS, backfill: bool = False,
-        once: bool = False, stop=None) -> None:
+        interval: int = CYCLE_SECONDS, state_every: int = STATE_SECONDS,
+        backfill: bool = False, once: bool = False, stop=None) -> None:
     """The sync loop itself, so something other than a CLI can run it.
 
     Lifted out of `main()` whole rather than reimplemented. The packaging
     note calls this the one real refactor in its plan, and the reason is the
-    slow beat: it carries more than `cycle()` -- the run pruning, the
-    state-channel pull and the Jira roster all hang off it, each with its own
-    argument for being on this loop rather than the outbox's. A supervisor
+    beats: this carries more than `cycle()` -- the run pruning and the Jira
+    roster on the slow one, the state-channel pull on its own, each with its
+    own argument for being on this loop rather than the outbox's. A supervisor
     that re-derived any of that would drift from the CLI the first time one
     of them changed.
+
+    Three beats, not two: `fast` lists threads, `state_every` pulls the shared
+    board, `interval` does the rescan and the roster. The middle one exists
+    because it is one request and somebody is waiting on it; see
+    `STATE_SECONDS`.
 
     `stop` is a `threading.Event`; nothing else about the loop moved.
     """
     first = True
     next_full = 0.0        # the first pass is a full one
+    next_state = 0.0       # and pulls the state channel with it
     while True:
         if stop is not None and stop.is_set():
             return
@@ -784,10 +850,18 @@ def run(con, d: Discord, guild: str, db: str, *, fast: int = FAST_SECONDS,
         except Exception as e:
             print(f"[{now()[:19]}] cycle failed: {e}", file=sys.stderr)
 
+        # Its own beat, between the listing's and the full pass's. See
+        # STATE_SECONDS: it is one request, and it is the half of the shared
+        # board that somebody is waiting on.
+        if t0 >= next_state:
+            next_state = t0 + state_every
+            pull_state(con, d, db)
+
         if not full:
-            # Everything below is on the slow beat by measurement: the state
-            # pull and the roster are both `/channels/{id}/messages`-shaped
-            # work against buckets far tighter than the thread listing's.
+            # What is left below is on the slow beat by measurement: the
+            # rescan is RESCAN_PER_CYCLE `/channels/{id}/messages` requests a
+            # pass and the roster is a Jira search. The state pull was here
+            # too until it was measured at one request.
             if _pause(stop, fast - (time.time() - t0)):
                 return
             first = False
@@ -795,33 +869,10 @@ def run(con, d: Discord, guild: str, db: str, *, fast: int = FAST_SECONDS,
 
         prune_runs(con)
 
-        # Pulling the state channel is Discord -> SQLite like everything else
-        # here, so it belongs in this loop. Pushing the other way does not:
-        # the outbox is the only thing that writes to Discord, and it
-        # publishes from its own loop.
         state_channel = os.environ.get("STATE_CHANNEL_ID")
         if state_channel:
             try:
-                # Imported here because ernie_state imports this module, and a
-                # top-level import either way round would be circular.
                 import ernie_state
-                r = ernie_state.reconcile(d, state_channel, db)
-                if r["format_skew"]:
-                    # Loud, every cycle it is true, and not folded in with the
-                    # cards merely waiting on a thread: this one means the two
-                    # boards have stopped agreeing and no amount of waiting
-                    # will settle it.
-                    them = r["format_skew"][-1]["v"]
-                    print(f"[{now()[:19]}] state: !! {len(r['format_skew'])} "
-                          f"card(s) in the channel are format v{them} and this "
-                          f"machine speaks v{ernie_state.FORMAT_VERSION} -- one "
-                          f"of the two boards needs updating", file=sys.stderr)
-                if r["applied"] or r["unknown"]:
-                    print(f"[{now()[:19]}] state: applied {len(r['applied'])}, "
-                          f"{len(r['unknown'])} waiting on a thread")
-                    for hit in r["applied"]:
-                        print(f"    {hit['thread'][-6:]} {hit['by'] or '?'}: "
-                              + "; ".join(hit["changed"]))
                 # The published build, off a pinned note in the same
                 # channel. Its own request rather than something read out of
                 # the pull, because the pull is about cards and this is one
@@ -917,8 +968,12 @@ def main() -> None:
                     help="seconds between listing passes -- the beat a new "
                          "ticket arrives on")
     ap.add_argument("--interval", type=int, default=CYCLE_SECONDS,
-                    help="seconds between full passes: the edit rescan, the "
-                         "state channel and the customer roster")
+                    help="seconds between full passes: the edit rescan and "
+                         "the customer roster")
+    ap.add_argument("--state-every", type=int, default=STATE_SECONDS,
+                    dest="state_every",
+                    help="seconds between state-channel pulls -- the beat the "
+                         "other board's changes arrive on")
     a = ap.parse_args()
 
     # A fast beat longer than the full one is the two arguments swapped, and
@@ -929,6 +984,18 @@ def main() -> None:
     if a.fast > a.interval:
         sys.exit(f"--fast {a.fast} is longer than --interval {a.interval}; "
                  f"the fast pass is the one that runs more often")
+    # The pull is checked at both ends, because it sits between the other two
+    # and either side of it is a mistake worth naming. Below `--fast` it cannot
+    # run more often than the loop turns; above `--interval` it is slower than
+    # the pass it was taken off, which is the change undone rather than made.
+    if a.state_every < a.fast:
+        sys.exit(f"--state-every {a.state_every} is shorter than --fast "
+                 f"{a.fast}; the loop only turns every {a.fast}s, so it "
+                 f"cannot pull more often than that")
+    if a.state_every > a.interval:
+        sys.exit(f"--state-every {a.state_every} is longer than --interval "
+                 f"{a.interval}; it used to ride the full pass, so that is "
+                 f"slower than not having this argument at all")
 
     load_env(a.env)
 
@@ -964,7 +1031,7 @@ def main() -> None:
         print(f"  watching #{c['name']} ({c['channel_id']}) -- {kind}")
 
     run(con, d, guild, a.db, fast=a.fast, interval=a.interval,
-        backfill=a.backfill, once=a.once)
+        state_every=a.state_every, backfill=a.backfill, once=a.once)
 
 
 if __name__ == "__main__":
